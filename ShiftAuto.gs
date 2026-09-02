@@ -1,0 +1,135 @@
+/**
+ * ShiftAuto.gs — 自動作成の入口・シートの読み書き・Engine の呼び出し
+ *
+ * 移植元: AutoShiftGenerator.bas の工程 1〜5 と、
+ *         ShiftAutoPlace.bas の AS_書き込み / AS_休業行の塗り / AS_レポート
+ * 仕様書: §4.3（工程の順序）/ §8.3（読み書きは範囲まるごと1回）
+ *
+ * 【役割分担】
+ *   工程 1〜5   … このファイル（シートを読む）
+ *   工程 6〜17  … Engine.gs（SpreadsheetApp を一切呼ばない純粋関数）
+ *   工程 18〜20 … このファイル（シートへ書く）
+ *
+ * 【読み書きの約束（§8.3-3）】
+ *   getValues / getFormulas / getBackgrounds / getFontWeights は工程の前に、
+ *   setValues / setBackgrounds / setFontWeights は工程の後に、
+ *   それぞれ範囲まるごと1回だけ。flush() は書き込みの最後に1回だけ。
+ */
+
+const MODULE_SHIFTAUTO = 'ShiftAuto';
+
+/**
+ * 司令塔。メニュー「シフト自動作成」の入口。
+ * 移植元: Public Sub シフト自動作成()
+ *
+ * 工程:
+ *    0) 状態リセット
+ *    1) 準備      2) 日情報    3) メンバー読込  4) 孤児検出  5) 事前確認
+ *   ─ Engine.runEngine() ─
+ *   18) 書き込み 19) 休業行の塗り 20) レポート
+ *
+ * 所要時間を計り、logSuccess の details に elapsedMs を必ず載せる（§8.3-5）。
+ */
+function runAutoShift() {
+  return notImplemented_(MODULE_SHIFTAUTO, 'runAutoShift', 4); // TODO(P4)
+}
+
+/**
+ * 工程1 準備 — シート・設定値・入力欄を解決する。
+ * Layout.resolveLayout() は1度だけ呼び、返り値を持ち回る。
+ * 移植元: AS_準備
+ */
+function prepareContext_() {
+  return notImplemented_(MODULE_SHIFTAUTO, 'prepareContext_', 4); // TODO(P4)
+}
+
+/**
+ * 工程2 日情報 — 日付/曜日/祝日/医師数/必要数/公休ノルマ。
+ *
+ *   月内判定 … Month(日付) === Month(対象月)
+ *   weekKey  … 日付シリアル - (曜日(日=1) - 1)（日曜起点）
+ *   targetOff … 月内の 土日 + 平日の祝日 の日数
+ *               （祝日が土日に重なっても二重に数えない）
+ *               シフトシート I4 の祝日サマリー（wk+hol）と必ず一致する
+ * 移植元: AS_日情報
+ */
+function buildDayInfo_(ctx) {
+  return notImplemented_(MODULE_SHIFTAUTO, 'buildDayInfo_', 4); // TODO(P4)
+}
+
+/**
+ * 工程3 メンバー読込 — 氏名キーでマスタ照合し、不整合を検出する。
+ *
+ *   - 氏名が空 or NON_NAME_LABELS の前方一致 → skipRow
+ *   - 同名重複は「先に見つかった設定が適用される」。警告を出すが処理は続ける
+ *   - 区分が 薬剤師/事務員 以外 → 人数計算に計上されないので警告
+ *   - 月間休日数は RULE.NORMAL でしか読まない。他ルールに入っていたら
+ *     「設定しても読まれない項目」として実行前に一覧で出す（v9.7.0 の趣旨）
+ * 移植元: AS_メンバー読込
+ */
+function readMembers_(ctx) {
+  return notImplemented_(MODULE_SHIFTAUTO, 'readMembers_', 4); // TODO(P4)
+}
+
+/**
+ * 工程4 孤児検出 — マスタにあるがシフト表に無い氏名。
+ * 移植元: AS_孤児検出
+ */
+function findOrphanMembers_(ctx) {
+  return notImplemented_(MODULE_SHIFTAUTO, 'findOrphanMembers_', 4); // TODO(P4)
+}
+
+/**
+ * 工程5 事前確認 — 不整合をまとめて提示し、続行の可否を問う。
+ * @return {boolean} 続行するなら true
+ * 移植元: AS_事前確認
+ */
+function confirmBeforeRun_(ctx) {
+  return notImplemented_(MODULE_SHIFTAUTO, 'confirmBeforeRun_', 4); // TODO(P4)
+}
+
+/**
+ * 工程18 書き込み — 差分を変更ログに残しながらシートへ書く。
+ *
+ *   - 空行・集計行（skipRow）には一切書き込まない
+ *   - 数式セルは書き換えない（getFormulas() で判定）
+ *   - setValues() で範囲まるごと1回。flush() は最後に1回だけ
+ * 移植元: AS_書き込み
+ */
+function writePlanToSheet_(ctx, engineOutput) {
+  return notImplemented_(MODULE_SHIFTAUTO, 'writePlanToSheet_', 4); // TODO(P4)
+}
+
+/**
+ * 工程19 休業行の塗り — 休業者の行を灰色にする。
+ * 塗りを外すのは「マクロが塗った色と同じ場合」だけ（手で塗った色を消さない）。
+ * 移植元: AS_休業行の塗り
+ */
+function paintLeaveRows_(ctx) {
+  return notImplemented_(MODULE_SHIFTAUTO, 'paintLeaveRows_', 4); // TODO(P4)
+}
+
+/**
+ * 設定シートの全体設定から数値を読む。ラベルの部分一致 → L 列の値。
+ * 空欄・非数値なら SETTING_DEFAULT にフォールバックする（既存ブック互換）。
+ * 移植元: CfgNum
+ */
+function readSettingNumber_(cfgValues, key) {
+  return notImplemented_(MODULE_SHIFTAUTO, 'readSettingNumber_', 4); // TODO(P4)
+}
+
+/**
+ * 設定シートの全体設定から文字列を読む。空欄なら既定値。
+ * 移植元: CfgTxt
+ */
+function readSettingText_(cfgValues, key) {
+  return notImplemented_(MODULE_SHIFTAUTO, 'readSettingText_', 4); // TODO(P4)
+}
+
+/**
+ * 自動作成の事前診断（実行せずに前提条件だけ調べる）。
+ * 移植元: AutoShiftPreflight / ShiftAuto_事前診断
+ */
+function runPreflightDiagnosis() {
+  return notImplemented_(MODULE_SHIFTAUTO, 'runPreflightDiagnosis', 4); // TODO(P4)
+}
