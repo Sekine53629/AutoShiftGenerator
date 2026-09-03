@@ -149,6 +149,25 @@ function makeFakeSheet(p) {
   };
 }
 
+test('日付行は数式が無くても見つかる（Excel からの取り込み対策）', function () {
+  const vmDate = vm.runInContext('new Date(2026, 8, 1)', sandbox);
+  // 数式が値に変わったシートを再現する
+  const values = [[''], [vmDate], [''], [''], [vmDate], ['']];
+  assert.deepStrictEqual(Array.from(sandbox.findDateRows_(values)), [2, 5]);
+  assert.deepStrictEqual(Array.from(sandbox.findDateRows_([[''], ['']])), []);
+});
+
+test('日付行が足りないとき、何が起きているか言い当てる', function () {
+  // 「1」「2」が数値になっているシート
+  const msg = sandbox.describeDateRowFailure_([], [[''], [1], [2], [3]]);
+  assert.ok(msg.indexOf('数値') >= 0, '数値だと言い当てる');
+  assert.ok(msg.indexOf('レイアウト診断') >= 0, '次の一手を示す');
+
+  const vmDate = vm.runInContext('new Date(2026, 8, 1)', sandbox);
+  const one = sandbox.describeDateRowFailure_([2], [[''], [vmDate]]);
+  assert.ok(one.indexOf('1つ') >= 0 && one.indexOf('再掲') >= 0, '再掲が無いと言う');
+});
+
 test('生成した配置を resolveLayout が同じ位置として読み戻す', function () {
   [1, 5, 16, 40].forEach(function (staffRows) {
     const p = sandbox.planSheetPositions_(staffRows);

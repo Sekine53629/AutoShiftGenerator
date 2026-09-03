@@ -80,25 +80,21 @@ function buildLayoutDiagnosis_(sheetName, bFormulas, bValues, aValues, wide) {
 
   // --- B列: 日付行の候補 ---
   push('■ B列（日付行の判定）');
-  push('  Layout は「数式が入っていて、値が日付」の行を上から2つ探します。');
+  push('  Layout は「値が日付」の行を上から2つ探します（数式の有無は問いません）。');
   const hits = [];
-  const dateValueRows = [];
   for (let r = 0; r < bFormulas.length; r++) {
     const hasFormula = bFormulas[r][0] !== '';
     const isDate = bValues[r][0] instanceof Date;
     if (!hasFormula && !isDate) continue;
 
-    if (hasFormula && isDate) {
+    if (isDate) {
       hits.push(r + 1);
-      push(`  行 ${r + 1}: 数式あり + 日付  → 候補 ${hits.length} 個目`);
-    } else if (isDate) {
-      dateValueRows.push(r + 1);
-      push(`  行 ${r + 1}: 数式なし + 日付  → ★候補になりません（値で入っています）`);
+      push(`  行 ${r + 1}: 日付（${hasFormula ? '数式あり' : '数式なし'}） → 候補 ${hits.length} 個目`);
     } else if (hasFormula) {
       push(`  行 ${r + 1}: 数式あり + 日付でない`);
     }
   }
-  if (hits.length === 0 && dateValueRows.length === 0) {
+  if (hits.length === 0) {
     push('  該当なし。B列に日付が1つもありません。');
   }
   push('');
@@ -162,10 +158,7 @@ function buildLayoutDiagnosis_(sheetName, bFormulas, bValues, aValues, wide) {
     problems.forEach(function (p) { push(`     ・${p}`); });
     push('');
     push('  よくある原因:');
-    if (dateValueRows.length > 0) {
-      push('   ・Excel から取り込むと日付の数式が値に変わることがあります。');
-      push(`     このシートは ${dateValueRows.length} 行で「値の日付」を見つけています。`);
-    }
+    push('   ・日付行の「1」「2」が日付ではなく、ただの数値になっている。');
     push('   ・A列の「備考」が別の文字（空欄・全角空白など）になっている。');
     push('   ・日付行が1つしかない（再掲の行が無い）。');
   }

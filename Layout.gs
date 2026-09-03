@@ -43,14 +43,12 @@ function resolveLayout(sheet) {
     const bValues = colB.getValues();
     const aValues = sheet.getRange(1, 1, scanRows, 1).getValues();
 
-    const dateRow = findDateFormulaRow_(bFormulas, bValues, 1);
-    if (dateRow === 0) {
-      throw new Error('B列に「数式かつ日付」のセルが見つかりません。日付行を判定できないため中止します。');
+    const dateRows = findDateRows_(bValues);
+    if (dateRows.length < 2) {
+      throw new Error(describeDateRowFailure_(dateRows, bValues));
     }
-    const repeatDateRow = findDateFormulaRow_(bFormulas, bValues, 2);
-    if (repeatDateRow === 0) {
-      throw new Error('B列で2つ目の日付行（再掲）が見つかりません。入力欄の上端を判定できません。');
-    }
+    const dateRow = dateRows[0];
+    const repeatDateRow = dateRows[1];
 
     const weekRow = dateRow + 1;
     const doctorTop = weekRow + 1;
@@ -130,22 +128,52 @@ function getNamedRangeOrNull(name) {
 }
 
 /**
- * B 列で n 個目の「数式かつ日付」の行を返す。見つからなければ 0。
- * 移植元: DateFormulaRow（nth=1 が日付行 / nth=2 が再掲日付行）
- * @param {string[][]} formulas B列の数式（1行目から）
- * @param {*[][]} values B列の値（同じ範囲）
- * @param {number} nth 何個目か
- * @return {number} 行番号（1 起点）
+ * B 列で日付が入っている行を、上から順に返す。
+ * 移植元: DateFormulaRow（1つ目が日付行 / 2つ目が再掲日付行）
+ *
+ * 【VBA 版から緩めた点】
+ *   VBA は「数式**かつ**日付」を目印にしていた。Excel の日付行が
+ *   `=DATE(...)` の連なりだったため。
+ *   GAS 版はシートに数式を持たせない方針になり（REQUIREMENTS §4.6）、
+ *   Excel から移したシートでも取り込みの過程で数式が値に変わる。
+ *   数式の有無を問わず「値が日付」だけで判定する。
+ *
+ *   B 列に日付が入るのは日付行と再掲日付行だけなので、緩めても取り違えない
+ *   （入力欄には ○▲公休 などの文字列しか入らない）。
+ *
+ * @param {*[][]} values B列の値（1行目から）
+ * @return {number[]} 日付が入っていた行番号（1 起点）を上から順に
  */
-function findDateFormulaRow_(formulas, values, nth) {
-  let hit = 0;
-  for (let r = 0; r < formulas.length; r++) {
-    if (formulas[r][0] !== '' && values[r][0] instanceof Date) {
-      hit++;
-      if (hit === nth) return r + 1;
-    }
+function findDateRows_(values) {
+  const rows = [];
+  for (let r = 0; r < values.length; r++) {
+    if (values[r][0] instanceof Date) rows.push(r + 1);
   }
-  return 0;
+  return rows;
+}
+
+/**
+ * 日付行が足りないときに、何が起きているかを言い当てるメッセージを作る。
+ * 「読めません」だけだと利用者が次の一手を打てないため。
+ * @param {number[]} dateRows 見つかった日付行
+ * @param {*[][]} values B列の値
+ * @return {string}
+ */
+function describeDateRowFailure_(dateRows, values) {
+  const numbers = values.filter(function (row) { return typeof row[0] === 'number'; }).length;
+
+  if (dateRows.length === 0 && numbers > 0) {
+    return `B列に日付が1つもありません。代わりに数値が ${numbers} 個あります。`
+      + '日付行の「1」「2」が日付ではなく、ただの数値になっている可能性があります。'
+      + '（シフト → レイアウト診断 で中身を確認できます）';
+  }
+  if (dateRows.length === 0) {
+    return 'B列に日付が1つもありません。日付行を判定できないため中止します。'
+      + '（シフト → レイアウト診断 で中身を確認できます）';
+  }
+  return `B列の日付行が1つ（${dateRows[0]} 行目）しか見つかりません。`
+    + '入力欄の上端は「2つ目の日付行（再掲）」の下と決めているため、'
+    + '再掲の行が要ります。';
 }
 
 /**
