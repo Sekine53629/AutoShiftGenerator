@@ -1266,6 +1266,65 @@ test('未実装の均等化は飛ばして記録される', function () {
   assert.ok(out.elapsedMs >= 0, '所要時間が返る');
 });
 
+test('週N日の人は週ごとの出勤日数が保たれる', function () {
+  const days = makeDays(30);
+  const members = [
+    member({ name: 'A' }),
+    member({ name: 'W4', rule: sandbox.RULE.WEEK_N, weekN: 4 }),
+  ];
+  const out = runFullEngine(members, days);
+
+  // 週ごとに数え直す。端週は日数で按分されるので round(4 * 日数 / 7)
+  const byWeek = {};
+  const daysInWeek = {};
+  for (let j = 1; j <= 30; j++) {
+    const key = days[j - 1].weekKey;
+    daysInWeek[key] = (daysInWeek[key] || 0) + 1;
+    if (sandbox.isWorkState_(out.plan[2][j])) byWeek[key] = (byWeek[key] || 0) + 1;
+  }
+  Object.keys(daysInWeek).forEach(function (key) {
+    const expected = Math.min(daysInWeek[key], Math.floor(4 * daysInWeek[key] / 7 + 0.5));
+    assert.strictEqual(byWeek[key] || 0, expected,
+      `週 ${key}（${daysInWeek[key]}日）の出勤が ${expected} 日`);
+  });
+});
+
+test('固定曜日の人はその曜日に必ず出勤する', function () {
+  const days = makeDays(30);
+  const members = [
+    member({ name: 'A' }),
+    member({ name: 'F', rule: sandbox.RULE.FIXED_DOW,
+             fixedDow: sandbox.parseFixedDow('月火金土') }),
+  ];
+  const out = runFullEngine(members, days);
+
+  for (let j = 1; j <= 30; j++) {
+    const wd = days[j - 1].weekday;
+    const shouldWork = sandbox.parseFixedDow('月火金土')[wd];
+    if (shouldWork) {
+      assert.ok(sandbox.isWorkState_(out.plan[2][j]),
+        `${j}日目（曜日 ${wd}）は出勤のはず`);
+    } else {
+      assert.ok(!sandbox.isWorkState_(out.plan[2][j]),
+        `${j}日目（曜日 ${wd}）は休みのはず`);
+    }
+  }
+});
+
+test('希望休は固定曜日より優先される', function () {
+  const days = makeDays(30);
+  // 9/1 は火曜。固定曜日に火を含めつつ、希望休を入れる
+  const members = [
+    member({ name: 'A' }),
+    member({ name: 'F', rule: sandbox.RULE.FIXED_DOW,
+             fixedDow: sandbox.parseFixedDow('火') }),
+  ];
+  const out = runFullEngine(members, days, [[], ['希休']]);
+
+  assert.strictEqual(out.plan[2][1], sandbox.ST_FOFF,
+    '既に入っている希望休を出勤で上書きしない');
+});
+
 test('置けない日があると未達として記録される', function () {
   // 1週間しかないのに月間休日数を10日にする → 置ききれない
   const days = makeDays(7);
