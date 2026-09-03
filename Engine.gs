@@ -567,6 +567,24 @@ function matchWorkSym(value) {
 }
 
 /**
+ * シフト表の入力欄に入る記号か（出勤記号 or 休み記号）。
+ * 医師名や備考の文字列と区別するために使う。
+ *
+ * 【なぜ要るか】医師数(診) の数式は医師名欄を COUNTA で数えているので、
+ * 医師名欄にシフト記号が入ると医師数が水増しされ、必要数がまるごと狂う。
+ * 記号を入力欄の外へ出さないことは、表の正しさに直結する。
+ *
+ * @param {string} value セルの文字列
+ * @return {boolean}
+ */
+function isShiftSymbol(value) {
+  const v = String(value || '').trim();
+  if (v === '') return false;
+  if (matchWorkSym(v) !== '') return true;
+  return SYM.OFF_ALL.indexOf(v) >= 0;
+}
+
+/**
  * 公休ノルマに数えない休みか。
  * 【必ず部分一致】設定 L11 に「有休」とだけ書けば「有休※」も外れる、という約束。
  * 集計列 AH/AI の振り分け（Setup.gs）もこの関数と同じ規則にすること（§5.4）。

@@ -10,6 +10,13 @@ Google Apps Script + Google スプレッドシートへ移植するための仕�
 - **想定マウント**: `GitHub/GAS/AutoShiftGenerator`（新規・コンテナバインドスクリプト）
 - **確定済みの方針**: クリック入力パレットは **サイドバー（HtmlService）** で代替する
 
+> **⚠ 2026-09-03 に §6 の方針が変わりました。**
+> クリック入力は **サイドバーではなく Web アプリ**（`WebApp.gs` / `WebAppView.html`）
+> になりました。経緯と割り切りは [`WEBAPP-DESIGN.md`](WEBAPP-DESIGN.md) を読んでください。
+> §6.3（押せる場所の制約）・§6.4（医師名スタンプ）・§6.5（値と太字だけ書く）・
+> §6.6（手動変更のログ）は Web アプリでもそのまま要件として効きます。
+> 実物のシフト表と本仕様書の差分は [`REAL-SHEET-FINDINGS.md`](REAL-SHEET-FINDINGS.md) に。
+
 ---
 
 ## 0. この文書の使い方

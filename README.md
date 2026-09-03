@@ -17,12 +17,12 @@ Excel VBA 版 [`Auto_Shift_Generator`](https://github.com/Sekine53629/Auto_Shift
 |---|---|---|
 | 1 | `Config.gs` / `Layout.gs` / `Log.gs` / `Menu.gs` | **実装済み** |
 | — | `SheetBuilder.gs`（シフト表シートの生成。VBA 版に無い新機能） | **実装済み** |
-| — | `WebApp.gs` / `WebApp.html`（Web アプリ。表示・入力・保存・シート作成） | **実装済み** |
+| — | `WebApp.gs` / `WebAppView.html`（Web アプリ。表示・入力・保存・シート作成） | **実装済み** |
 | 2 | `Schema.gs` / `Setup.gs` | 数式の組み立ては実装済み、シート生成は骨組み |
 | 3 | `Engine.gs`（純粋関数） | 骨組み（`matchWorkSym` / `isPaidOff` のみ実装済み） |
 | 4 | `ShiftAuto.gs` / `Report.gs` / `SettingsCheck.gs` | 設定の読み出しのみ実装済み |
 | 5 | `ChangeLog.gs` | 骨組み |
-| 6 | `Sidebar.gs` / `Sidebar.html` | 骨組み（Web アプリ化に伴い従の位置づけ） |
+| 6 | ~~`Sidebar.gs` / `Sidebar.html`~~ | Web アプリ化に伴い `archive/` へ移動 |
 | 7 | `Holidays.gs` / `Export.gs` | 祝日マスタの読み出しのみ実装済み |
 | 8 | `Survey.gs` / ドキュメント | 骨組み |
 
@@ -58,7 +58,7 @@ AutoShiftGenerator/
 ├── Menu.gs              onOpen とメニュー
 ├── SheetBuilder.gs      シフト表シートの生成（VBA 版に無い新機能）
 ├── WebApp.gs            Web アプリのサーバ側 API
-├── WebApp.html          Web アプリの画面
+├── WebAppView.html      Web アプリの画面
 ├── Engine.gs            ★配置エンジン（SpreadsheetApp を一切呼ばない）
 ├── ShiftAuto.gs         自動作成の入口・シートの読み書き
 ├── Report.gs            結果レポートの文字列組み立て
@@ -69,8 +69,7 @@ AutoShiftGenerator/
 ├── Holidays.gs          祝日マスタの取込
 ├── Export.gs            PDF 出力
 ├── Survey.gs            シート構造の調査
-├── Sidebar.gs           サイドバーのサーバ側 API
-├── Sidebar.html         サイドバーの UI
+├── archive/             使わなくなったファイル（貼り付けない）
 ├── tests/
 │   └── pure.test.js     GAS 不要のテスト（node tests/pure.test.js）
 └── docs/
@@ -79,8 +78,15 @@ AutoShiftGenerator/
     └── WEBAPP-DESIGN.md         Web アプリ化の設計メモ
 ```
 
-**コンテナバインドスクリプト**であること。`onOpen` / サイドバー / `getActiveRange()`
+**コンテナバインドスクリプト**であること。`onOpen` と `SpreadsheetApp.getActive()`
 はバインドでないと動きません。
+
+> **⚠ ファイル名は拡張子をまたいで一意にすること。**
+> Apps Script は名前と種別を持つので、`WebApp.gs` と `WebApp.html` は
+> 同じ「WebApp」として衝突し、後から作った方が拒否されます。
+> サーバ側と画面側は必ず別名にしてください（`WebApp.gs` + `WebAppView.html`）。
+> `.gs` 同士もグローバルスコープを共有するので、トップレベルの名前は全体で一意です。
+> どちらも `node tests/pure.test.js` が見張っています。
 
 ---
 
@@ -115,7 +121,13 @@ AutoShiftGenerator/
 [`docs/WEBAPP-DESIGN.md`](docs/WEBAPP-DESIGN.md) の「デプロイと公開範囲」を読んでください。
 **いまのコードに「誰が編集してよいか」の守りはありません。**
 
-できないこと（実装フェーズ待ち）: 自動作成の実行 / 変更ログへの記録 / PDF 出力 / 背景色。
+できないこと（実装フェーズ待ち）: 自動作成の実行 / 変更ログへの記録 / PDF 出力 / 背景色 / 月送り。
+
+**押せる場所は制限されます**（仕様書 §6.3）。シフト記号は入力欄だけ、医師名は医師名欄だけ、
+備考行と自由行は自由記入、消去はどこでも可。判定はサーバ側（`stampRejectReason_`）が
+値そのものを見て行い、画面のボタンの出し分けは見た目の親切でしかありません。
+記号が医師名欄に1つ紛れ込むだけで `医師数(診)`（その欄の `COUNTA`）が水増しされ、
+必要数と過不足が月まるごと狂うためです。
 
 > **同時編集に強くありません。** 保存は編集の外接矩形をまるごと書き戻すので、
 > 読んでから保存するまでのあいだに他の人が同じ範囲を直していると上書きします。

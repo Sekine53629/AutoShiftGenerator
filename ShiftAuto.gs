@@ -191,25 +191,53 @@ function findSettingRow_(cfgPairs, label) {
 }
 
 /**
- * 自動作成設定シートのメンバー氏名を上から順に返す（休業者も含む）。
- * シートが無ければ空配列。実名はここでしか扱わない（コードには書かない）。
- * @return {string[]}
+ * 自動作成設定シートの1列を、空欄を除いた文字列の配列として読む。
+ * 氏名・医師名など「設定シートに並ぶ名前」を取り出す唯一の入口。
+ * 実名はここを通してしか扱わない（コードには書かない）。
+ *
+ * @param {number} colNo 読む列（1 起点）
+ * @param {number} firstRow 先頭行
+ * @param {boolean=} unique 重複を除くか
+ * @return {string[]} シートが無い／空なら空配列
  */
-function readMemberNames() {
+function readConfigColumn(colNo, firstRow, unique) {
   try {
     const cfg = getSheetOrNull(CONFIG.SHEET_CFG);
     if (!cfg) return [];
-    const top = CFG_MEMBER.FIRST_ROW;
-    const rows = Math.max(0, cfg.getLastRow() - top + 1);
+    const rows = Math.max(0, cfg.getLastRow() - firstRow + 1);
     if (rows <= 0) return [];
-    return cfg.getRange(top, CFG_MEMBER.COL_NAME, rows, 1)
-      .getValues()
+
+    const seen = {};
+    return cfg.getRange(firstRow, colNo, rows, 1).getValues()
       .map(function (r) { return String(r[0] || '').trim(); })
-      .filter(function (name) { return name !== ''; });
+      .filter(function (name) {
+        if (name === '') return false;
+        if (!unique) return true;
+        if (seen[name]) return false;
+        seen[name] = true;
+        return true;
+      });
   } catch (error) {
-    logError(MODULE_SHIFTAUTO, 'readMemberNames', error, '');
+    logError(MODULE_SHIFTAUTO, 'readConfigColumn', error, `colNo=${colNo}`);
     return [];
   }
+}
+
+/**
+ * メンバー氏名を上から順に返す（休業者も含む）。
+ * @return {string[]}
+ */
+function readMemberNames() {
+  return readConfigColumn(CFG_MEMBER.COL_NAME, CFG_MEMBER.FIRST_ROW, false);
+}
+
+/**
+ * 医師名の候補（§6.4）。自動作成設定 N 列を正とする。
+ * VBA 版はパレット行に持っていたが、その置き場が無くなったので設定シートへ移した。
+ * @return {string[]}
+ */
+function readDoctorNames() {
+  return readConfigColumn(CFG_SETTING.COL_DOCTOR, CFG_SETTING.ROW + 1, true);
 }
 
 /**

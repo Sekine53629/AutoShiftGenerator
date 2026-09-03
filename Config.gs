@@ -105,6 +105,39 @@ const SYM = Object.freeze({
  */
 const WORK_SYM_PREFIX_MATCH = true;
 
+/**
+ * 書き込める行の種別（Web アプリの検証で使う）。
+ * どこに何を書いてよいかは仕様書 §6.3 の規則をそのまま引き継ぐ。
+ */
+const EDIT_REGION = Object.freeze({
+  NONE: 'none',      // 書き込めない行（日付行・集計行・空行）
+  GRID: 'grid',      // シフト入力欄（スタッフの行）
+  DOCTOR: 'doctor',  // 医師名欄
+  NOTE: 'note',      // 備考行
+  FREE: 'free',      // 自由行（発注担当など。マクロは読まない）
+});
+
+/** スタンプの種別 */
+const STAMP_KIND = Object.freeze({
+  SYMBOL: 'symbol',  // シフト記号（○ ● ▲ 公休 …）
+  DOCTOR: 'doctor',  // 医師名
+  TEXT: 'text',      // 備考・自由記入
+  ERASE: 'erase',    // 消去
+});
+
+/**
+ * どの種別をどの行に押せるか（§6.3）。
+ * 画面のボタンを無効化するための表で、**これは見た目のための目安**。
+ * 実際の可否はサーバの stampRejectReason_() が値そのものを見て決める。
+ * 消去はどこでも許す（書き間違いを直せなくなるため）。
+ */
+const STAMP_REGION_RULES = Object.freeze({
+  symbol: [EDIT_REGION.GRID],
+  doctor: [EDIT_REGION.DOCTOR],
+  text: [EDIT_REGION.NOTE, EDIT_REGION.FREE],
+  erase: [EDIT_REGION.GRID, EDIT_REGION.DOCTOR, EDIT_REGION.NOTE, EDIT_REGION.FREE],
+});
+
 /** 出勤とみなす記号の全体（○ の別字体 ◯ を含む） */
 const WORK_SYMS = Object.freeze(['○', '◯', '▲', '●']);
 

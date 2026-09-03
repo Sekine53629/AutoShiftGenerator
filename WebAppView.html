@@ -3,11 +3,22 @@
 <head>
 <meta charset="utf-8">
 <base target="_top">
+<!--
+  WebAppView.html — Web アプリの画面（サーバ側は WebApp.gs）
+
+  ※ Apps Script はファイル名が拡張子をまたいで一意でなければならない。
+    `WebApp.gs` と `WebApp.html` は同居できないので、画面側を別名にしてある。
+
+  【押せる場所の制約（仕様書 §6.3）】
+    ここでのボタンの出し分けは**見た目の親切**でしかない。
+    実際の可否はサーバの stampRejectReason_() が値そのものを見て決める。
+    画面の制限だけに頼ると、集計行や医師名欄に記号が入って表が黙って壊れる。
+-->
 <style>
   :root {
     --bg: #ffffff; --fg: #202124; --line: #d0d3d7; --head: #f1f3f4;
     --sat: #dce6f1; --sun: #f2dcdb; --out: #f2f2f2; --muted: #70757a;
-    --accent: #1a73e8; --short: #c5221f;
+    --accent: #1a73e8; --short: #c5221f; --sect: #fafafa;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 13px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
@@ -15,18 +26,20 @@
   header { position: sticky; top: 0; z-index: 30; background: var(--bg);
            border-bottom: 1px solid var(--line); padding: 8px 12px; }
   .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .bar + .bar { margin-top: 8px; }
+  .bar + .bar { margin-top: 6px; }
   select, button, input { font: inherit; padding: 5px 8px; }
   button { cursor: pointer; }
   button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   button:disabled { opacity: .45; cursor: not-allowed; }
   .grow { flex: 1 1 auto; }
   .muted { color: var(--muted); }
+  .group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .group > .tag { color: var(--muted); font-size: 12px; }
   #summary { font-weight: 600; }
   #status { padding: 4px 12px; min-height: 1.6em; }
   #status.err { color: var(--short); }
 
-  .scroll { overflow: auto; max-height: calc(100vh - 190px); }
+  .scroll { overflow: auto; max-height: calc(100vh - 210px); }
   table { border-collapse: separate; border-spacing: 0; }
   th, td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
            padding: 2px 4px; text-align: center; white-space: nowrap; }
@@ -36,20 +49,19 @@
           text-align: left; min-width: 128px; max-width: 128px;
           overflow: hidden; text-overflow: ellipsis; border-left: 1px solid var(--line); }
   thead .name { z-index: 25; background: var(--head); }
-  td.day { min-width: 30px; cursor: pointer; }
-  td.day:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+  td.day { min-width: 30px; }
+  td.day.can { cursor: pointer; }
+  td.day.can:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+  td.day.blocked { cursor: not-allowed; }
   td.day.formula { cursor: not-allowed; color: var(--muted); font-style: italic; }
   td.day.dirty { box-shadow: inset 0 0 0 2px var(--accent); }
   .sat { background: var(--sat); }
   .sun { background: var(--sun); }
   .out { background: var(--out); color: #aaa; }
   .agg { background: var(--head); min-width: 42px; }
-  .sect td, .sect th { background: #fafafa; }
+  tr.sect td { background: var(--sect); }
   tr.total td { background: var(--head); font-weight: 600; }
   td.neg { color: var(--short); font-weight: 700; }
-
-  #palette { display: flex; flex-wrap: wrap; gap: 4px; }
-  #palette button { min-width: 52px; }
 </style>
 </head>
 <body>
@@ -63,9 +75,8 @@
     <button id="runAuto">自動作成</button>
     <button id="reload">再読込</button>
   </div>
+  <div class="bar" id="paletteBar"></div>
   <div class="bar">
-    <span class="muted">スタンプ</span>
-    <div id="palette"></div>
     <span class="grow"></span>
     <button id="save" disabled>保存</button>
     <button id="discard" disabled>取消</button>
@@ -77,13 +88,14 @@
 
 <script>
   // ---- 状態 ---------------------------------------------------------
-  // stamp: いま選んでいるスタンプ。null なら消去モードではなく「押しても何もしない」
+  // stamp: {kind, value}。null なら押しても何もしない
   // dirty: 未保存の編集。キーは "row,col"
   let data = null;
   let stamp = null;
   const dirty = new Map();
 
   const $ = function (id) { return document.getElementById(id); };
+  const keyOf = function (row, col) { return row + ',' + col; };
 
   function setStatus(text, isError) {
     const el = $('status');
@@ -132,29 +144,65 @@
       renderPalette();
       renderGrid();
       $('summary').textContent = payload.summary || payload.monthLabel || '';
-      setStatus('セルを押すと選んでいるスタンプが入ります。保存するまでシートは変わりません。');
+      setStatus('スタンプを選んでセルを押すと入ります。保存するまでシートは変わりません。');
     }).catch(function (e) { setStatus('読み込みに失敗しました: ' + e.message, true); });
   }
 
   // ---- パレット -----------------------------------------------------
   function renderPalette() {
-    const box = $('palette');
-    box.innerHTML = '';
-    const items = []
-      .concat(data.palette.work.map(function (s) { return { label: s, value: s }; }))
-      .concat(data.palette.off.map(function (s) { return { label: s, value: s }; }));
-    items.push({ label: '消去', value: '' });
+    const bar = $('paletteBar');
+    bar.innerHTML = '';
 
+    addPaletteGroup(bar, 'シフト記号',
+      data.palette.symbols.map(function (s) { return { kind: 'symbol', value: s, label: s }; }));
+
+    if (data.palette.doctorNames.length) {
+      addPaletteGroup(bar, '医師名',
+        data.palette.doctorNames.map(function (n) {
+          return { kind: 'doctor', value: n, label: n };
+        }));
+    }
+
+    addPaletteGroup(bar, '', [{ kind: 'erase', value: '', label: '消去' }]);
+    bar.appendChild(Object.assign(document.createElement('span'), { className: 'grow' }));
+  }
+
+  function addPaletteGroup(bar, title, items) {
+    const group = document.createElement('div');
+    group.className = 'group';
+    if (title) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = title;
+      group.appendChild(tag);
+    }
     items.forEach(function (item) {
       const b = document.createElement('button');
       b.textContent = item.label;
+      if (stamp && stamp.kind === item.kind && stamp.value === item.value) b.className = 'on';
       b.onclick = function () {
-        stamp = (stamp === item.value) ? null : item.value;
+        const same = stamp && stamp.kind === item.kind && stamp.value === item.value;
+        stamp = same ? null : { kind: item.kind, value: item.value };
         renderPalette();
+        renderGrid();
       };
-      if (stamp === item.value) b.className = 'on';
-      box.appendChild(b);
+      group.appendChild(b);
     });
+    bar.appendChild(group);
+  }
+
+  /** いま選んでいるスタンプをこの領域に押せるか（見た目の出し分けだけ） */
+  function canStampInto(region) {
+    if (!stamp) return false;
+    const allowed = data.regionRules[stamp.kind] || [];
+    return allowed.indexOf(region) >= 0;
+  }
+
+  function blockedReason(region) {
+    if (!stamp) return '先に上のスタンプを選んでください。';
+    if (stamp.kind === 'symbol') return 'シフト記号はシフト入力欄にだけ入れられます。';
+    if (stamp.kind === 'doctor') return '医師名は医師名欄にだけ入れられます。';
+    return 'ここには押せません。';
   }
 
   // ---- グリッド -----------------------------------------------------
@@ -170,29 +218,27 @@
     t.innerHTML = '';
 
     const thead = document.createElement('thead');
-    thead.appendChild(headRow(data.monthLabel, function (d) { return d.label; }));
-    thead.appendChild(headRow('', function (d) { return d.weekLabel; }));
+    thead.appendChild(headRow(data.monthLabel, function (d) { return d.label; }, false));
+    thead.appendChild(headRow('', function (d) { return d.weekLabel; }, true));
     t.appendChild(thead);
 
     const tbody = document.createElement('tbody');
-
-    data.doctors.forEach(function (doc, i) {
-      tbody.appendChild(textRow(i === 0 ? '医師名' : '', doc.row, doc.cells, 'sect'));
-    });
-    tbody.appendChild(textRow('', data.freeRow.row, data.freeRow.cells, 'sect'));
+    data.sections.filter(function (s) { return s.place === 'above'; })
+      .forEach(function (s) { tbody.appendChild(sectionRow(s)); });
 
     data.rows.forEach(function (row) { tbody.appendChild(staffRow(row)); });
 
-    tbody.appendChild(textRow(data.note.cells.length ? '備考' : '備考',
-      data.note.row, data.note.cells, 'sect'));
+    data.sections.filter(function (s) { return s.place === 'below'; })
+      .forEach(function (s) { tbody.appendChild(sectionRow(s)); });
+
     tbody.appendChild(totalRow(data.aggRowLabels.doc, function (d) { return d.docCount; }));
     tbody.appendChild(totalRow(data.aggRowLabels.pharm, function (d) { return d.pharmCount; }));
-    tbody.appendChild(totalRow(data.aggRowLabels.shortage, function (d) { return d.shortage; }, true));
-
+    tbody.appendChild(totalRow(data.aggRowLabels.shortage,
+      function (d) { return d.shortage; }, true));
     t.appendChild(tbody);
   }
 
-  function headRow(label, pick) {
+  function headRow(label, pick, withAggHeads) {
     const tr = document.createElement('tr');
     tr.appendChild(th(label, 'name'));
     data.days.forEach(function (d) {
@@ -200,46 +246,54 @@
       if (d.holidayName) cell.title = d.holidayName;
       tr.appendChild(cell);
     });
-    data.aggHeads.forEach(function (h) { tr.appendChild(th(label === '' ? h : '', 'agg')); });
+    data.aggHeads.forEach(function (h) { tr.appendChild(th(withAggHeads ? h : '', 'agg')); });
     return tr;
+  }
+
+  /**
+   * 押せる／押せないの見た目と挙動を1か所にまとめる。
+   * スタッフ行も医師名欄も備考行も、セルの作り方はここだけ。
+   */
+  function dayCell(cell, day, sheetRow, region) {
+    const el = td(cell.v, 'day ' + dayClass(day));
+
+    const key = keyOf(sheetRow, day.col);
+    if (dirty.has(key)) {
+      el.textContent = dirty.get(key);
+      el.classList.add('dirty');
+    }
+
+    if (cell.f) {
+      el.classList.add('formula');
+      el.title = '数式のセルなので書き換えません';
+      return el;
+    }
+    if (canStampInto(region)) {
+      el.classList.add('can');
+      el.onclick = function () { stampCell(el, sheetRow, day.col); };
+    } else {
+      el.classList.add('blocked');
+      el.onclick = function () { setStatus(blockedReason(region), true); };
+    }
+    return el;
   }
 
   function staffRow(row) {
     const tr = document.createElement('tr');
-    tr.appendChild(td(row.name, 'name', row.kind ? row.kind : '区分が未登録です'));
-
+    tr.appendChild(td(row.name, 'name', row.kind || '区分が未登録です'));
     row.cells.forEach(function (cell, i) {
-      const day = data.days[i];
-      const el = td(cell.v, 'day ' + dayClass(day));
-      if (cell.f) {
-        el.classList.add('formula');
-        el.title = '数式のセルなので書き換えません';
-      } else {
-        el.onclick = function () { stampCell(el, row.row, day.col); };
-      }
-      const key = row.row + ',' + day.col;
-      if (dirty.has(key)) {
-        el.textContent = dirty.get(key);
-        el.classList.add('dirty');
-      }
-      tr.appendChild(el);
+      tr.appendChild(dayCell(cell, data.days[i], row.row, row.region));
     });
-
     row.agg.forEach(function (v) { tr.appendChild(td(v, 'agg')); });
     return tr;
   }
 
-  function textRow(label, sheetRow, cells, cls) {
+  function sectionRow(section) {
     const tr = document.createElement('tr');
-    tr.className = cls || '';
-    tr.appendChild(td(label, 'name'));
-    cells.forEach(function (v, i) {
-      const day = data.days[i];
-      const el = td(v, 'day ' + dayClass(day));
-      el.onclick = function () { stampCell(el, sheetRow, day.col); };
-      const key = sheetRow + ',' + day.col;
-      if (dirty.has(key)) { el.textContent = dirty.get(key); el.classList.add('dirty'); }
-      tr.appendChild(el);
+    tr.className = 'sect';
+    tr.appendChild(td(section.label, 'name'));
+    section.cells.forEach(function (cell, i) {
+      tr.appendChild(dayCell(cell, data.days[i], section.row, section.region));
     });
     data.aggHeads.forEach(function () { tr.appendChild(td('', 'agg')); });
     return tr;
@@ -276,12 +330,8 @@
 
   // ---- 編集 ---------------------------------------------------------
   function stampCell(el, row, col) {
-    if (stamp === null) {
-      setStatus('先に上のスタンプを選んでください。', true);
-      return;
-    }
-    dirty.set(row + ',' + col, stamp);
-    el.textContent = stamp;
+    dirty.set(keyOf(row, col), stamp.value);
+    el.textContent = stamp.value;
     el.classList.add('dirty');
     updateDirtyUi();
   }
@@ -302,8 +352,12 @@
     $('save').disabled = true;
     setStatus(`${edits.length} セルを保存しています…`);
     call('apiSaveCells', [data.sheetName, edits]).then(function (res) {
-      const msg = `${res.written} セルを保存しました。`
-        + (res.rejected.length ? ` ${res.rejected.length} セルは書き込めませんでした。` : '');
+      let msg = `${res.written} セルを保存しました。`;
+      if (res.rejected.length) {
+        // 拒否は黙って捨てない。理由をそのまま見せる
+        msg += ` ${res.rejected.length} セルは書き込めませんでした: `
+          + res.rejected[0].reason;
+      }
       setStatus(msg, res.rejected.length > 0);
       loadSheet(data.sheetName);
     }).catch(function (e) {
@@ -320,8 +374,13 @@
   };
 
   // ---- ツールバー ---------------------------------------------------
+  function confirmDiscard(action) {
+    return dirty.size === 0
+      || confirm(`未保存の編集が ${dirty.size} 件あります。破棄して${action}しますか？`);
+  }
+
   $('sheetSelect').onchange = function () {
-    if (dirty.size && !confirm('未保存の編集があります。破棄して切り替えますか？')) {
+    if (!confirmDiscard('切り替え')) {
       $('sheetSelect').value = data.sheetName;
       return;
     }
@@ -329,7 +388,7 @@
   };
 
   $('reload').onclick = function () {
-    if (dirty.size && !confirm('未保存の編集があります。破棄して読み直しますか？')) return;
+    if (!confirmDiscard('読み直')) return;
     loadSheet(data.sheetName);
   };
 

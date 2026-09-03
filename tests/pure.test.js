@@ -62,7 +62,7 @@ Object.assign(sandbox, vm.runInContext(
   '({ CONFIG, LABEL, NAMED_RANGE, LAYOUT, SYM, KIND, RULE, CFG_MEMBER, CFG_SETTING,'
   + ' SETTING_DEFAULT, HOLIDAY_SHEET, CHANGELOG_SHEET, ENGINE_LIMIT, DOC_BUSY_N,'
   + ' NON_NAME_LABELS, MASK_NAMES, SHEET_BUILD, SETUP_KNOWN_HEADS,'
-  + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH,'
+  + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH, EDIT_REGION, STAMP_KIND, STAMP_REGION_RULES,'
   + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF })', sandbox));
 
 // ---- テストランナー ----------------------------------------------------
@@ -331,6 +331,140 @@ test('早番と事務員の早番を取り違えない（ラベルの片方が�
     '薬剤師の早番は 1 でなければならない');
   assert.strictEqual(sandbox.readSettingNumber_(pairs, 'clerkEarlyN'), 9,
     '事務員の早番は 9 でなければならない');
+});
+
+// ---- Web アプリの書き込み検証（仕様書 §6.3 の移植） -------------------
+
+/** planSheetPositions_ の位置をそのまま layout として使う */
+function layoutFor(staffRows) {
+  const p = sandbox.planSheetPositions_(staffRows || 16);
+  p.freeRow = p.doctorBottom + 1;
+  return p;
+}
+
+test('classifyEditRegion_ が行を正しく仕分ける', function () {
+  const L = layoutFor(16);
+  const R = sandbox.EDIT_REGION;
+  assert.strictEqual(sandbox.classifyEditRegion_(L.gridTop, L), R.GRID);
+  assert.strictEqual(sandbox.classifyEditRegion_(L.gridBottom, L), R.GRID);
+  assert.strictEqual(sandbox.classifyEditRegion_(L.doctorTop, L), R.DOCTOR);
+  assert.strictEqual(sandbox.classifyEditRegion_(L.doctorBottom, L), R.DOCTOR);
+  assert.strictEqual(sandbox.classifyEditRegion_(L.doctorBottom + 1, L), R.FREE);
+  assert.strictEqual(sandbox.classifyEditRegion_(L.noteRow, L), R.NOTE);
+
+  // 書き込ませてはいけない行
+  [L.headerRow, L.dateRow, L.weekRow, L.repeatDateRow,
+   L.docRow, L.pharmRow, L.shortageRow].forEach(function (row) {
+    assert.strictEqual(sandbox.classifyEditRegion_(row, L), R.NONE, `行 ${row} は書き込み不可`);
+  });
+});
+
+test('シフト記号は入力欄の外へ出せない（医師数が水増しされるため）', function () {
+  const L = layoutFor(16);
+  const docs = ['医師A', '医師B'];   // テスト用の仮名。実名は使わない
+  const reject = function (row, value) {
+    return sandbox.stampRejectReason_({ row: row, col: L.firstCol, value: value }, L, docs);
+  };
+
+  // 入力欄には入る
+  ['○', '●', '▲', '公休', '希休', '有休'].forEach(function (sym) {
+    assert.strictEqual(reject(L.gridTop, sym), '', `入力欄に ${sym} は入る`);
+  });
+
+  // 医師名欄・備考行・自由行には入らない
+  [L.doctorTop, L.noteRow, L.doctorBottom + 1].forEach(function (row) {
+    assert.ok(reject(row, '▲') !== '', `行 ${row} に ▲ を入れさせない`);
+    assert.ok(reject(row, '公休') !== '', `行 ${row} に 公休 を入れさせない`);
+  });
+});
+
+test('医師名は医師名欄にだけ入る', function () {
+  const L = layoutFor(16);
+  const docs = ['医師A', '医師B'];
+  const reject = function (row, value) {
+    return sandbox.stampRejectReason_({ row: row, col: L.firstCol, value: value }, L, docs);
+  };
+
+  assert.strictEqual(reject(L.doctorTop, '医師A'), '', '医師名欄には入る');
+  assert.ok(reject(L.gridTop, '医師A') !== '', '入力欄には入れさせない');
+  assert.ok(reject(L.doctorTop, '知らない名前') !== '',
+    '医師名欄は N 列に登録された名前だけ');
+});
+
+test('備考行と自由行は自由記入、消去はどこでも許す', function () {
+  const L = layoutFor(16);
+  const docs = ['医師A'];
+  const reject = function (row, value) {
+    return sandbox.stampRejectReason_({ row: row, col: L.firstCol, value: value }, L, docs);
+  };
+
+  assert.strictEqual(reject(L.noteRow, '銀行'), '', '備考は自由記入');
+  assert.strictEqual(reject(L.doctorBottom + 1, '発注担当'), '', '自由行も自由記入');
+
+  // 消去（空文字）はどこでも通る。書き間違いを直せなくなるため（§6.3）
+  [L.gridTop, L.doctorTop, L.noteRow, L.doctorBottom + 1].forEach(function (row) {
+    assert.strictEqual(reject(row, ''), '', `行 ${row} で消去は許す`);
+    assert.strictEqual(reject(row, '   '), '', '空白だけも消去と同じ扱い');
+  });
+});
+
+test('書き込めない行と列は必ず弾く', function () {
+  const L = layoutFor(16);
+  const reject = function (row, col) {
+    return sandbox.stampRejectReason_({ row: row, col: col, value: '○' }, L, []);
+  };
+  assert.ok(reject(L.docRow, L.firstCol) !== '', '集計行は弾く');
+  assert.ok(reject(L.dateRow, L.firstCol) !== '', '日付行は弾く');
+  assert.ok(reject(L.gridTop, 1) !== '', 'A列（氏名）は弾く');
+  assert.ok(reject(L.gridTop, L.lastCol + 1) !== '', '日付列の右外は弾く');
+  assert.strictEqual(reject(L.gridTop, L.lastCol), '', '日付列の右端は通る');
+});
+
+test('isShiftSymbol が記号と名前を区別する', function () {
+  ['○', '◯', '●', '▲', '公休', '希休', '夏休', '有休', '有休※'].forEach(function (v) {
+    assert.strictEqual(sandbox.isShiftSymbol(v), true, `${v} は記号`);
+  });
+  ['', '  ', '医師A', '銀行', '発注担当'].forEach(function (v) {
+    assert.strictEqual(sandbox.isShiftSymbol(v), false, `${JSON.stringify(v)} は記号ではない`);
+  });
+});
+
+test('画面の出し分け表がサーバの判定と噛み合っている', function () {
+  const rules = sandbox.STAMP_REGION_RULES;
+  const R = sandbox.EDIT_REGION;
+  assert.deepStrictEqual(Array.from(rules.symbol), [R.GRID], '記号は入力欄だけ');
+  assert.deepStrictEqual(Array.from(rules.doctor), [R.DOCTOR], '医師名は医師名欄だけ');
+  assert.ok(Array.from(rules.erase).length === 4, '消去はどこでも押せる');
+});
+
+// ---- ファイル名の衝突（Apps Script はファイル名が拡張子をまたいで一意） --
+
+test('.gs と .html に同じ基底名が無い', function () {
+  const names = fs.readdirSync(ROOT);
+  const gs = names.filter(function (f) { return f.endsWith('.gs'); })
+    .map(function (f) { return f.slice(0, -3); });
+  const html = names.filter(function (f) { return f.endsWith('.html'); })
+    .map(function (f) { return f.slice(0, -5); });
+  const clash = gs.filter(function (b) { return html.indexOf(b) >= 0; });
+  assert.deepStrictEqual(clash, [],
+    'Apps Script はファイル名が拡張子をまたいで一意でなければならない: ' + clash.join(', '));
+});
+
+test('トップレベルの宣言名がプロジェクト全体で一意', function () {
+  const seen = {};
+  const dup = [];
+  fs.readdirSync(ROOT).filter(function (f) { return f.endsWith('.gs'); })
+    .forEach(function (file) {
+      const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+      const re = /^(?:function|const|let|var|class)\s+([A-Za-z0-9_$]+)/gm;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        if (seen[m[1]]) dup.push(`${m[1]} (${seen[m[1]]} と ${file})`);
+        else seen[m[1]] = file;
+      }
+    });
+  assert.deepStrictEqual(dup, [],
+    '.gs は全ファイルで1つのグローバルスコープを共有する: ' + dup.join(', '));
 });
 
 // ---- 結果 -------------------------------------------------------------

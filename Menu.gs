@@ -15,7 +15,6 @@ function onOpen() {
     SpreadsheetApp.getUi()
       .createMenu('シフト')
       .addItem('Web アプリを開く', 'openWebApp')
-      .addItem('入力パレットを開く（サイドバー）', 'showSidebar')
       .addSeparator()
       .addItem('シフト自動作成', 'runAutoShift')
       .addItem('設定チェック', 'runSettingsCheck')
@@ -63,11 +62,6 @@ function openWebApp() {
   } catch (error) {
     logError(MODULE_MENU, 'openWebApp', error, '');
   }
-}
-
-/** サイドバー（入力パレット）を開く。 */
-function showSidebar() {
-  return notImplemented_(MODULE_MENU, 'showSidebar', 6); // TODO(P6)
 }
 
 /**
