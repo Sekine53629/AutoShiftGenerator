@@ -89,15 +89,17 @@ function buildShiftSheet(year, month, options) {
       : SHEET_BUILD.DEFAULT_STAFF_ROWS;
 
     const pos = planSheetPositions_(staffRows);
+    // 書式は実物から取り込んだプロファイルに従う。1回だけ読んで持ち回る
+    const profile = loadFormatProfile();
     const sheet = ss.insertSheet(sheetName);
 
-    writeHeaderBlock_(sheet, pos, year, month);
-    writeDateRows_(sheet, pos);
-    writeStaffColumn_(sheet, pos, staffNames);
-    writeAggregateRows_(sheet, pos);
-    writeAggregateColumns_(sheet, pos);
-    applySheetFormatting_(sheet, pos);
-    applyDayConditionalFormats_(sheet, pos);
+    writeHeaderBlock_(sheet, pos, year, month, profile);
+    writeDateRows_(sheet, pos, profile);
+    writeStaffColumn_(sheet, pos, staffNames, profile);
+    writeAggregateRows_(sheet, pos, profile);
+    writeAggregateColumns_(sheet, pos, profile);
+    applySheetFormatting_(sheet, pos, profile);
+    applyDayConditionalFormats_(sheet, pos, profile);
     applyNamedRangesIfCanonical_(sheet, pos, sheetName);
 
     SpreadsheetApp.flush();
@@ -158,14 +160,14 @@ function planSheetPositions_(staffRows) {
  *   実物のシフト表が使っている「R8.9月」の見た目は D セルに数式で組む。
  *   **元号が変わると数式を直す必要がある**（-2018 が令和固有のため）。
  */
-function writeHeaderBlock_(sheet, pos, year, month) {
+function writeHeaderBlock_(sheet, pos, year, month, profile) {
   const h = pos.headerRow;
   const monthSerial = (year - 1900) * 12 + month;
 
   sheet.getRange(h, LAYOUT.COL_MONTH).setValue(monthSerial);
   sheet.getRange(h, 1)
     .setFormula(`=DATE(1900,${toColumnLetter(LAYOUT.COL_MONTH)}${h},1)`)
-    .setNumberFormat('yyyy"年"m"月"');
+    .setNumberFormat(profile['format.month']);
 
   // 和暦の見出し（令和のみ。元号が変わったらここを直す）
   sheet.getRange(h, 4).setFormula(`="R"&(YEAR(A${h})-2018)&"."&MONTH(A${h})&"月"`);
@@ -185,7 +187,7 @@ function writeHeaderBlock_(sheet, pos, year, month) {
  * 日付行・曜日行・再掲日付行を書く。
  * B 列の先頭だけは必ず「数式かつ日付」にすること。Layout がこれを基準にする。
  */
-function writeDateRows_(sheet, pos) {
+function writeDateRows_(sheet, pos, profile) {
   const dates = [];
   const weeks = [];
   const repeats = [];
@@ -200,32 +202,33 @@ function writeDateRows_(sheet, pos) {
   }
 
   sheet.getRange(pos.dateRow, pos.firstCol, 1, pos.dayCount)
-    .setFormulas([dates]).setNumberFormat('d');
+    .setFormulas([dates]).setNumberFormat(profile['format.date']);
   sheet.getRange(pos.weekRow, pos.firstCol, 1, pos.dayCount)
     .setFormulas([weeks]);
   sheet.getRange(pos.repeatDateRow, pos.firstCol, 1, pos.dayCount)
-    .setFormulas([repeats]).setNumberFormat('d');
+    .setFormulas([repeats]).setNumberFormat(profile['format.date']);
 }
 
 /**
  * A 列の氏名とラベルを書く。氏名は自動作成設定から来たものだけ。
  * 予備行は空のままにする（派遣の自由記入などに使う）。
  */
-function writeStaffColumn_(sheet, pos, staffNames) {
+function writeStaffColumn_(sheet, pos, staffNames, profile) {
   const rows = pos.gridBottom - pos.gridTop + 1;
   const names = [];
   for (let i = 0; i < rows; i++) {
     names.push([i < staffNames.length ? staffNames[i] : '']);
   }
   sheet.getRange(pos.gridTop, 1, rows, 1).setValues(names);
-  sheet.getRange(pos.noteRow, 1).setValue(LABEL.NOTE);
+  sheet.getRange(pos.noteRow, 1).setValue(profile['label.note']);
+  sheet.getRange(pos.doctorTop, 1).setValue(profile['label.doctors']);
 }
 
 /**
  * 集計行（医師数(診) / 薬剤師出勤数 / 過不足）を B〜AF に書く。
  * 薬剤師出勤数は §5.3 の作業列方式（MATCH に配列を渡さない）。
  */
-function writeAggregateRows_(sheet, pos) {
+function writeAggregateRows_(sheet, pos, profile) {
   const docF = [];
   const pharmF = [];
   const shortF = [];
@@ -240,9 +243,9 @@ function writeAggregateRows_(sheet, pos) {
     shortF.push(`=${col}${pos.pharmRow}-(${col}${pos.docRow}+${reqPlus})`);
   }
 
-  sheet.getRange(pos.docRow, 1).setValue(SHEET_BUILD.ROW_HEAD_DOC);
-  sheet.getRange(pos.pharmRow, 1).setValue(SHEET_BUILD.ROW_HEAD_PHARM);
-  sheet.getRange(pos.shortageRow, 1).setValue(SHEET_BUILD.ROW_HEAD_SHORTAGE);
+  sheet.getRange(pos.docRow, 1).setValue(profile['label.doc']);
+  sheet.getRange(pos.pharmRow, 1).setValue(profile['label.pharm']);
+  sheet.getRange(pos.shortageRow, 1).setValue(profile['label.shortage']);
 
   sheet.getRange(pos.docRow, pos.firstCol, 1, pos.dayCount).setFormulas([docF]);
   sheet.getRange(pos.pharmRow, pos.firstCol, 1, pos.dayCount).setFormulas([pharmF]);
@@ -257,7 +260,7 @@ function writeAggregateRows_(sheet, pos) {
  *   AJ ○早番 / AK ▲遅番 / AL ●遅半 / AM 5診出勤
  *   AN        … 区分の作業列（§5.3）。非表示にする
  */
-function writeAggregateColumns_(sheet, pos) {
+function writeAggregateColumns_(sheet, pos, profile) {
   const cfgPairs = readSettingPairs();
   const paidSyms = readSettingText_(cfgPairs, 'paidSyms');
   const quotaSyms = splitOffSymbolsByQuota_(paidSyms, true);
@@ -284,9 +287,9 @@ function writeAggregateColumns_(sheet, pos) {
   }
 
   sheet.getRange(pos.repeatDateRow, LAYOUT.COL_AGG_FIRST, 1, aggWidth)
-    .setValues([SHEET_BUILD.AGG_HEADS])
+    .setValues([aggHeadsFrom_(profile, aggWidth)])
     .setFontWeight('bold')
-    .setBackground(SHEET_BUILD.COLOR_HEADER_BG)
+    .setBackground(profile['role.repeatDate.bg'])
     .setHorizontalAlignment('center');
 
   sheet.getRange(pos.gridTop, LAYOUT.COL_AGG_FIRST, rows, aggWidth).setFormulas(agg);
@@ -296,34 +299,64 @@ function writeAggregateColumns_(sheet, pos) {
 }
 
 /** 列幅・罫線・固定行・配置などの体裁を整える。 */
-function applySheetFormatting_(sheet, pos) {
-  sheet.setColumnWidth(1, SHEET_BUILD.COL_WIDTH_NAME);
-  sheet.setColumnWidths(pos.firstCol, pos.dayCount, SHEET_BUILD.COL_WIDTH_DAY);
+function applySheetFormatting_(sheet, pos, profile) {
+  // --- 列幅 ---
+  sheet.setColumnWidth(1, profile['col.name.width']);
+  sheet.setColumnWidths(pos.firstCol, pos.dayCount, profile['col.day.width']);
   sheet.setColumnWidths(LAYOUT.COL_AGG_FIRST,
-    LAYOUT.COL_AGG_LAST - LAYOUT.COL_AGG_FIRST + 1, SHEET_BUILD.COL_WIDTH_AGG);
+    LAYOUT.COL_AGG_LAST - LAYOUT.COL_AGG_FIRST + 1, profile['col.agg.width']);
 
-  const headerRows = [pos.dateRow, pos.weekRow, pos.repeatDateRow];
-  headerRows.forEach(function (r) {
-    sheet.getRange(r, pos.firstCol, 1, pos.dayCount)
-      .setFontWeight('bold')
-      .setBackground(SHEET_BUILD.COLOR_HEADER_BG)
-      .setHorizontalAlignment('center');
+  // --- 役割ごとの書式。行の高さ・背景・文字色・サイズ・太字・横位置 ---
+  const roleRow = roleRowMap_({
+    headerRow: pos.headerRow, dateRow: pos.dateRow, weekRow: pos.weekRow,
+    doctorTop: pos.doctorTop, doctorBottom: pos.doctorBottom,
+    repeatDateRow: pos.repeatDateRow, gridTop: pos.gridTop,
+    noteRow: pos.noteRow, docRow: pos.docRow,
   });
 
-  sheet.getRange(pos.gridTop, pos.firstCol, pos.gridBottom - pos.gridTop + 1, pos.dayCount)
-    .setHorizontalAlignment('center');
-
-  [pos.docRow, pos.pharmRow, pos.shortageRow].forEach(function (r) {
-    sheet.getRange(r, 1, 1, pos.lastCol).setBackground(SHEET_BUILD.COLOR_HEADER_BG);
-    sheet.getRange(r, pos.firstCol, 1, pos.dayCount).setHorizontalAlignment('center');
+  // 1行だけの役割
+  ['header', 'date', 'week', 'free', 'repeatDate', 'note'].forEach(function (role) {
+    applyRoleFormat_(sheet, roleRow[role], roleFormat(profile, role),
+      pos.firstCol, pos.dayCount);
   });
 
+  // 複数行にまたがる役割は行ごとに当てる（行の高さが行単位の API のため）
+  applyRoleRange_(sheet, pos.doctorTop, pos.doctorBottom,
+    roleFormat(profile, 'doctor'), pos.firstCol, pos.dayCount);
+  applyRoleRange_(sheet, pos.gridTop, pos.gridBottom,
+    roleFormat(profile, 'grid'), pos.firstCol, pos.dayCount);
+  // 集計行は A 列も含めて塗る（見出しごと帯にする）
+  applyRoleRange_(sheet, pos.docRow, pos.shortageRow,
+    roleFormat(profile, 'total'), 1, pos.lastCol);
+
+  // --- 罫線と固定 ---
   sheet.getRange(pos.dateRow, 1, pos.shortageRow - pos.dateRow + 1, pos.lastCol)
     .setBorder(true, true, true, true, true, true,
-      SHEET_BUILD.COLOR_BORDER, SpreadsheetApp.BorderStyle.SOLID);
+      profile['sheet.borderColor'], SpreadsheetApp.BorderStyle.SOLID);
 
   sheet.setFrozenRows(pos.weekRow);
   sheet.setFrozenColumns(1);
+}
+
+/**
+ * 同じ役割が続く行に書式を当てる。
+ * 行の高さは行単位でしか指定できないので、行ごとに呼ぶ。
+ */
+function applyRoleRange_(sheet, top, bottom, fmt, firstCol, numCols) {
+  for (let r = top; r <= bottom; r++) {
+    applyRoleFormat_(sheet, r, fmt, firstCol, numCols);
+  }
+}
+
+/**
+ * 集計列の見出しをプロファイルから取る。
+ * 個数が合わないときは既定値に落とす（1個足りないだけで列がずれるため）。
+ */
+function aggHeadsFrom_(profile, width) {
+  const heads = String(profile['label.agg'] || '').split(',')
+    .map(function (h) { return h.trim(); });
+  if (heads.length !== width) return SHEET_BUILD.AGG_HEADS.slice(0, width);
+  return heads;
 }
 
 /**
@@ -334,7 +367,7 @@ function applySheetFormatting_(sheet, pos) {
  *   祝日マスタを見るには INDIRECT で包む必要がある。
  *   直接書くと「無効な数式」ではなく、静かに一度も一致しなくなる。
  */
-function applyDayConditionalFormats_(sheet, pos) {
+function applyDayConditionalFormats_(sheet, pos, profile) {
   const first = toColumnLetter(pos.firstCol);
   const h = pos.headerRow;
   const d = pos.dateRow;
@@ -347,20 +380,20 @@ function applyDayConditionalFormats_(sheet, pos) {
     // 月外の日は先に灰色で潰す（順序が先のルールが勝つ）
     SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied(`=MONTH(${first}$${d})<>MONTH($A$${h})`)
-      .setBackground(SHEET_BUILD.COLOR_OUT_MONTH_BG)
-      .setFontColor('#999999')
+      .setBackground(profile['day.outMonthBg'])
+      .setFontColor(profile['day.outMonthFg'])
       .setRanges([wholeRange])
       .build(),
     SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied(
         `=OR(WEEKDAY(${first}$${d})=1,`
         + `COUNTIF(INDIRECT("${CONFIG.SHEET_HOLIDAY}!$A:$A"),${first}$${d})>0)`)
-      .setBackground(SHEET_BUILD.COLOR_SUN_BG)
+      .setBackground(profile['day.sunBg'])
       .setRanges([headerRange])
       .build(),
     SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied(`=WEEKDAY(${first}$${d})=7`)
-      .setBackground(SHEET_BUILD.COLOR_SAT_BG)
+      .setBackground(profile['day.satBg'])
       .setRanges([headerRange])
       .build(),
   ];

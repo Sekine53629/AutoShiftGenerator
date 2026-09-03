@@ -20,6 +20,7 @@ const CONFIG = Object.freeze({
   SHEET_LOG: 'シフト変更ログ',
   SHEET_RUNLOG: '実行ログ',
   SHEET_SURVEY: 'シート構造調査',
+  SHEET_PROFILE: '書式プロファイル',
 
   /** appsscript.json の timeZone と必ず同じ値にすること */
   TIMEZONE_HINT: 'Asia/Tokyo',
@@ -274,6 +275,145 @@ const NON_NAME_LABELS = Object.freeze([
 
 /** シート構造調査の氏名マスク（§7.4。個人情報保護のため必ず true を保つ） */
 const MASK_NAMES = true;
+
+/**
+ * 書式プロファイル（FormatProfile.gs）。
+ *
+ * 運用中のシフト表から書式を吸い出し、生成時に同じ見た目を再現するための仕組み。
+ * VBA 版には無い。
+ *
+ * 【位置ではなく「行の役割」で持つ】
+ *   セル位置ごとに丸写しすると、スタッフが1人増えただけで全部ずれる。
+ *   また、丸写しは医師名や面談日程まで持ち出すことになる。
+ *   だから「日付行の背景色」「入力欄の文字サイズ」という単位で取る。
+ *
+ * 【値（セルの中身）は取らない】
+ *   取るのは書式と、位置が決まっているラベル（集計行の見出しなど）だけ。
+ *   氏名・医師名・面談日程は対象外。プロファイルはスプレッドシート上に置き、
+ *   リポジトリには入れない。
+ */
+const FORMAT_PROFILE = Object.freeze({
+  HDR_ROW: 1,
+  FIRST_ROW: 2,
+  COL_KEY: 1,
+  COL_VALUE: 2,
+  COL_NOTE: 3,
+  HEADS: ['項目', '値', '説明'],
+
+  /** 行の役割。プロファイルのキー `role.<役割>.<属性>` の前半になる */
+  ROLES: Object.freeze([
+    { key: 'header', label: '年月・タイトル行' },
+    { key: 'date', label: '日付行' },
+    { key: 'week', label: '曜日行' },
+    { key: 'doctor', label: '医師名欄' },
+    { key: 'free', label: '自由行（発注担当など）' },
+    { key: 'repeatDate', label: '日付の再掲行' },
+    { key: 'grid', label: 'シフト入力欄' },
+    { key: 'note', label: '備考行' },
+    { key: 'total', label: '集計行（医師数・出勤数・過不足）' },
+  ]),
+
+  /** 役割ごとに取る書式 */
+  ATTRS: Object.freeze([
+    { key: 'height', label: '行の高さ(px)' },
+    { key: 'bg', label: '背景色' },
+    { key: 'fontColor', label: '文字色' },
+    { key: 'fontSize', label: '文字サイズ' },
+    { key: 'bold', label: '太字' },
+    { key: 'hAlign', label: '横位置' },
+  ]),
+});
+
+/**
+ * 書式プロファイルの既定値。
+ * プロファイルシートが無い／項目が欠けているときは必ずここへ落ちる。
+ * 実物から吸い出す前でもシートが作れること、が要件。
+ */
+const FORMAT_DEFAULT = Object.freeze({
+  'col.name.width': 118,
+  'col.day.width': 34,
+  'col.agg.width': 48,
+
+  'day.satBg': '#dce6f1',
+  'day.sunBg': '#f2dcdb',
+  'day.outMonthBg': '#f2f2f2',
+  'day.outMonthFg': '#999999',
+  'sheet.borderColor': '#808080',
+  'sheet.leaveBg': '#bfbfbf',
+
+  'role.header.height': 24,
+  'role.header.bg': '#ffffff',
+  'role.header.fontColor': '#000000',
+  'role.header.fontSize': 14,
+  'role.header.bold': true,
+  'role.header.hAlign': 'left',
+
+  'role.date.height': 20,
+  'role.date.bg': '#d9d9d9',
+  'role.date.fontColor': '#000000',
+  'role.date.fontSize': 10,
+  'role.date.bold': true,
+  'role.date.hAlign': 'center',
+
+  'role.week.height': 20,
+  'role.week.bg': '#d9d9d9',
+  'role.week.fontColor': '#000000',
+  'role.week.fontSize': 10,
+  'role.week.bold': true,
+  'role.week.hAlign': 'center',
+
+  'role.doctor.height': 20,
+  'role.doctor.bg': '#ffffff',
+  'role.doctor.fontColor': '#000000',
+  'role.doctor.fontSize': 10,
+  'role.doctor.bold': false,
+  'role.doctor.hAlign': 'center',
+
+  'role.free.height': 20,
+  'role.free.bg': '#ffffff',
+  'role.free.fontColor': '#000000',
+  'role.free.fontSize': 9,
+  'role.free.bold': false,
+  'role.free.hAlign': 'center',
+
+  'role.repeatDate.height': 20,
+  'role.repeatDate.bg': '#d9d9d9',
+  'role.repeatDate.fontColor': '#000000',
+  'role.repeatDate.fontSize': 10,
+  'role.repeatDate.bold': true,
+  'role.repeatDate.hAlign': 'center',
+
+  'role.grid.height': 20,
+  'role.grid.bg': '#ffffff',
+  'role.grid.fontColor': '#000000',
+  'role.grid.fontSize': 10,
+  'role.grid.bold': false,
+  'role.grid.hAlign': 'center',
+
+  'role.note.height': 20,
+  'role.note.bg': '#ffffff',
+  'role.note.fontColor': '#000000',
+  'role.note.fontSize': 9,
+  'role.note.bold': false,
+  'role.note.hAlign': 'center',
+
+  'role.total.height': 20,
+  'role.total.bg': '#d9d9d9',
+  'role.total.fontColor': '#000000',
+  'role.total.fontSize': 10,
+  'role.total.bold': true,
+  'role.total.hAlign': 'center',
+
+  'format.date': 'd',
+  'format.month': 'yyyy"年"m"月"',
+
+  'label.doc': '医師数(診)',
+  'label.pharm': '薬剤師出勤数',
+  'label.shortage': '過不足',
+  'label.note': '備考',
+  'label.doctors': '医師名',
+  'label.agg': '公休,有休,○早番,▲遅番,●遅半,5診出勤',
+});
 
 /**
  * シフト表シートの生成（SheetBuilder.gs）。

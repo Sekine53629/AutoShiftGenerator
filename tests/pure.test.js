@@ -63,7 +63,7 @@ Object.assign(sandbox, vm.runInContext(
   + ' SETTING_DEFAULT, HOLIDAY_SHEET, CHANGELOG_SHEET, ENGINE_LIMIT, DOC_BUSY_N,'
   + ' NON_NAME_LABELS, MASK_NAMES, SHEET_BUILD, SETUP_KNOWN_HEADS,'
   + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH, EDIT_REGION, STAMP_KIND, STAMP_REGION_RULES,'
-  + ' SCHEMA,'
+  + ' SCHEMA, FORMAT_PROFILE, FORMAT_DEFAULT,'
   + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF })', sandbox));
 
 // ---- テストランナー ----------------------------------------------------
@@ -512,6 +512,92 @@ test('全体設定の既定値が過不足なく並ぶ', function () {
     sandbox.SETTING_DEFAULT.earlyN.value, '薬剤師の早番を取り違えない');
   assert.strictEqual(sandbox.readSettingText_(pairs, 'paidSyms'),
     sandbox.SETTING_DEFAULT.paidSyms.value);
+});
+
+// ---- 書式プロファイル -------------------------------------------------
+
+test('プロファイルが無くても既定値だけで揃う', function () {
+  const merged = sandbox.mergeProfileRows_(sandbox.FORMAT_DEFAULT, []);
+  Array.from(sandbox.FORMAT_PROFILE.ROLES).forEach(function (role) {
+    Array.from(sandbox.FORMAT_PROFILE.ATTRS).forEach(function (attr) {
+      const key = `role.${role.key}.${attr.key}`;
+      assert.ok(merged[key] !== undefined, `${key} に既定値がある`);
+    });
+  });
+  ['col.name.width', 'col.day.width', 'col.agg.width',
+   'day.satBg', 'day.sunBg', 'day.outMonthBg', 'day.outMonthFg',
+   'format.date', 'format.month', 'label.agg'].forEach(function (key) {
+    assert.ok(merged[key] !== undefined, `${key} に既定値がある`);
+  });
+});
+
+test('プロファイルの値が既定値を上書きする', function () {
+  const merged = sandbox.mergeProfileRows_(sandbox.FORMAT_DEFAULT, [
+    ['col.day.width', 28],
+    ['day.satBg', '#cfe2f3'],
+    ['role.grid.bold', 'TRUE'],
+  ]);
+  assert.strictEqual(merged['col.day.width'], 28);
+  assert.strictEqual(merged['day.satBg'], '#cfe2f3');
+  assert.strictEqual(merged['role.grid.bold'], true, '文字列の TRUE を真偽値にする');
+  assert.strictEqual(merged['col.agg.width'], sandbox.FORMAT_DEFAULT['col.agg.width'],
+    '触っていない項目は既定値のまま');
+});
+
+test('空欄・知らないキー・壊れた値は既定値に落ちる', function () {
+  const d = sandbox.FORMAT_DEFAULT;
+  const merged = sandbox.mergeProfileRows_(d, [
+    ['col.day.width', ''],          // 空欄 → 消しただけで既定値に戻る
+    ['col.name.width', 'あいう'],    // 数値にならない
+    ['role.grid.bold', 'たぶん'],    // 真偽値にならない
+    ['knows.nothing', 99],          // 知らないキーは捨てる
+    ['', 1],
+  ]);
+  assert.strictEqual(merged['col.day.width'], d['col.day.width']);
+  assert.strictEqual(merged['col.name.width'], d['col.name.width']);
+  assert.strictEqual(merged['role.grid.bold'], d['role.grid.bold']);
+  assert.strictEqual(merged['knows.nothing'], undefined, '知らないキーは持ち込まない');
+});
+
+test('値の型が既定値と揃う（setFontSize に文字列を渡さないため）', function () {
+  // シートは数値も真偽値も文字列で返しうる
+  const merged = sandbox.mergeProfileRows_(sandbox.FORMAT_DEFAULT, [
+    ['role.date.fontSize', '11'],
+    ['role.date.bold', 'false'],
+    ['role.date.bg', '#ffffff'],
+  ]);
+  assert.strictEqual(typeof merged['role.date.fontSize'], 'number');
+  assert.strictEqual(merged['role.date.fontSize'], 11);
+  assert.strictEqual(typeof merged['role.date.bold'], 'boolean');
+  assert.strictEqual(merged['role.date.bold'], false);
+  assert.strictEqual(typeof merged['role.date.bg'], 'string');
+});
+
+test('roleFormat が役割の書式をまとめて返す', function () {
+  const merged = sandbox.mergeProfileRows_(sandbox.FORMAT_DEFAULT, []);
+  const fmt = sandbox.roleFormat(merged, 'grid');
+  ['height', 'bg', 'fontColor', 'fontSize', 'bold', 'hAlign'].forEach(function (k) {
+    assert.ok(fmt[k] !== undefined, `${k} を返す`);
+  });
+});
+
+test('集計列の見出しは個数が合わないと既定値に落ちる', function () {
+  const width = sandbox.LAYOUT.COL_AGG_LAST - sandbox.LAYOUT.COL_AGG_FIRST + 1;
+  const ok = sandbox.aggHeadsFrom_({ 'label.agg': 'a,b,c,d,e,f' }, width);
+  assert.deepStrictEqual(Array.from(ok), ['a', 'b', 'c', 'd', 'e', 'f']);
+
+  // 1個足りないだけで列がずれるので、そのときは既定値を使う
+  const short = sandbox.aggHeadsFrom_({ 'label.agg': 'a,b,c' }, width);
+  assert.strictEqual(short.length, width, '足りなければ既定値');
+  assert.deepStrictEqual(Array.from(short), Array.from(sandbox.SHEET_BUILD.AGG_HEADS));
+});
+
+test('プロファイルのキーに説明が付く（人が読めること）', function () {
+  const merged = sandbox.mergeProfileRows_(sandbox.FORMAT_DEFAULT, []);
+  const undescribed = Object.keys(merged).filter(function (key) {
+    return sandbox.describeProfileKey_(key) === '';
+  });
+  assert.deepStrictEqual(undescribed, [], '説明の無いキー: ' + undescribed.join(', '));
 });
 
 // ---- ファイル名の衝突（Apps Script はファイル名が拡張子をまたいで一意） --
