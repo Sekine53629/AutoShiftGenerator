@@ -30,7 +30,8 @@ const MODULE_ENGINE = 'Engine';
  *              weekBase:number, reqPlus:number, paidSyms:string, gSym:string,
  *              clerkEarlyN:number, lateBusy:number, runBonus:number},
  *   days: Array<{date:Date, inMonth:boolean, weekday:number, isHoliday:boolean,
- *                docCount:number, required:number, weekKey:number}>,
+ *                docCount:number, required:number, weekKey:number,
+ *                locked:boolean=}>,
  *   members: Array<{name:string, kind:string, rule:string, leave:boolean,
  *                   canLate:boolean, quota:number, weekN:number,
  *                   fixedDow:boolean[], skipRow:boolean}>,
@@ -173,6 +174,8 @@ function buildState_(input) {
 
     dayDt: fromDays(function (d) { return d.date; }),
     dayIn: fromDays(function (d) { return !!d.inMonth; }),
+    // 前月から持ち越した日。月内ではないが、連勤・連休の判定には参加する
+    dayLocked: fromDays(function (d) { return !!d.locked; }),
     dayWD: fromDays(function (d) { return d.weekday; }),
     dayHol: fromDays(function (d) { return !!d.isHoliday; }),
     dayDoc: fromDays(function (d) { return d.docCount || 0; }),
@@ -228,7 +231,11 @@ function countTargetOff_(state) {
 function classifyExisting_(state) {
   for (let i = 1; i <= state.nP; i++) {
     for (let j = 1; j <= state.nD; j++) {
-      if (state.skipRow[i] || !state.dayIn[j] || state.leave[i]) {
+      // ★ locked（前月からの持ち越し）は月外だが対象外にしない。
+      //   既存入力として置いておくと、連勤・連休が月をまたいで正しく繋がる。
+      //   配置する工程はどれも ST_WORK しか触らないので、書き換えられる心配は無い
+      if (state.skipRow[i] || state.leave[i]
+        || (!state.dayIn[j] && !state.dayLocked[j])) {
         state.plan[i][j] = ST_SKIP;
         continue;
       }
@@ -388,6 +395,9 @@ function placeOffQuota_(state) {
     // ノルマ外の記号（既定 有休・夏休）は数えない
     let offN = 0;
     for (let j = 1; j <= state.nD; j++) {
+      // ★ 持ち越しの日を数えるとノルマを食ってしまう。月内だけを数える。
+      //   VBA では月外が ST_SKIP なのでこの守りが要らなかった
+      if (!state.dayIn[j]) continue;
       if (state.plan[i][j] !== ST_FOFF) continue;
       const v = String(state.existing[i][j] || '').trim();
       if (!isPaidOff(v, state.settings.paidSyms)) offN++;

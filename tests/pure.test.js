@@ -950,6 +950,25 @@ test('ノルマ外の休み記号は全角カンマ区切りも受ける', funct
 
 // ---- 配置エンジンの工程6〜10 ------------------------------------------
 
+/**
+ * 前月末の持ち越しを n 日ぶん作る（2026/8 の末尾）。
+ * locked=true / inMonth=false。連勤・連休の判定にだけ参加する
+ */
+function makeCarryOver(n) {
+  const days = [];
+  for (let k = n; k >= 1; k--) {
+    const d = 31 - k + 1;
+    const date = vm.runInContext(`new Date(2026, 7, ${d})`, sandbox);
+    const weekday = date.getDay() + 1;
+    const serial = Math.floor(date.getTime() / 86400000);
+    days.push({
+      date: date, inMonth: false, locked: true, weekday: weekday,
+      isHoliday: false, docCount: 4, required: 5, weekKey: serial - (weekday - 1),
+    });
+  }
+  return days;
+}
+
 /** 2026年9月の n 日分を作る。1日は火曜 */
 function makeDays(n, tweak) {
   const days = [];
@@ -1323,6 +1342,67 @@ test('希望休は固定曜日より優先される', function () {
 
   assert.strictEqual(out.plan[2][1], sandbox.ST_FOFF,
     '既に入っている希望休を出勤で上書きしない');
+});
+
+test('前月からの持ち越しは連勤の判定に参加する', function () {
+  // 8/29・8/30・8/31 を出勤として持ち越す
+  const carry = makeCarryOver(3);
+  const days = carry.concat(makeDays(30));
+  const members = [member({ name: 'A' })];
+
+  // 持ち越し3日を出勤（○）にしておく
+  const existing = [['○', '○', '○']];
+  const st = sandbox.buildState_({
+    settings: { earlyN: 1, lateMin: 2, maxRun: 3, maxOffRun: 3, weekBase: 2,
+                reqPlus: 1, paidSyms: '有休,夏休', gSym: '●',
+                clerkEarlyN: 1, lateBusy: 0, runBonus: 0 },
+    days: days, members: members, existing: existing,
+  });
+  sandbox.classifyExisting_(st);
+  sandbox.applyMemberRules_(st);
+
+  // 持ち越しは既存の出勤として残る（対象外にならない）
+  assert.strictEqual(st.plan[1][1], sandbox.ST_FWORK, '8/29 が出勤として残る');
+  assert.strictEqual(st.plan[1][3], sandbox.ST_FWORK, '8/31 が出勤として残る');
+
+  // 9/1（添字4）の連勤は、持ち越し3日が繋がって4日になる
+  assert.strictEqual(sandbox.runLenAt_(st, 1, 4).lft, 3,
+    '★ 月をまたいで左へ3日伸びる。前月を渡さなければ 0 になっていた');
+});
+
+test('持ち越しの休みは公休ノルマを食わない', function () {
+  const carry = makeCarryOver(3);
+  const days = carry.concat(makeDays(30));
+  const members = [member({ name: 'A' })];
+  const settings = { earlyN: 1, lateMin: 2, maxRun: 3, maxOffRun: 3, weekBase: 2,
+                     reqPlus: 1, paidSyms: '有休,夏休', gSym: '●',
+                     clerkEarlyN: 1, lateBusy: 0, runBonus: 0 };
+
+  // 持ち越し3日をすべて公休にしておく
+  const out = sandbox.runEngine({
+    settings: settings, days: days, members: members,
+    existing: [['公休', '公休', '公休']],
+  });
+
+  // 9月内の休みだけを数える。持ち越しぶんは含めない
+  let offInMonth = 0;
+  for (let j = 4; j <= days.length; j++) {
+    if (out.plan[1][j] === sandbox.ST_OFF || out.plan[1][j] === sandbox.ST_FOFF) offInMonth++;
+  }
+  assert.strictEqual(offInMonth, out.targetOff,
+    '★ 前月の公休3日はノルマを消費しない');
+});
+
+test('持ち越しを渡さなくても結果は変わらない', function () {
+  const days = makeDays(30);
+  const members = [member({ name: 'A' }), member({ name: 'B' })];
+
+  const a = runFullEngine(members, days);
+  const b = runFullEngine(members, days);
+
+  // locked を使わない限り、これまでと同じ挙動であることの確認
+  assert.deepStrictEqual(JSON.stringify(a.plan), JSON.stringify(b.plan));
+  assert.strictEqual(a.targetOff, b.targetOff);
 });
 
 test('置けない日があると未達として記録される', function () {
