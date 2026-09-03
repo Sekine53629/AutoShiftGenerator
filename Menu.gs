@@ -25,6 +25,7 @@ function onOpen() {
       .addItem('変更ログをリセット', 'resetChangeLog')
       .addSeparator()
       .addSubMenu(SpreadsheetApp.getUi().createMenu('初期設定')
+        .addItem('シフト表シートを生成', 'createMonthlyShiftSheet')
         .addItem('不足シートを生成', 'buildMissingSheets')
         .addItem('数式・名前付き範囲を作り直す', 'runInitialSetup')
         .addItem('祝日マスタを取り込む', 'importHolidays'))

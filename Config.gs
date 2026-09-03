@@ -21,6 +21,9 @@ const CONFIG = Object.freeze({
   SHEET_RUNLOG: '実行ログ',
   SHEET_SURVEY: 'シート構造調査',
 
+  /** appsscript.json の timeZone と必ず同じ値にすること */
+  TIMEZONE_HINT: 'Asia/Tokyo',
+
   /** 内閣府 祝日 CSV（Shift_JIS） */
   HOLIDAY_CSV_URL: 'https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv',
 
@@ -139,7 +142,8 @@ const SETTING_DEFAULT = Object.freeze({
   maxRun: { label: '連勤の上限(日)', value: 3 },
   maxOffRun: { label: '連休の上限(日)', value: 3 },
   weekBase: { label: '週の基本休日数', value: 2 },
-  reqPlus: { label: '必要出勤数(医師数+n)の n', value: 1 },
+  /** matchKey は数式の MATCH に埋める前方一致キー（VBA 版は "必要出勤*"） */
+  reqPlus: { label: '必要出勤数(医師数+n)の n', value: 1, matchKey: '必要出勤' },
   paidSyms: { label: 'ノルマ外の休み記号(カンマ区切り)', value: '有休,夏休' },
   gSym: { label: '事務員の2人目以降の記号', value: '●' },
   clerkEarlyN: { label: '事務員の早番(○) 人数/日', value: 1 },
@@ -196,3 +200,36 @@ const NON_NAME_LABELS = Object.freeze([
 
 /** シート構造調査の氏名マスク（§7.4。個人情報保護のため必ず true を保つ） */
 const MASK_NAMES = true;
+
+/**
+ * シフト表シートの生成（SheetBuilder.gs）。
+ * VBA 版には無い機能。VBA 版は既存の Excel ブックが前提で、シフトシート自体を
+ * 作る手段が無かった（ShiftSetup は既存シートに数式を当てるだけ）。
+ */
+const SHEET_BUILD = Object.freeze({
+  /** 自動作成設定にメンバーが1人もいないときに用意する空のスタッフ行数 */
+  DEFAULT_STAFF_ROWS: 16,
+  /** メンバー数に上乗せする予備行（派遣の自由記入行など） */
+  SPARE_STAFF_ROWS: 4,
+  /** 月ごとにシートを分けるときのシート名 */
+  MONTH_SHEET_FORMAT: 'yyyy年M月',
+
+  /** 集計列（AH〜AM）の見出し。§5.4 の並びと一致させること */
+  AGG_HEADS: ['公休', '有休', '○早番', '▲遅番', '●遅半', '5診出勤'],
+  /** 集計行（A列）の見出し */
+  ROW_HEAD_DOC: '医師数(診)',
+  ROW_HEAD_PHARM: '薬剤師出勤数',
+  ROW_HEAD_SHORTAGE: '過不足',
+
+  COL_WIDTH_NAME: 118,
+  COL_WIDTH_DAY: 34,
+  COL_WIDTH_AGG: 48,
+
+  COLOR_HEADER_BG: '#d9d9d9',
+  COLOR_SAT_BG: '#dce6f1',
+  COLOR_SUN_BG: '#f2dcdb',
+  COLOR_OUT_MONTH_BG: '#f2f2f2',
+  COLOR_BORDER: '#808080',
+  /** 休業者の行に塗る色（マクロが塗った色。これと同じときだけ塗りを外す） */
+  COLOR_LEAVE_BG: '#bfbfbf',
+});

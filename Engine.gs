@@ -543,5 +543,11 @@ function parseFixedDow(text) {
  * @return {boolean}
  */
 function isPaidOff(value, paidSyms) {
-  return notImplemented_(MODULE_ENGINE, 'isPaidOff', 3); // TODO(P3)
+  const v = String(value || '').trim();
+  if (v === '') return false;
+  return String(paidSyms || SETTING_DEFAULT.paidSyms.value)
+    .split(',')
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s !== ''; })
+    .some(function (token) { return v.indexOf(token) >= 0; });
 }

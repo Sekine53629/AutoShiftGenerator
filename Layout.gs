@@ -6,6 +6,15 @@
  * 【最重要の約束】
  *   1回の実行で1度だけ解決し、返ったオブジェクトを持ち回ること。
  *   VBA 版のように毎回呼び直すと API 呼び出しが跳ね上がり 6 分制限に当たる（§8.3）。
+ *   resolveLayout() は B 列と A 列を1回ずつ読むだけで全部を決める。
+ *
+ * 【仕様書 §3.2 と §5.5 の食い違いについて】
+ *   §3.2 は「名前付き範囲を優先し、無ければ計算で解決する」（VBA 版の挙動）、
+ *   §5.5 は「Layout の計算解決を正とし、名前付き範囲は目印」と書いている。
+ *   Sheets の名前付き範囲は数式を持てず、行を増減しても追随しない。
+ *   古い名前を優先すると入力欄の外へ書き込む事故になるため、
+ *   **§5.5 を採り、計算解決を正とした**。名前付き範囲とのずれは
+ *   getShiftRangeDrift() が返し、設定チェックが警告する。
  *
  * 【パレット関連は移植しない】
  *   IsDoctorStamp / PaletteLabel / LastDoctorIndex / PaletteRange /
@@ -17,82 +26,210 @@ const MODULE_LAYOUT = 'Layout';
 /**
  * シフトシートの位置をまとめて解決する。
  *
- * 実装の要点（§3.2）:
- *   - 「数式かつ日付」の判定は B 列 1〜LAYOUT.MAX_SCAN_ROWS 行を
- *     getFormulas() と getValues() で1回ずつ読んで突き合わせる
- *     （hasFormula に相当する単発 API は無い）。
- *     formula !== '' かつ value instanceof Date。
- *   - A 列ラベルの前方一致検索も A 列を1回読んで JS 側で走査する。
- *   - 名前付き範囲を優先し、無ければ計算で解決するフォールバックを残す。
+ * 「数式かつ日付」の判定は B 列を getFormulas() と getValues() で1回ずつ読んで
+ * 突き合わせる（hasFormula に相当する単発 API は無い）。
  *
- * @param {Sheet} sheet シフトシート
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet シフトシート
  * @return {{dateRow:number, repeatDateRow:number, headerRow:number, weekRow:number,
  *           doctorTop:number, doctorBottom:number, noteRow:number, docRow:number,
- *           shortageRow:number, gridTop:number, gridBottom:number,
+ *           pharmRow:number, shortageRow:number, gridTop:number, gridBottom:number,
  *           firstCol:number, lastCol:number}}
  */
 function resolveLayout(sheet) {
-  return notImplemented_(MODULE_LAYOUT, 'resolveLayout', 1); // TODO(P1)
-}
+  try {
+    const scanRows = Math.min(LAYOUT.MAX_SCAN_ROWS, sheet.getMaxRows());
+    const colB = sheet.getRange(1, LAYOUT.COL_FIRST, scanRows, 1);
+    const bFormulas = colB.getFormulas();
+    const bValues = colB.getValues();
+    const aValues = sheet.getRange(1, 1, scanRows, 1).getValues();
 
-/** シフトシートを取得（無ければアクティブシート）。移植元: ShiftSheet */
-function getShiftSheet() {
-  return notImplemented_(MODULE_LAYOUT, 'getShiftSheet', 1); // TODO(P1)
-}
+    const dateRow = findDateFormulaRow_(bFormulas, bValues, 1);
+    if (dateRow === 0) {
+      throw new Error('B列に「数式かつ日付」のセルが見つかりません。日付行を判定できないため中止します。');
+    }
+    const repeatDateRow = findDateFormulaRow_(bFormulas, bValues, 2);
+    if (repeatDateRow === 0) {
+      throw new Error('B列で2つ目の日付行（再掲）が見つかりません。入力欄の上端を判定できません。');
+    }
 
-/** 名前でシートを取得。無ければ null。移植元: SheetOrNothing / SheetExists */
-function getSheetOrNull(name) {
-  return notImplemented_(MODULE_LAYOUT, 'getSheetOrNull', 1); // TODO(P1)
-}
+    const weekRow = dateRow + 1;
+    const doctorTop = weekRow + 1;
+    const doctorBottom = doctorTop + LAYOUT.DOC_BLOCK_ROWS - 1;
 
-/** 名前付き範囲を取得。無ければ null。移植元: NamedRangeOrNothing */
-function getNamedRangeOrNull(name) {
-  return notImplemented_(MODULE_LAYOUT, 'getNamedRangeOrNull', 1); // TODO(P1)
+    const noteRow = findLabelRow_(aValues, LABEL.NOTE);
+    const docRow = noteRow > 0
+      ? noteRow + LAYOUT.NOTE_TO_DOC
+      : findLabelRow_(aValues, LABEL.DOC);
+    if (docRow === 0) {
+      throw new Error(`A列に「${LABEL.NOTE}」も「${LABEL.DOC}」も見つかりません。集計行を判定できません。`);
+    }
+
+    const shortageRow = findLabelRow_(aValues, LABEL.SHORT) || (docRow + 2);
+
+    return {
+      dateRow: dateRow,
+      repeatDateRow: repeatDateRow,
+      headerRow: dateRow - 1,
+      weekRow: weekRow,
+      doctorTop: doctorTop,
+      doctorBottom: doctorBottom,
+      noteRow: noteRow,
+      docRow: docRow,
+      pharmRow: docRow + 1,
+      shortageRow: shortageRow,
+      gridTop: repeatDateRow + LAYOUT.DATE_REPEAT_GAP,
+      gridBottom: docRow - LAYOUT.DOC_GAP,
+      firstCol: LAYOUT.COL_FIRST,
+      lastCol: LAYOUT.COL_LAST,
+    };
+  } catch (error) {
+    logError(MODULE_LAYOUT, 'resolveLayout', error, `sheet=${sheet && sheet.getName()}`);
+    throw error;
+  }
 }
 
 /**
- * B 列で n 個目の「数式かつ日付」の行を返す。
- * 移植元: DateFormulaRow（nth=1 が日付行 / nth=2 が再掲日付行）
+ * シフトシートを取得。CONFIG.SHEET_SHIFT が無ければアクティブシート。
+ * 月ごとにシートを分ける運用（SheetBuilder）ではアクティブシートが対象になる。
+ * 移植元: ShiftSheet
+ * @return {GoogleAppsScript.Spreadsheet.Sheet}
  */
-function findDateFormulaRow_(sheet, nth) {
-  return notImplemented_(MODULE_LAYOUT, 'findDateFormulaRow_', 1); // TODO(P1)
+function getShiftSheet() {
+  try {
+    return getSheetOrNull(CONFIG.SHEET_SHIFT) || SpreadsheetApp.getActiveSheet();
+  } catch (error) {
+    logError(MODULE_LAYOUT, 'getShiftSheet', error, '');
+    throw error;
+  }
 }
 
-/** A 列ラベルの前方一致で行を探す。見つからなければ 0。移植元: LabelRow */
-function findLabelRow_(sheet, label) {
-  return notImplemented_(MODULE_LAYOUT, 'findLabelRow_', 1); // TODO(P1)
+/**
+ * 名前でシートを取得。無ければ null。移植元: SheetOrNothing / SheetExists
+ * @return {GoogleAppsScript.Spreadsheet.Sheet|null}
+ */
+function getSheetOrNull(name) {
+  try {
+    return SpreadsheetApp.getActive().getSheetByName(name);
+  } catch (error) {
+    logError(MODULE_LAYOUT, 'getSheetOrNull', error, `name=${name}`);
+    return null;
+  }
 }
 
-/** 列番号を列文字へ（1 → A）。移植元: ColLetter */
+/**
+ * 名前付き範囲を取得。無ければ null。移植元: NamedRangeOrNothing
+ * @return {GoogleAppsScript.Spreadsheet.Range|null}
+ */
+function getNamedRangeOrNull(name) {
+  try {
+    return SpreadsheetApp.getActive().getRangeByName(name);
+  } catch (error) {
+    logError(MODULE_LAYOUT, 'getNamedRangeOrNull', error, `name=${name}`);
+    return null;
+  }
+}
+
+/**
+ * B 列で n 個目の「数式かつ日付」の行を返す。見つからなければ 0。
+ * 移植元: DateFormulaRow（nth=1 が日付行 / nth=2 が再掲日付行）
+ * @param {string[][]} formulas B列の数式（1行目から）
+ * @param {*[][]} values B列の値（同じ範囲）
+ * @param {number} nth 何個目か
+ * @return {number} 行番号（1 起点）
+ */
+function findDateFormulaRow_(formulas, values, nth) {
+  let hit = 0;
+  for (let r = 0; r < formulas.length; r++) {
+    if (formulas[r][0] !== '' && values[r][0] instanceof Date) {
+      hit++;
+      if (hit === nth) return r + 1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * A 列ラベルの前方一致で行を探す。見つからなければ 0。移植元: LabelRow
+ * @param {*[][]} aValues A列の値（1行目から）
+ * @param {string} label 探すラベル
+ * @return {number} 行番号（1 起点）
+ */
+function findLabelRow_(aValues, label) {
+  for (let r = 0; r < aValues.length; r++) {
+    const v = String(aValues[r][0] || '').trim();
+    if (v !== '' && v.indexOf(label) === 0) return r + 1;
+  }
+  return 0;
+}
+
+/**
+ * 列番号を列文字へ（1 → A / 32 → AF）。移植元: ColLetter
+ * @param {number} colNo 1 起点の列番号
+ * @return {string}
+ */
 function toColumnLetter(colNo) {
-  return notImplemented_(MODULE_LAYOUT, 'toColumnLetter', 1); // TODO(P1)
+  let n = colNo;
+  let s = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
 }
 
 /**
  * 入力欄の下端が名前付き範囲と計算解決でどれだけずれているかを返す。
  * 設定チェックが使う。移植元: ShiftRangeDrift
- * @return {number} ずれの行数（0 なら一致）
+ * @return {number} ずれの行数（0 なら一致。名前付き範囲が無ければ 0）
  */
 function getShiftRangeDrift(sheet, layout) {
-  return notImplemented_(MODULE_LAYOUT, 'getShiftRangeDrift', 1); // TODO(P1)
+  try {
+    const named = getNamedRangeOrNull(NAMED_RANGE.SHIFT);
+    if (!named) return 0;
+    if (named.getSheet().getSheetId() !== sheet.getSheetId()) return 0;
+    return named.getLastRow() - layout.gridBottom;
+  } catch (error) {
+    logError(MODULE_LAYOUT, 'getShiftRangeDrift', error, '');
+    return 0;
+  }
 }
 
 /** 年月セル（A{headerRow}）を返す。移植元: MonthCell */
 function getMonthCell(sheet, layout) {
-  return notImplemented_(MODULE_LAYOUT, 'getMonthCell', 1); // TODO(P1)
+  return sheet.getRange(layout.headerRow, 1);
 }
 
-/** 対象月を Date で返す。移植元: MonthValue */
+/**
+ * 対象月を Date で返す。移植元: MonthValue
+ * @return {Date}
+ */
 function getMonthValue(sheet, layout) {
-  return notImplemented_(MODULE_LAYOUT, 'getMonthValue', 1); // TODO(P1)
+  try {
+    const v = getMonthCell(sheet, layout).getValue();
+    if (v instanceof Date) return v;
+    throw new Error(`年月セル A${layout.headerRow} が日付ではありません（値: ${v}）。`);
+  } catch (error) {
+    logError(MODULE_LAYOUT, 'getMonthValue', error, '');
+    throw error;
+  }
 }
 
-/** 早番記号か（○ と ◯ の揺れを吸収）。移植元: IsEarlySym */
+/**
+ * 早番記号か（○ と ◯ の入力揺れを吸収）。移植元: IsEarlySym
+ * @return {boolean}
+ */
 function isEarlySym(value) {
-  return notImplemented_(MODULE_LAYOUT, 'isEarlySym', 1); // TODO(P1)
+  const v = String(value || '').trim();
+  return v === SYM.EARLY || v === SYM.EARLY_ALT;
 }
 
-/** 氏名でない行のラベルか（前方一致）。移植元: IsNonName */
+/**
+ * 氏名でない行のラベルか（空欄 or NON_NAME_LABELS の前方一致）。移植元: IsNonName
+ * @return {boolean}
+ */
 function isNonName(value) {
-  return notImplemented_(MODULE_LAYOUT, 'isNonName', 1); // TODO(P1)
+  const v = String(value || '').trim();
+  if (v === '') return true;
+  return NON_NAME_LABELS.some(function (label) { return v.indexOf(label) === 0; });
 }

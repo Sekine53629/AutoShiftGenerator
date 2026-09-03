@@ -110,20 +110,106 @@ function paintLeaveRows_(ctx) {
 }
 
 /**
- * 設定シートの全体設定から数値を読む。ラベルの部分一致 → L 列の値。
- * 空欄・非数値なら SETTING_DEFAULT にフォールバックする（既存ブック互換）。
- * 移植元: CfgNum
+ * 自動作成設定シートの全体設定（K=ラベル / L=値）を読み出す。
+ * 見出し行から CFG_SETTING.SCAN_ROWS 行下まで、K 列と L 列を1回だけ読む。
+ * シートが無ければ空配列（呼び出し側は既定値で動く）。
+ * @return {Array<Array<*>>} [[ラベル, 値], ...]
  */
-function readSettingNumber_(cfgValues, key) {
-  return notImplemented_(MODULE_SHIFTAUTO, 'readSettingNumber_', 4); // TODO(P4)
+function readSettingPairs() {
+  try {
+    const cfg = getSheetOrNull(CONFIG.SHEET_CFG);
+    if (!cfg) return [];
+    const top = CFG_SETTING.ROW + 1;
+    const rows = Math.min(CFG_SETTING.SCAN_ROWS, Math.max(0, cfg.getMaxRows() - top + 1));
+    if (rows <= 0) return [];
+    return cfg.getRange(top, CFG_SETTING.COL_KEY, rows, 2).getValues();
+  } catch (error) {
+    logError(MODULE_SHIFTAUTO, 'readSettingPairs', error, '');
+    return [];
+  }
 }
 
 /**
- * 設定シートの全体設定から文字列を読む。空欄なら既定値。
- * 移植元: CfgTxt
+ * 全体設定から数値を読む。K 列ラベルの部分一致 → L 列の値。
+ * 空欄・非数値なら SETTING_DEFAULT にフォールバックする。
+ * 既存ブックには新しい設定行が無いため、この挙動は必ず保つこと（§3.3）。
+ * 移植元: CfgNum
+ * @param {Array<Array<*>>} cfgPairs readSettingPairs() の戻り値
+ * @param {string} key SETTING_DEFAULT のキー名
+ * @return {number}
  */
-function readSettingText_(cfgValues, key) {
-  return notImplemented_(MODULE_SHIFTAUTO, 'readSettingText_', 4); // TODO(P4)
+function readSettingNumber_(cfgPairs, key) {
+  const def = SETTING_DEFAULT[key];
+  const hit = findSettingRow_(cfgPairs, def.label);
+  if (hit === null) return def.value;
+  const n = Number(hit);
+  return (hit === '' || isNaN(n)) ? def.value : n;
+}
+
+/**
+ * 全体設定から文字列を読む。空欄なら既定値。
+ * 移植元: CfgTxt
+ * @param {Array<Array<*>>} cfgPairs readSettingPairs() の戻り値
+ * @param {string} key SETTING_DEFAULT のキー名
+ * @return {string}
+ */
+function readSettingText_(cfgPairs, key) {
+  const def = SETTING_DEFAULT[key];
+  const hit = findSettingRow_(cfgPairs, def.label);
+  if (hit === null) return String(def.value);
+  const s = String(hit).trim();
+  return s === '' ? String(def.value) : s;
+}
+
+/**
+ * K 列ラベルから L 列の値を返す。見つからなければ null。
+ *
+ * ラベルは利用者が書き換えうるので完全一致だけでは拾えないが、
+ * 素朴な部分一致だと **「早番(○) 人数/日」が「事務員の早番(○) 人数/日」の行に
+ * 当たってしまう**（一方が他方を丸ごと含んでいるため）。
+ * どちらの値も人数なので、取り違えてもエラーにならず黙って誤った人数で組む。
+ *
+ * そこで段階を分け、確実な一致から順に探す。
+ *   1) 完全一致  2) 前方一致  3) 包含（どちら向きでも）
+ * 同じ段階で複数当たったら、シートで先に出てきた行を採る。
+ */
+function findSettingRow_(cfgPairs, label) {
+  const keys = cfgPairs.map(function (row) { return String(row[0] || '').trim(); });
+
+  const tiers = [
+    function (k) { return k === label; },
+    function (k) { return k.indexOf(label) === 0 || label.indexOf(k) === 0; },
+    function (k) { return k.indexOf(label) >= 0 || label.indexOf(k) >= 0; },
+  ];
+
+  for (let t = 0; t < tiers.length; t++) {
+    for (let r = 0; r < keys.length; r++) {
+      if (keys[r] !== '' && tiers[t](keys[r])) return cfgPairs[r][1];
+    }
+  }
+  return null;
+}
+
+/**
+ * 自動作成設定シートのメンバー氏名を上から順に返す（休業者も含む）。
+ * シートが無ければ空配列。実名はここでしか扱わない（コードには書かない）。
+ * @return {string[]}
+ */
+function readMemberNames() {
+  try {
+    const cfg = getSheetOrNull(CONFIG.SHEET_CFG);
+    if (!cfg) return [];
+    const top = CFG_MEMBER.FIRST_ROW;
+    const rows = Math.max(0, cfg.getLastRow() - top + 1);
+    if (rows <= 0) return [];
+    return cfg.getRange(top, CFG_MEMBER.COL_NAME, rows, 1)
+      .getValues()
+      .map(function (r) { return String(r[0] || '').trim(); })
+      .filter(function (name) { return name !== ''; });
+  } catch (error) {
+    logError(MODULE_SHIFTAUTO, 'readMemberNames', error, '');
+    return [];
+  }
 }
 
 /**

@@ -99,6 +99,10 @@ personal data in it.
   implementation phase from spec §9. Grep `TODO(P3)` to find what is left in a phase.
 - Every implemented function gets `try/catch` + `console.error` (Tier 2). Stubs do
   not — add it when you write the body.
+- Anything pure goes in `tests/pure.test.js` (`node tests/pure.test.js`). It runs the
+  `.gs` files in a `vm` with stubbed GAS globals — no spreadsheet needed. Note the
+  cross-realm traps: `instanceof Date` and `deepStrictEqual` fail on values built
+  outside the vm, so construct them with `vm.runInContext` or copy with `Array.from`.
 - Call `logSuccess()` on normal completion. The VBA-era practice of judging test
   results from the log continues here. Include `elapsedMs` for the auto-generation run.
 
