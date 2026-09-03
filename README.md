@@ -127,6 +127,47 @@ PDF 出力（フェーズ7）を実装するときに Drive のスコープを�
 （確認は一般公開するアプリに要るもの）。
 **詳細を表示 → （安全ではないページ）に移動 → 許可** で進めます。
 
+### 1-b. clasp で送る（手貼りの代わり。推奨）
+
+16 ファイルを手で貼ると、貼り先を間違えたり打鍵が紛れたりします。
+`.gs` は全ファイルで1つのグローバルスコープを共有するので、
+**1ファイルの事故でプロジェクト全体が止まります**。`clasp` ならその事故が起きません。
+
+```bash
+npm i -g @google/clasp
+clasp login                       # ブラウザが開くので Google アカウントで許可
+```
+
+**Apps Script API を有効にしておくこと。** <https://script.google.com/home/usersettings> で
+「Google Apps Script API」をオンにします。これを忘れると `clasp push` が
+「User has not enabled the Apps Script API」で必ず失敗します。
+
+次に、**スクリプト ID を調べて `.clasp.json` を自分で作ります**。
+ID は Apps Script エディタの **⚙ プロジェクトの設定 → スクリプト ID** にあります。
+
+```bash
+# リポジトリのルートで
+cat > .clasp.json <<'EOF'
+{ "scriptId": "ここにスクリプトID", "rootDir": "." }
+EOF
+
+clasp push --force
+```
+
+`.clasp.json` は `.gitignore` 済みなので、コミットされません（別のパソコンでは作り直します）。
+
+> **`clasp clone` は使わないでください。** リモートの中身をローカルへ上書きするので、
+> 手貼りで壊れた状態を取り込んでしまいます。ここでは常に
+> **ローカル → リモート**の一方向（`clasp push`）で運用します。
+
+`clasp push` は**リモートをローカルの内容に合わせます**。ローカルに無いファイルは
+リモートから消えるので、貼り間違えた `Setup` や、旧 `WebApp.html` /
+`Sidebar.*` が残っていても、これで一掃されます。
+
+送るものは [`.claspignore`](.claspignore) で決めています。
+直下の `.gs` と `WebAppView.html` と `appsscript.json` だけで、
+`archive/` `tests/` `docs/` は送りません。
+
 ### 2. スクリプトプロパティ（任意）
 
 **プロジェクトの設定 → スクリプト プロパティ**。未設定でも動きます。
