@@ -17,12 +17,13 @@ Excel VBA 版 [`Auto_Shift_Generator`](https://github.com/Sekine53629/Auto_Shift
 |---|---|---|
 | 1 | `Config.gs` / `Layout.gs` / `Log.gs` / `Menu.gs` | **実装済み** |
 | — | `SheetBuilder.gs`（シフト表シートの生成。VBA 版に無い新機能） | **実装済み** |
+| — | `WebApp.gs` / `WebApp.html`（Web アプリ。表示・入力・保存・シート作成） | **実装済み** |
 | 2 | `Schema.gs` / `Setup.gs` | 数式の組み立ては実装済み、シート生成は骨組み |
-| 3 | `Engine.gs`（純粋関数） | 骨組み（`isPaidOff` のみ実装済み） |
+| 3 | `Engine.gs`（純粋関数） | 骨組み（`matchWorkSym` / `isPaidOff` のみ実装済み） |
 | 4 | `ShiftAuto.gs` / `Report.gs` / `SettingsCheck.gs` | 設定の読み出しのみ実装済み |
 | 5 | `ChangeLog.gs` | 骨組み |
-| 6 | `Sidebar.gs` / `Sidebar.html` | 骨組み |
-| 7 | `Holidays.gs` / `Export.gs` | 骨組み |
+| 6 | `Sidebar.gs` / `Sidebar.html` | 骨組み（Web アプリ化に伴い従の位置づけ） |
+| 7 | `Holidays.gs` / `Export.gs` | 祝日マスタの読み出しのみ実装済み |
 | 8 | `Survey.gs` / ドキュメント | 骨組み |
 
 骨組みの関数は `notImplemented_()` を投げます。残りは `TODO(P1)`〜`TODO(P8)` で追えます
@@ -56,6 +57,8 @@ AutoShiftGenerator/
 ├── Log.gs               エラー/成功ログ
 ├── Menu.gs              onOpen とメニュー
 ├── SheetBuilder.gs      シフト表シートの生成（VBA 版に無い新機能）
+├── WebApp.gs            Web アプリのサーバ側 API
+├── WebApp.html          Web アプリの画面
 ├── Engine.gs            ★配置エンジン（SpreadsheetApp を一切呼ばない）
 ├── ShiftAuto.gs         自動作成の入口・シートの読み書き
 ├── Report.gs            結果レポートの文字列組み立て
@@ -72,7 +75,8 @@ AutoShiftGenerator/
 │   └── pure.test.js     GAS 不要のテスト（node tests/pure.test.js）
 └── docs/
     ├── GAS-PORTING-SPEC.md      移植仕様書
-    └── REAL-SHEET-FINDINGS.md   実物のシフト表と仕様書の差分
+    ├── REAL-SHEET-FINDINGS.md   実物のシフト表と仕様書の差分
+    └── WEBAPP-DESIGN.md         Web アプリ化の設計メモ
 ```
 
 **コンテナバインドスクリプト**であること。`onOpen` / サイドバー / `getActiveRange()`
@@ -97,6 +101,24 @@ AutoShiftGenerator/
 5. 初期設定 → 不足シートを生成 → 祝日マスタを取り込む
 6. 自動作成設定シートにメンバーを登録する
 7. 初期設定 → **シフト表シートを生成** → 年月を入力（例 `2026/9`）
+8. Web アプリを使うなら、Apps Script エディタの「デプロイ」→「新しいデプロイ」→
+   種類「ウェブアプリ」でデプロイし、メニューの「Web アプリを開く」から開く
+
+### Web アプリ
+
+シフト表をブラウザ上のグリッドで表示し、スタンプで入力して保存できます。
+月ごとのシートを切り替えられ、新しい月のシートもここから作れます。
+
+**公開範囲の既定は `MYSELF`（開発者本人のみ）です。**
+スタッフにも使わせるなら広げる判断が要りますが、
+`executeAs` の選び方で意味がまったく変わります。詳しくは
+[`docs/WEBAPP-DESIGN.md`](docs/WEBAPP-DESIGN.md) の「デプロイと公開範囲」を読んでください。
+**いまのコードに「誰が編集してよいか」の守りはありません。**
+
+できないこと（実装フェーズ待ち）: 自動作成の実行 / 変更ログへの記録 / PDF 出力 / 背景色。
+
+> **同時編集に強くありません。** 保存は編集の外接矩形をまるごと書き戻すので、
+> 読んでから保存するまでのあいだに他の人が同じ範囲を直していると上書きします。
 
 ### シフト表シートの生成
 
@@ -148,7 +170,9 @@ AutoShiftGenerator/
 | エラー行番号 `Erl` | あり | `error.stack` |
 | エラーログの出力先 | `C:\VBAErrorLogs\*.csv` | `console` + `実行ログ` シート + 管理者メール |
 | 祝日の取込 | Power Query（Excel 2016 以降） | `UrlFetchApp`（バージョン制限なし） |
-| 手動変更のログ | `Worksheet_Change` で全編集を捕捉 | **サイドバー経由の変更のみ**。セル直接編集は残らない |
+| 手動変更のログ | `Worksheet_Change` で全編集を捕捉 | **Web アプリ経由の変更のみ**（未実装）。セル直接編集は残らない |
+| クリック入力の場所 | シート上のパレット行 | **Web アプリの独自グリッド**（サイドバーは従） |
+| 出勤記号の判定 | 完全一致（`○` `◯` `●` `▲`） | **先頭一致**。派遣行の「▲＋氏名」を出勤として数えるため |
 
 ### 追加した制限（VBA 版に無いもの）
 
@@ -157,8 +181,16 @@ AutoShiftGenerator/
 
   `CoverBalance` は最大 500 巡回りますが、その全部が玉突き（2名移す）に落ちると
   約 60 億ステップになり、GAS の 6 分制限（一般アカウント）を確実に超えます。
-  VBA 版にはこの制限がありません。**同じ入力でも VBA 版と結果が変わりうる唯一の箇所**なので、
-  移植の突き合わせで差が出たらまずここを疑ってください。
+  VBA 版にはこの制限がありません。移植の突き合わせで差が出たらまずここを疑ってください。
+
+- **出勤記号の先頭一致 `WORK_SYM_PREFIX_MATCH = true`**（[`Config.gs`](Config.gs)）
+
+  実物のシフト表では派遣行に「▲＋氏名」が1つのセルに入っています。VBA 版は完全一致でしか
+  出勤を数えないので、これらは休みと分類され、薬剤師出勤数にも入らず、
+  **派遣が出ている日を「人が足りない日」と誤判定**していました。
+  先頭一致にして頭数へ入れています（配置は別で、派遣行は勤務ルールを「手動」にします）。
+
+  **移植の突き合わせ検証（仕様書 §9 フェーズ3）では `false` に戻して比べてください。**
 
 ### 名前付き範囲の扱い
 

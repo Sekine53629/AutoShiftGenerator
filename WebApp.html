@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<base target="_top">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #202124; --line: #d0d3d7; --head: #f1f3f4;
+    --sat: #dce6f1; --sun: #f2dcdb; --out: #f2f2f2; --muted: #70757a;
+    --accent: #1a73e8; --short: #c5221f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+
+  header { position: sticky; top: 0; z-index: 30; background: var(--bg);
+           border-bottom: 1px solid var(--line); padding: 8px 12px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .bar + .bar { margin-top: 8px; }
+  select, button, input { font: inherit; padding: 5px 8px; }
+  button { cursor: pointer; }
+  button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .grow { flex: 1 1 auto; }
+  .muted { color: var(--muted); }
+  #summary { font-weight: 600; }
+  #status { padding: 4px 12px; min-height: 1.6em; }
+  #status.err { color: var(--short); }
+
+  .scroll { overflow: auto; max-height: calc(100vh - 190px); }
+  table { border-collapse: separate; border-spacing: 0; }
+  th, td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+           padding: 2px 4px; text-align: center; white-space: nowrap; }
+  thead th { position: sticky; top: 0; z-index: 20; background: var(--head); }
+  thead tr:nth-child(2) th { top: 26px; }
+  .name { position: sticky; left: 0; z-index: 10; background: var(--bg);
+          text-align: left; min-width: 128px; max-width: 128px;
+          overflow: hidden; text-overflow: ellipsis; border-left: 1px solid var(--line); }
+  thead .name { z-index: 25; background: var(--head); }
+  td.day { min-width: 30px; cursor: pointer; }
+  td.day:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+  td.day.formula { cursor: not-allowed; color: var(--muted); font-style: italic; }
+  td.day.dirty { box-shadow: inset 0 0 0 2px var(--accent); }
+  .sat { background: var(--sat); }
+  .sun { background: var(--sun); }
+  .out { background: var(--out); color: #aaa; }
+  .agg { background: var(--head); min-width: 42px; }
+  .sect td, .sect th { background: #fafafa; }
+  tr.total td { background: var(--head); font-weight: 600; }
+  td.neg { color: var(--short); font-weight: 700; }
+
+  #palette { display: flex; flex-wrap: wrap; gap: 4px; }
+  #palette button { min-width: 52px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <label>シート <select id="sheetSelect"></select></label>
+    <span id="summary" class="muted">—</span>
+    <span class="grow"></span>
+    <button id="newSheet">シートを作る</button>
+    <button id="runAuto">自動作成</button>
+    <button id="reload">再読込</button>
+  </div>
+  <div class="bar">
+    <span class="muted">スタンプ</span>
+    <div id="palette"></div>
+    <span class="grow"></span>
+    <button id="save" disabled>保存</button>
+    <button id="discard" disabled>取消</button>
+  </div>
+</header>
+
+<div id="status" class="muted">読み込み中…</div>
+<div class="scroll"><table id="grid"></table></div>
+
+<script>
+  // ---- 状態 ---------------------------------------------------------
+  // stamp: いま選んでいるスタンプ。null なら消去モードではなく「押しても何もしない」
+  // dirty: 未保存の編集。キーは "row,col"
+  let data = null;
+  let stamp = null;
+  const dirty = new Map();
+
+  const $ = function (id) { return document.getElementById(id); };
+
+  function setStatus(text, isError) {
+    const el = $('status');
+    el.textContent = text;
+    el.className = isError ? 'err' : 'muted';
+  }
+
+  function call(name, args) {
+    return new Promise(function (resolve, reject) {
+      // runner を this にして呼ぶ。null を渡すと google.script.run 側が壊れる
+      const runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject);
+      runner[name].apply(runner, args || []);
+    });
+  }
+
+  // ---- 起動 ---------------------------------------------------------
+  function boot() {
+    call('apiListSheets').then(function (sheets) {
+      const sel = $('sheetSelect');
+      sel.innerHTML = '';
+      if (sheets.length === 0) {
+        setStatus('シフト表として読めるシートがありません。「シートを作る」から始めてください。');
+        return;
+      }
+      sheets.forEach(function (s) {
+        const opt = document.createElement('option');
+        opt.value = s.name;
+        opt.textContent = s.name;
+        sel.appendChild(opt);
+      });
+      const initial = <?!= initialSheetJson ?>;
+      sel.value = sheets.some(function (s) { return s.name === initial; })
+        ? initial : sheets[0].name;
+      loadSheet(sel.value);
+    }).catch(function (e) { setStatus('シートの一覧を取れませんでした: ' + e.message, true); });
+  }
+
+  function loadSheet(name) {
+    setStatus('読み込み中…');
+    dirty.clear();
+    updateDirtyUi();
+    call('apiLoadGrid', [name]).then(function (payload) {
+      data = payload;
+      renderPalette();
+      renderGrid();
+      $('summary').textContent = payload.summary || payload.monthLabel || '';
+      setStatus('セルを押すと選んでいるスタンプが入ります。保存するまでシートは変わりません。');
+    }).catch(function (e) { setStatus('読み込みに失敗しました: ' + e.message, true); });
+  }
+
+  // ---- パレット -----------------------------------------------------
+  function renderPalette() {
+    const box = $('palette');
+    box.innerHTML = '';
+    const items = []
+      .concat(data.palette.work.map(function (s) { return { label: s, value: s }; }))
+      .concat(data.palette.off.map(function (s) { return { label: s, value: s }; }));
+    items.push({ label: '消去', value: '' });
+
+    items.forEach(function (item) {
+      const b = document.createElement('button');
+      b.textContent = item.label;
+      b.onclick = function () {
+        stamp = (stamp === item.value) ? null : item.value;
+        renderPalette();
+      };
+      if (stamp === item.value) b.className = 'on';
+      box.appendChild(b);
+    });
+  }
+
+  // ---- グリッド -----------------------------------------------------
+  function dayClass(day) {
+    if (!day.inMonth) return 'out';
+    if (day.weekday === 1 || day.isHoliday) return 'sun';
+    if (day.weekday === 7) return 'sat';
+    return '';
+  }
+
+  function renderGrid() {
+    const t = $('grid');
+    t.innerHTML = '';
+
+    const thead = document.createElement('thead');
+    thead.appendChild(headRow(data.monthLabel, function (d) { return d.label; }));
+    thead.appendChild(headRow('', function (d) { return d.weekLabel; }));
+    t.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    data.doctors.forEach(function (doc, i) {
+      tbody.appendChild(textRow(i === 0 ? '医師名' : '', doc.row, doc.cells, 'sect'));
+    });
+    tbody.appendChild(textRow('', data.freeRow.row, data.freeRow.cells, 'sect'));
+
+    data.rows.forEach(function (row) { tbody.appendChild(staffRow(row)); });
+
+    tbody.appendChild(textRow(data.note.cells.length ? '備考' : '備考',
+      data.note.row, data.note.cells, 'sect'));
+    tbody.appendChild(totalRow(data.aggRowLabels.doc, function (d) { return d.docCount; }));
+    tbody.appendChild(totalRow(data.aggRowLabels.pharm, function (d) { return d.pharmCount; }));
+    tbody.appendChild(totalRow(data.aggRowLabels.shortage, function (d) { return d.shortage; }, true));
+
+    t.appendChild(tbody);
+  }
+
+  function headRow(label, pick) {
+    const tr = document.createElement('tr');
+    tr.appendChild(th(label, 'name'));
+    data.days.forEach(function (d) {
+      const cell = th(pick(d), dayClass(d));
+      if (d.holidayName) cell.title = d.holidayName;
+      tr.appendChild(cell);
+    });
+    data.aggHeads.forEach(function (h) { tr.appendChild(th(label === '' ? h : '', 'agg')); });
+    return tr;
+  }
+
+  function staffRow(row) {
+    const tr = document.createElement('tr');
+    tr.appendChild(td(row.name, 'name', row.kind ? row.kind : '区分が未登録です'));
+
+    row.cells.forEach(function (cell, i) {
+      const day = data.days[i];
+      const el = td(cell.v, 'day ' + dayClass(day));
+      if (cell.f) {
+        el.classList.add('formula');
+        el.title = '数式のセルなので書き換えません';
+      } else {
+        el.onclick = function () { stampCell(el, row.row, day.col); };
+      }
+      const key = row.row + ',' + day.col;
+      if (dirty.has(key)) {
+        el.textContent = dirty.get(key);
+        el.classList.add('dirty');
+      }
+      tr.appendChild(el);
+    });
+
+    row.agg.forEach(function (v) { tr.appendChild(td(v, 'agg')); });
+    return tr;
+  }
+
+  function textRow(label, sheetRow, cells, cls) {
+    const tr = document.createElement('tr');
+    tr.className = cls || '';
+    tr.appendChild(td(label, 'name'));
+    cells.forEach(function (v, i) {
+      const day = data.days[i];
+      const el = td(v, 'day ' + dayClass(day));
+      el.onclick = function () { stampCell(el, sheetRow, day.col); };
+      const key = sheetRow + ',' + day.col;
+      if (dirty.has(key)) { el.textContent = dirty.get(key); el.classList.add('dirty'); }
+      tr.appendChild(el);
+    });
+    data.aggHeads.forEach(function () { tr.appendChild(td('', 'agg')); });
+    return tr;
+  }
+
+  function totalRow(label, pick, markNegative) {
+    const tr = document.createElement('tr');
+    tr.className = 'total';
+    tr.appendChild(td(label, 'name'));
+    data.days.forEach(function (d) {
+      const v = pick(d);
+      const el = td(v === '' || v === null ? '' : v, dayClass(d));
+      if (markNegative && Number(v) < 0) el.classList.add('neg');
+      tr.appendChild(el);
+    });
+    data.aggHeads.forEach(function () { tr.appendChild(td('', 'agg')); });
+    return tr;
+  }
+
+  function th(text, cls) {
+    const el = document.createElement('th');
+    el.textContent = text == null ? '' : text;
+    if (cls) el.className = cls;
+    return el;
+  }
+
+  function td(text, cls, title) {
+    const el = document.createElement('td');
+    el.textContent = text == null ? '' : text;
+    if (cls) el.className = cls;
+    if (title) el.title = title;
+    return el;
+  }
+
+  // ---- 編集 ---------------------------------------------------------
+  function stampCell(el, row, col) {
+    if (stamp === null) {
+      setStatus('先に上のスタンプを選んでください。', true);
+      return;
+    }
+    dirty.set(row + ',' + col, stamp);
+    el.textContent = stamp;
+    el.classList.add('dirty');
+    updateDirtyUi();
+  }
+
+  function updateDirtyUi() {
+    const n = dirty.size;
+    $('save').disabled = n === 0;
+    $('discard').disabled = n === 0;
+    $('save').textContent = n === 0 ? '保存' : `保存 (${n})`;
+  }
+
+  $('save').onclick = function () {
+    const edits = [];
+    dirty.forEach(function (value, key) {
+      const parts = key.split(',');
+      edits.push({ row: Number(parts[0]), col: Number(parts[1]), value: value });
+    });
+    $('save').disabled = true;
+    setStatus(`${edits.length} セルを保存しています…`);
+    call('apiSaveCells', [data.sheetName, edits]).then(function (res) {
+      const msg = `${res.written} セルを保存しました。`
+        + (res.rejected.length ? ` ${res.rejected.length} セルは書き込めませんでした。` : '');
+      setStatus(msg, res.rejected.length > 0);
+      loadSheet(data.sheetName);
+    }).catch(function (e) {
+      setStatus('保存に失敗しました: ' + e.message, true);
+      updateDirtyUi();
+    });
+  };
+
+  $('discard').onclick = function () {
+    dirty.clear();
+    renderGrid();
+    updateDirtyUi();
+    setStatus('未保存の編集を取り消しました。');
+  };
+
+  // ---- ツールバー ---------------------------------------------------
+  $('sheetSelect').onchange = function () {
+    if (dirty.size && !confirm('未保存の編集があります。破棄して切り替えますか？')) {
+      $('sheetSelect').value = data.sheetName;
+      return;
+    }
+    loadSheet($('sheetSelect').value);
+  };
+
+  $('reload').onclick = function () {
+    if (dirty.size && !confirm('未保存の編集があります。破棄して読み直しますか？')) return;
+    loadSheet(data.sheetName);
+  };
+
+  $('newSheet').onclick = function () {
+    const text = prompt('作る月を「yyyy/m」で入力してください（例 2026/10）');
+    if (!text) return;
+    const m = text.match(/(\d{4})\s*[\/\-年.]\s*(\d{1,2})/);
+    if (!m) { setStatus('「2026/10」のような形式で入力してください。', true); return; }
+    setStatus('シートを作っています…');
+    call('apiCreateSheet', [Number(m[1]), Number(m[2])]).then(function (res) {
+      setStatus(`シート「${res.sheetName}」を作りました。`);
+      boot();
+    }).catch(function (e) { setStatus('作れませんでした: ' + e.message, true); });
+  };
+
+  $('runAuto').onclick = function () {
+    setStatus('自動作成を実行しています…');
+    call('apiRunAutoShift', [data.sheetName]).then(function () {
+      loadSheet(data.sheetName);
+    }).catch(function (e) { setStatus(e.message, true); });
+  };
+
+  boot();
+</script>
+</body>
+</html>

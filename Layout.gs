@@ -217,11 +217,11 @@ function getMonthValue(sheet, layout) {
 
 /**
  * 早番記号か（○ と ◯ の入力揺れを吸収）。移植元: IsEarlySym
+ * 判定は Engine.matchWorkSym に委ねる。分類・集計・表示で規則を1つに保つため。
  * @return {boolean}
  */
 function isEarlySym(value) {
-  const v = String(value || '').trim();
-  return v === SYM.EARLY || v === SYM.EARLY_ALT;
+  return matchWorkSym(value) === SYM.EARLY;
 }
 
 /**

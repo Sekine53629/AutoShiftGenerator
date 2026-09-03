@@ -62,6 +62,7 @@ Object.assign(sandbox, vm.runInContext(
   '({ CONFIG, LABEL, NAMED_RANGE, LAYOUT, SYM, KIND, RULE, CFG_MEMBER, CFG_SETTING,'
   + ' SETTING_DEFAULT, HOLIDAY_SHEET, CHANGELOG_SHEET, ENGINE_LIMIT, DOC_BUSY_N,'
   + ' NON_NAME_LABELS, MASK_NAMES, SHEET_BUILD, SETUP_KNOWN_HEADS,'
+  + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH,'
   + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF })', sandbox));
 
 // ---- テストランナー ----------------------------------------------------
@@ -209,9 +210,52 @@ test('薬剤師出勤数の数式が MATCH に配列を渡さない（§5.3）',
   assert.ok(f.indexOf('MATCH') < 0, 'MATCH を使わず作業列を参照すること');
   assert.ok(f.indexOf('$AN$11:$AN$26') >= 0, '区分の作業列 AN を参照する');
   assert.ok(f.indexOf('"薬剤師"') >= 0);
-  ['○', '◯', '▲', '●'].forEach(function (s) {
-    assert.ok(f.indexOf(`="${s}"`) >= 0, `出勤記号 ${s} を数える`);
+  Array.from(sandbox.WORK_SYMS).forEach(function (sym) {
+    assert.ok(f.indexOf(`"${sym}*"`) >= 0 || f.indexOf(`"${sym}"`) >= 0,
+      `出勤記号 ${sym} を数える`);
   });
+});
+
+test('出勤記号の集計が派遣行の「▲＋氏名」を拾う（先頭一致）', function () {
+  assert.strictEqual(sandbox.WORK_SYM_PREFIX_MATCH, true,
+    '既定は先頭一致（派遣行を頭数に入れる運用の前提）');
+
+  const pharm = sandbox.buildPharmCountFormula_('B', 11, 26);
+  assert.ok(pharm.indexOf('"▲*"') >= 0, '薬剤師出勤数がワイルドカードで数える');
+  assert.ok(pharm.indexOf('COUNTIFS(') >= 0, 'COUNTIFS を使う');
+
+  const late = sandbox.buildCountifSumFormula_(11, ['▲'], true);
+  assert.strictEqual(late, '=COUNTIF(B11:AF11,"▲*")', '集計列 AK も先頭一致');
+
+  // 休み記号は完全一致のまま（緩めると公休ノルマの数え方が isPaidOff とずれる）
+  const off = sandbox.buildCountifSumFormula_(11, ['公休']);
+  assert.strictEqual(off, '=COUNTIF(B11:AF11,"公休")', '休み記号は完全一致');
+});
+
+test('matchWorkSym が記号を正規化し、複合テキストも拾う', function () {
+  assert.strictEqual(sandbox.matchWorkSym('○'), '○');
+  assert.strictEqual(sandbox.matchWorkSym('◯'), '○', '別字体は ○ に正規化');
+  assert.strictEqual(sandbox.matchWorkSym('▲'), '▲');
+  assert.strictEqual(sandbox.matchWorkSym('●'), '●');
+
+  // 実物の派遣行にある書き方（氏名は伏せて記号だけ再現する）
+  assert.strictEqual(sandbox.matchWorkSym('▲＊＊＊＊'), '▲', '記号＋氏名を出勤とみなす');
+  assert.strictEqual(sandbox.matchWorkSym('●＊＊'), '●');
+
+  // 休みと空欄は出勤ではない
+  ['公休', '希休', '夏休', '有休', '有休※', '', '  ', '↑15-20'].forEach(function (v) {
+    assert.strictEqual(sandbox.matchWorkSym(v), '', `${JSON.stringify(v)} は出勤ではない`);
+  });
+});
+
+test('isEarlySym と集計が同じ規則を見ている', function () {
+  // Layout.isEarlySym は matchWorkSym に委譲しているので、
+  // 先頭一致の設定を変えると両方が同時に変わる
+  assert.strictEqual(sandbox.isEarlySym('○'), true);
+  assert.strictEqual(sandbox.isEarlySym('◯'), true);
+  assert.strictEqual(sandbox.isEarlySym('●'), false);
+  assert.strictEqual(sandbox.isEarlySym('○＊＊'),
+    sandbox.WORK_SYM_PREFIX_MATCH, '複合テキストの扱いはフラグに従う');
 });
 
 test('COUNTIF の和は記号ゼロ個のとき "=0"（"=" だけでは壊れる）', function () {
@@ -223,10 +267,13 @@ test('COUNTIF の和は記号ゼロ個のとき "=0"（"=" だけでは壊れる
     '=COUNTIF(B11:AF11,"○")+COUNTIF(B11:AF11,"◯")');
 });
 
-test('5診出勤の数式が DOC_BUSY_N を使う', function () {
+test('5診出勤の数式が DOC_BUSY_N を使い、行の形が COUNTIFS に揃う', function () {
   const f = sandbox.buildBusyDayFormula_(11, 31);
-  assert.ok(f.indexOf(`=${sandbox.DOC_BUSY_N})`) >= 0, '混雑日のしきい値を共有定数から取る');
-  assert.ok(f.indexOf('B$31:AF$31') >= 0, '医師数行を参照する');
+  assert.ok(f.indexOf(`,${sandbox.DOC_BUSY_N},`) >= 0, '混雑日のしきい値を共有定数から取る');
+  assert.ok(f.indexOf('$B$31:$AF$31') >= 0, '医師数行を参照する');
+  assert.ok(f.indexOf('B11:AF11') >= 0, '本人の行を参照する');
+  // COUNTIFS は範囲の形が揃っている必要がある。どちらも 1 行 × 31 列
+  assert.ok(f.indexOf('COUNTIFS(') >= 0, 'SUMPRODUCT ではなく COUNTIFS');
 });
 
 // ---- そのほかの純粋関数 -----------------------------------------------

@@ -36,10 +36,40 @@ function parseHolidayCsv_(csvText) {
 }
 
 /**
- * 祝日マスタを Set<日付シリアル> として読む。
- * 自動作成の工程2（日情報）が使う。シートは1回だけ読む。
- * @return {Object} 日付キー → 名称
+ * 祝日マスタを「日付キー → 名称」の辞書として読む。
+ * 自動作成の工程2（日情報）と Web アプリの表示が使う。シートは1回だけ読む。
+ * 祝日マスタが無い／空でも例外にせず空の辞書を返す（祝日なしとして続行できる）。
+ * @return {Object<string,string>}
  */
 function loadHolidayMap() {
-  return notImplemented_(MODULE_HOLIDAYS, 'loadHolidayMap', 7); // TODO(P7)
+  try {
+    const sheet = getSheetOrNull(CONFIG.SHEET_HOLIDAY);
+    if (!sheet) return {};
+    const last = sheet.getLastRow();
+    if (last < HOLIDAY_SHEET.FIRST_ROW) return {};
+
+    const rows = sheet.getRange(HOLIDAY_SHEET.FIRST_ROW, HOLIDAY_SHEET.COL_DATE,
+      last - HOLIDAY_SHEET.FIRST_ROW + 1, 2).getValues();
+    const map = {};
+    rows.forEach(function (r) {
+      if (r[0] instanceof Date) map[toDateKey(r[0])] = String(r[1] || '');
+    });
+    return map;
+  } catch (error) {
+    logError(MODULE_HOLIDAYS, 'loadHolidayMap', error, '');
+    return {};
+  }
+}
+
+/**
+ * 日付を 'yyyy-MM-dd' のキーにする。祝日の突き合わせに使う。
+ * Date をそのまま比較すると時刻の差で外れるので、必ずこのキーで比べること。
+ * @param {Date} date
+ * @return {string}
+ */
+function toDateKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }

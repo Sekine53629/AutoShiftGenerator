@@ -534,6 +534,39 @@ function parseFixedDow(text) {
 }
 
 /**
+ * セルの文字列が出勤記号なら、正規化した記号を返す。出勤でなければ ''。
+ *
+ * ○ と ◯ はどちらも ○ に正規化する（入力揺れ。移植元: IsEarlySym）。
+ * WORK_SYM_PREFIX_MATCH が true のときは先頭一致で見るので、
+ * 「▲佐藤典昭」のような記号＋氏名の複合テキストも ▲ として拾う。
+ *
+ * 既存分類（ST_FWORK / ST_FOFF）とシート上の集計は、必ず**この関数と同じ規則**で
+ * 判定すること。片方だけ変えると、表に出ている人数と中で数えている人数がずれる。
+ *
+ * @param {string} value セルの文字列
+ * @return {string} '○' | '●' | '▲' | ''
+ */
+function matchWorkSym(value) {
+  const v = String(value || '').trim();
+  if (v === '') return '';
+
+  const table = [
+    { sym: SYM.EARLY, canonical: SYM.EARLY },
+    { sym: SYM.EARLY_ALT, canonical: SYM.EARLY },   // 全角の別字体も早番
+    { sym: SYM.MID, canonical: SYM.MID },
+    { sym: SYM.LATE, canonical: SYM.LATE },
+  ];
+
+  for (let i = 0; i < table.length; i++) {
+    const hit = WORK_SYM_PREFIX_MATCH
+      ? v.indexOf(table[i].sym) === 0
+      : v === table[i].sym;
+    if (hit) return table[i].canonical;
+  }
+  return '';
+}
+
+/**
  * 公休ノルマに数えない休みか。
  * 【必ず部分一致】設定 L11 に「有休」とだけ書けば「有休※」も外れる、という約束。
  * 集計列 AH/AI の振り分け（Setup.gs）もこの関数と同じ規則にすること（§5.4）。

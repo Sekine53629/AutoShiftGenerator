@@ -272,9 +272,9 @@ function writeAggregateColumns_(sheet, pos) {
     agg.push([
       buildCountifSumFormula_(r, quotaSyms),
       buildCountifSumFormula_(r, paidOffSyms),
-      buildCountifSumFormula_(r, [SYM.EARLY, SYM.EARLY_ALT]),
-      buildCountifSumFormula_(r, [SYM.LATE]),
-      buildCountifSumFormula_(r, [SYM.MID]),
+      buildCountifSumFormula_(r, [SYM.EARLY, SYM.EARLY_ALT], true),
+      buildCountifSumFormula_(r, [SYM.LATE], true),
+      buildCountifSumFormula_(r, [SYM.MID], true),
       buildBusyDayFormula_(r, pos.docRow),
     ]);
     kind.push([

@@ -14,7 +14,8 @@ function onOpen() {
   try {
     SpreadsheetApp.getUi()
       .createMenu('シフト')
-      .addItem('入力パレットを開く', 'showSidebar')
+      .addItem('Web アプリを開く', 'openWebApp')
+      .addItem('入力パレットを開く（サイドバー）', 'showSidebar')
       .addSeparator()
       .addItem('シフト自動作成', 'runAutoShift')
       .addItem('設定チェック', 'runSettingsCheck')
@@ -35,6 +36,32 @@ function onOpen() {
       .addToUi();
   } catch (error) {
     console.error(`[${MODULE_MENU}.onOpen] ${error.message}\nstack: ${error.stack}`);
+  }
+}
+
+/**
+ * デプロイ済み Web アプリを新しいタブで開く。
+ * ダイアログから window.open するのは、GAS のメニューから直接タブを開けないため。
+ */
+function openWebApp() {
+  try {
+    const url = getWebAppUrl();
+    if (!url) {
+      SpreadsheetApp.getUi().alert([
+        'Web アプリがまだデプロイされていません。',
+        '',
+        'Apps Script エディタの「デプロイ」→「新しいデプロイ」→',
+        '種類に「ウェブアプリ」を選んでデプロイしてください。',
+      ].join('\n'));
+      return;
+    }
+    const html = HtmlService
+      .createHtmlOutput(`<script>window.open(${JSON.stringify(url)},'_blank');`
+        + 'google.script.host.close();</script>')
+      .setHeight(10).setWidth(10);
+    SpreadsheetApp.getUi().showModalDialog(html, 'Web アプリを開いています');
+  } catch (error) {
+    logError(MODULE_MENU, 'openWebApp', error, '');
   }
 }
 
