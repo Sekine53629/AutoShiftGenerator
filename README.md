@@ -63,6 +63,7 @@ AutoShiftGenerator/
 ├── FormatProfile.gs     実物の書式の取り込みと適用（VBA 版に無い新機能）
 ├── WebApp.gs            Web アプリのサーバ側 API
 ├── WebAppView.html      Web アプリの画面
+├── ImportProfileView.html  Excel から書き出した書式の貼り込み画面
 ├── Engine.gs            ★配置エンジン（SpreadsheetApp を一切呼ばない）
 ├── ShiftAuto.gs         自動作成の入口・シートの読み書き
 ├── Report.gs            結果レポートの文字列組み立て
@@ -73,6 +74,8 @@ AutoShiftGenerator/
 ├── Holidays.gs          祝日マスタの取込
 ├── Export.gs            PDF 出力
 ├── Survey.gs            シート構造の調査
+├── tools/               移行用ツール（Apps Script には入れない）
+│   └── ExportFormatProfile.bas   Excel 側で書式を JSON へ書き出す VBA
 ├── archive/             使わなくなったファイル（貼り付けない）
 ├── tests/
 │   └── pure.test.js     GAS 不要のテスト（node tests/pure.test.js）
@@ -274,12 +277,38 @@ Apps Script エディタ → **デプロイ → 新しいデプロイ → 種類
 色・行の高さ・文字サイズといった**見た目**は決めていません。
 そこで、運用中のシフト表から測って持っておき、生成時にそれを再現します。
 
-**手順**
+取り込み方は2通りあります。**Excel が手元にあるなら B のほうが正確です。**
+
+#### A. Google スプレッドシート上のシートから取り込む
 
 1. 運用中のシフト表を、このスプレッドシートに取り込む
    （ファイル → インポート → アップロード、または既存シートをコピー）
 2. **そのシートを開いた状態で** シフト → 初期設定 → **実物の書式を取り込む**
-3. 以降に生成するシフト表がこの書式になります
+
+手軽ですが、**Excel → Sheets の変換で落ちたものは取り戻せません**。
+条件付き書式の数式や一部の書式は、取り込みの時点で失われることがあります。
+
+#### B. Excel から直接書き出す（推奨）
+
+変換で失われる前の値を Excel 側で測ります。
+
+1. シフト表の Excel ブックを開く
+2. VBE（Alt+F11）→ ファイル → ファイルのインポート →
+   [`tools/ExportFormatProfile.bas`](tools/ExportFormatProfile.bas)
+3. シフト表のシートを選んだ状態で `GASProfile_書式エクスポート` を実行
+4. 「GAS書式JSON」シートの **A1 の中身をすべて**コピー
+5. GAS 側で シフト → 初期設定 → **書式プロファイルを読み込む（Excel から）** に貼る
+
+`ExportFormatProfile.bas` は移行用のツールで、VBA 版のソース
+（`Auto_Shift_Generator/src`）には追加しません。GAS 版の `tools/` に置いてあります。
+
+**単位と色は変換しています。** Excel の行の高さ・列幅は「ポイント」、
+Sheets は「ピクセル」なので 4/3 倍します。色は Excel が BGR の数値、
+Sheets が `#RRGGBB` なので並べ替えます。ここを間違えると、
+エラーは出ないまま違う見た目になります。
+
+**表示形式は書き出しません。** Excel の和暦書式（`[$-ja-JP]ge"." m"月"`）は
+Sheets に存在せず、そのまま渡すと壊れるためです（仕様書 §5.2）。
 
 **元のシフト表は読むだけで、書き換えません。** 本番のシートを開いたまま実行して安全です。
 

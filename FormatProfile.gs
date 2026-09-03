@@ -455,6 +455,107 @@ function parseProfileJson_(json, defaults) {
 }
 
 /**
+ * メニュー「書式プロファイルを読み込む」。
+ * Excel 側のエクスポータ（tools/ExportFormatProfile.bas）が出した JSON を貼る画面を出す。
+ */
+function showProfileImportDialog() {
+  try {
+    const html = HtmlService.createHtmlOutputFromFile('ImportProfileView')
+      .setWidth(720).setHeight(520);
+    SpreadsheetApp.getUi().showModalDialog(html, '書式プロファイルを読み込む');
+  } catch (error) {
+    logError(MODULE_FORMATPROFILE, 'showProfileImportDialog', error, '');
+    throw error;
+  }
+}
+
+/**
+ * Excel から書き出した JSON を取り込み、スクリプトプロパティへ保存する。
+ *
+ * 【なぜ Excel 側で測るのか】
+ *   Excel ブックを Google スプレッドシートへ取り込むと、条件付き書式の数式や
+ *   一部の書式が落ちる。落ちたあとを測っても元の見た目は分からない。
+ *   Excel 側で測れば、変換で失われる前の値が取れる。
+ *
+ * 知らないキーは捨てるが、**捨てたことは呼び出し元へ返す**。
+ * 黙って落とすと「Excel で見えている書式が反映されない」理由が追えなくなる。
+ *
+ * @param {string} jsonText 貼り付けられた JSON
+ * @return {{keys:number, cfRules:number, cfUsed:number, unknown:string[], changed:number}}
+ */
+function importFormatProfileJson(jsonText) {
+  const started = Date.now();
+  try {
+    const parsed = parseImportedJson_(jsonText);
+
+    // 条件付き書式から土日・月外の色を拾い、静的な塗りが無いところを埋める
+    const cfRules = Array.isArray(parsed._conditionalFormats) ? parsed._conditionalFormats : [];
+    const cfColors = deriveDayColorsFromRules_(cfRules);
+    ['day.satBg', 'day.sunBg', 'day.outMonthBg', 'day.outMonthFg'].forEach(function (key) {
+      parsed[key] = pickDayColor_(parsed[key], cfColors[key], FORMAT_DEFAULT[key]);
+    });
+
+    const unknown = Object.keys(parsed).filter(function (key) {
+      return key.indexOf('_') !== 0
+        && !Object.prototype.hasOwnProperty.call(FORMAT_DEFAULT, key);
+    });
+
+    const merged = parseProfileJson_(JSON.stringify(parsed), FORMAT_DEFAULT);
+    const saved = saveFormatProfile_(merged);
+
+    merged._conditionalFormats = cfRules;
+    writeProfileSheet_(merged, 'Excel からの読み込み');
+    SpreadsheetApp.flush();
+
+    const changed = Object.keys(saved).filter(function (key) {
+      return saved[key] !== FORMAT_DEFAULT[key];
+    }).length;
+
+    logSuccess(MODULE_FORMATPROFILE, 'importFormatProfileJson',
+      `keys=${Object.keys(saved).length}; changed=${changed}; cfRules=${cfRules.length}; `
+      + `cfUsed=${Object.keys(cfColors).length}; unknown=${unknown.length}; `
+      + `elapsedMs=${Date.now() - started}`);
+
+    return {
+      keys: Object.keys(saved).length,
+      changed: changed,
+      cfRules: cfRules.length,
+      cfUsed: Object.keys(cfColors).length,
+      unknown: unknown,
+    };
+  } catch (error) {
+    logError(MODULE_FORMATPROFILE, 'importFormatProfileJson', error,
+      `length=${jsonText && jsonText.length}`);
+    throw error;
+  }
+}
+
+/**
+ * 貼り付けられた文字列を JSON として読む。読めない理由を具体的に返す。
+ * SpreadsheetApp を呼ばない純粋関数。
+ *
+ * @param {string} jsonText
+ * @return {Object}
+ */
+function parseImportedJson_(jsonText) {
+  const text = String(jsonText == null ? '' : jsonText).trim();
+  if (text === '') throw new Error('何も貼られていません。');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (ignored) {
+    throw new Error('JSON として読めませんでした。'
+      + 'Excel 側の「GAS書式JSON」シート A1 の中身を、途中で切らずに'
+      + 'すべてコピーできているか確かめてください。');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('JSON の形が違います。{ ... } の形である必要があります。');
+  }
+  return parsed;
+}
+
+/**
  * 書式プロファイルをスクリプトプロパティへ保存する（ここが「正」）。
  * 既定値と同じ項目だけを保存する（知らないキーを持ち込まない）。
  */
@@ -598,5 +699,17 @@ function applyRoleFormat_(sheet, row, fmt, firstCol, numCols) {
     .setFontColor(fmt.fontColor)
     .setFontSize(fmt.fontSize)
     .setFontWeight(fmt.bold ? 'bold' : 'normal')
-    .setHorizontalAlignment(fmt.hAlign);
+    .setHorizontalAlignment(normalizeHAlign_(fmt.hAlign));
+}
+
+/**
+ * 横位置を Sheets が受ける語に揃える。
+ * Excel の「標準」は general という語で出てくるが、Sheets の
+ * setHorizontalAlignment はこれを受けない。落ちる代わりに left へ寄せる。
+ * @param {string} value
+ * @return {string} 'left' | 'center' | 'right'
+ */
+function normalizeHAlign_(value) {
+  const v = String(value || '').trim().toLowerCase();
+  return ['left', 'center', 'right'].indexOf(v) >= 0 ? v : 'left';
 }

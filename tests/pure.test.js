@@ -661,6 +661,31 @@ test('静的な色が塗られていれば条件付き書式より優先する',
   assert.strictEqual(pick('', '', '#000000'), '#000000', 'どちらも無ければ既定値');
 });
 
+test('貼り付けられた JSON の読めない理由を具体的に返す', function () {
+  const bad = function (text) {
+    try { sandbox.parseImportedJson_(text); return null; }
+    catch (e) { return e.message; }
+  };
+  assert.ok(bad('')?.indexOf('何も貼られていません') >= 0);
+  assert.ok(bad('   ')?.indexOf('何も貼られていません') >= 0);
+  assert.ok(bad('{"a":1')?.indexOf('JSON として読めません') >= 0, '途中で切れた JSON');
+  assert.ok(bad('[1,2]')?.indexOf('形が違います') >= 0, '配列は受けない');
+  assert.ok(bad('"文字列"')?.indexOf('形が違います') >= 0);
+  assert.ok(bad('null')?.indexOf('形が違います') >= 0);
+
+  const ok = sandbox.parseImportedJson_('{"col.day.width":30}');
+  assert.strictEqual(ok['col.day.width'], 30);
+});
+
+test('横位置は Sheets が受ける語に揃える', function () {
+  // Excel の「標準」は general で出てくるが setHorizontalAlignment は受けない
+  assert.strictEqual(sandbox.normalizeHAlign_('general'), 'left');
+  assert.strictEqual(sandbox.normalizeHAlign_(''), 'left');
+  assert.strictEqual(sandbox.normalizeHAlign_(null), 'left');
+  assert.strictEqual(sandbox.normalizeHAlign_('CENTER'), 'center');
+  assert.strictEqual(sandbox.normalizeHAlign_('right'), 'right');
+});
+
 test('roleFormat が役割の書式をまとめて返す', function () {
   const merged = sandbox.mergeProfileRows_(sandbox.FORMAT_DEFAULT, []);
   const fmt = sandbox.roleFormat(merged, 'grid');
