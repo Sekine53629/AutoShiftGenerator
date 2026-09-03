@@ -158,6 +158,31 @@ clasp push --force
 
 `.clasp.json` は `.gitignore` 済みなので、コミットされません（別のパソコンでは作り直します）。
 
+> **`scriptId` はスプレッドシート ID ではありません。** 別物です。
+> スプレッドシート ID は URL の `.../spreadsheets/d/＜ここ＞/edit`、
+> スクリプト ID は Apps Script エディタの **⚙ プロジェクトの設定 → スクリプト ID**。
+> コンテナバインドのスクリプトは、スプレッドシートに紐づいた別の実体です。
+
+#### 複数のブックを使い分ける
+
+`clasp push` に「プロジェクトを指定する」オプションはありません。
+切り替えは `.clasp.json` を差し替えます。`.clasp.*.json` も `.gitignore` 済みなので、
+環境ごとに置いておいて必要なほうをコピーするのが楽です。
+
+```powershell
+# 用意しておく（どちらも git に載りません）
+#   .clasp.dev.json   … 練習用のブック
+#   .clasp.work.json  … 職場のブック
+
+Copy-Item .clasp.work.json .clasp.json -Force
+clasp push --force
+```
+
+職場アカウントのブックへ入れるときは、`clasp login` をそのアカウントでやり直し、
+**そのアカウント側でも** <https://script.google.com/home/usersettings> の
+Apps Script API をオンにします。組織のポリシーで Apps Script API や
+外部リクエストが止められている場合は、管理者に開けてもらう以外に手がありません。
+
 > **`clasp clone` は使わないでください。** リモートの中身をローカルへ上書きするので、
 > 手貼りで壊れた状態を取り込んでしまいます。ここでは常に
 > **ローカル → リモート**の一方向（`clasp push`）で運用します。
