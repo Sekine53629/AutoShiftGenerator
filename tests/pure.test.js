@@ -1140,6 +1140,143 @@ test('公休ノルマは土日 + 平日の祝日。二重に数えない', funct
   assert.strictEqual(st.targetOff, 3, '土 + 日 + 平日の祝日1 = 3（土曜の祝日は重複しない）');
 });
 
+// ---- 配置エンジンの通し（制約が守られているかで確かめる） ---------------
+//
+// 「VBA と1セルも違わない」の確認には VBA 版の出力が要る。それは後日にして、
+// ここでは**レポートが数え直す制約**が守られているかを見る。
+// これで「使えるか」は判定できる。
+
+function runFullEngine(members, days, existing) {
+  return sandbox.runEngine({
+    settings: { earlyN: 1, lateMin: 2, maxRun: 3, maxOffRun: 3, weekBase: 2,
+                reqPlus: 1, paidSyms: '有休,夏休', gSym: '●',
+                clerkEarlyN: 1, lateBusy: 0, runBonus: 0 },
+    days: days, members: members, existing: existing || [],
+  });
+}
+
+/** 個人 i の休みの日数（1 起点） */
+function countOff(out, i, nD) {
+  let n = 0;
+  for (let j = 1; j <= nD; j++) {
+    if (out.plan[i][j] === sandbox.ST_OFF || out.plan[i][j] === sandbox.ST_FOFF) n++;
+  }
+  return n;
+}
+
+test('通しで動き、公休ノルマぶんの休みが入る', function () {
+  const days = makeDays(30);
+  const members = [];
+  for (let k = 0; k < 6; k++) members.push(member({ name: 'P' + k }));
+
+  const out = runFullEngine(members, days);
+
+  // 9月は 土日が9日（9/5,6,12,13,19,20,26,27 と 9/... ）
+  const expected = sandbox.buildState_({
+    settings: {}, days: days, members: members, existing: [],
+  }).targetOff;
+  assert.ok(expected > 0, '公休ノルマが算出されている');
+
+  for (let i = 1; i <= 6; i++) {
+    assert.strictEqual(countOff(out, i, 30), expected,
+      `${i}人目の休みがノルマちょうど（誤差0）`);
+  }
+  assert.deepStrictEqual(Array.from(out.unmet), [], '未達なし');
+});
+
+test('出勤日には必ず記号が付く', function () {
+  const days = makeDays(30);
+  const members = [];
+  for (let k = 0; k < 6; k++) members.push(member({ name: 'P' + k }));
+
+  const out = runFullEngine(members, days);
+  const seen = {};
+  for (let i = 1; i <= 6; i++) {
+    for (let j = 1; j <= 30; j++) {
+      if (out.plan[i][j] === sandbox.ST_WORK) {
+        assert.notStrictEqual(out.symbol[i][j], '', `${i},${j} に記号が無い`);
+        seen[out.symbol[i][j]] = true;
+      }
+    }
+  }
+  assert.ok(seen['○'], '早番が出る');
+  assert.ok(seen['▲'] || seen['●'], '遅番か遅半が出る');
+});
+
+test('既存入力は書き換えられない（不変条件）', function () {
+  const days = makeDays(30);
+  const members = [member({ name: 'A' }), member({ name: 'B' }), member({ name: 'C' })];
+  const existing = [[], [], []];
+  existing[0][0] = '希休';     // 1人目の 9/1
+  existing[0][4] = '有休';     // 1人目の 9/5
+  existing[1][0] = '○';       // 2人目の 9/1
+
+  const out = runFullEngine(members, days, existing);
+
+  assert.strictEqual(out.plan[1][1], sandbox.ST_FOFF, '希休は休みのまま');
+  assert.strictEqual(out.plan[1][5], sandbox.ST_FOFF, '有休は休みのまま');
+  assert.strictEqual(out.plan[2][1], sandbox.ST_FWORK, '○ は出勤のまま');
+});
+
+test('ノルマ外の休みはノルマを消費しない', function () {
+  const days = makeDays(30);
+  const members = [member({ name: 'A' }), member({ name: 'B' })];
+
+  const plain = runFullEngine(members, days);
+  const base = countOff(plain, 1, 30);
+
+  // 1人目に有休を3日入れる。有休はノルマ外なので、公休はそのまま入るはず
+  const existing = [['有休', '有休', '有休'], []];
+  const out = runFullEngine(members, days, existing);
+
+  assert.strictEqual(countOff(out, 1, 30), base + 3,
+    '有休3日ぶん休みが増える（ノルマは減らない）');
+});
+
+test('手動ルールの人は一切触られない', function () {
+  const days = makeDays(30);
+  const members = [
+    member({ name: 'A' }),
+    member({ name: 'M', rule: sandbox.RULE.MANUAL }),
+  ];
+  const out = runFullEngine(members, days);
+
+  for (let j = 1; j <= 30; j++) {
+    assert.strictEqual(out.plan[2][j], sandbox.ST_NONE, `手動の ${j} 日目が未決のまま`);
+    assert.strictEqual(out.symbol[2][j], '', '記号も付かない');
+  }
+});
+
+test('休業者の行は対象外のまま', function () {
+  const days = makeDays(30);
+  const members = [member({ name: 'A' }), member({ name: 'L', leave: true })];
+  const out = runFullEngine(members, days);
+
+  for (let j = 1; j <= 30; j++) {
+    assert.strictEqual(out.plan[2][j], sandbox.ST_SKIP);
+  }
+});
+
+test('未実装の均等化は飛ばして記録される', function () {
+  const days = makeDays(30);
+  const out = runFullEngine([member({ name: 'A' })], days);
+
+  const skipped = Array.from(out.diagnostics.skipped || []);
+  assert.ok(skipped.indexOf('CoverBalance') >= 0, '飛ばしたことが残る');
+  assert.ok(out.elapsedMs >= 0, '所要時間が返る');
+});
+
+test('置けない日があると未達として記録される', function () {
+  // 1週間しかないのに月間休日数を10日にする → 置ききれない
+  const days = makeDays(7);
+  const members = [member({ name: 'A', quota: 10 })];
+  const out = runFullEngine(members, days);
+
+  assert.strictEqual(out.unmet.length, 1, '未達が1件');
+  assert.ok(String(out.unmet[0]).indexOf('配置できず') >= 0);
+  assert.ok(String(out.unmet[0]).indexOf('A') >= 0, '誰か分かる');
+});
+
 // ---- 結果 -------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

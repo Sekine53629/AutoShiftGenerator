@@ -46,18 +46,23 @@ function runEngine(input) {
   try {
     const state = buildState_(input);
 
-    classifyExisting_(state);      // 6
-    applyMemberRules_(state);      // 7
-    countCoverage_(state);         // 8
-    applyWeekNRule_(state);        // 9
-    buildWeekList_(state);         // 10
-    placeOffQuota_(state);         // 11
-    placeRemainingQuota_(state);   // 12
-    relaxWorkRuns_(state);         // 13
-    coverBalance_(state);          // 14
-    fiveBalance_(state);           // 15
-    assignSymbols_(state);         // 16
-    symbolBalance_(state);         // 17
+    // --- 必須の工程。ここが欠けるとシフト表にならない ---
+    classifyExisting_(state);      // 6  既存分類
+    applyMemberRules_(state);      // 7  ルール適用
+    countCoverage_(state);         // 8  予定出勤数
+    applyWeekNRule_(state);        // 9  週N日ルール
+    buildWeekList_(state);         // 10 週リスト
+    placeOffQuota_(state);         // 11 公休ノルマ
+    placeRemainingQuota_(state);   // 12 残ノルマ配置
+
+    // --- 品質を上げる工程。無くてもシフトは出る（手で直せる） ---
+    runRefinementStage_(state, '連勤緩和', relaxWorkRuns_);        // 13
+    runRefinementStage_(state, 'CoverBalance', coverBalance_);     // 14
+    runRefinementStage_(state, 'FiveBalance', fiveBalance_);       // 15
+
+    assignSymbols_(state);         // 16 記号割当（必須）
+
+    runRefinementStage_(state, 'SymbolBalance', symbolBalance_);   // 17
 
     return {
       plan: state.plan,
@@ -73,6 +78,32 @@ function runEngine(input) {
     logError(MODULE_ENGINE, 'runEngine', error,
       `nP=${input && input.members && input.members.length}; `
       + `nD=${input && input.days && input.days.length}`);
+    throw error;
+  }
+}
+
+/**
+ * 品質を上げる工程を、未実装でも止まらずに走らせる。
+ *
+ * 工程13〜15・17 は無くてもシフトは出る（連勤や人数の偏りが残るが手で直せる）。
+ * 移植の途中でも通しで動かせるように、**未実装だけを飲み込んで先へ進む**。
+ * 飲み込んだことは diagnostics に残し、レポートで「実行していない」と言えるようにする。
+ *
+ * 未実装以外の例外は握り潰さない。バグを見えなくするため。
+ *
+ * @return {boolean} 実行できたら true
+ */
+function runRefinementStage_(state, label, fn) {
+  try {
+    fn(state);
+    return true;
+  } catch (error) {
+    const message = String((error && error.message) || '');
+    if (message.indexOf('未実装') === 0) {
+      if (!state.diagnostics.skipped) state.diagnostics.skipped = [];
+      state.diagnostics.skipped.push(label);
+      return false;
+    }
     throw error;
   }
 }
@@ -343,7 +374,121 @@ function buildWeekList_(state) {
  * 移植元: AS_公休ノルマ
  */
 function placeOffQuota_(state) {
-  return notImplemented_(MODULE_ENGINE, 'placeOffQuota_', 3); // TODO(P3)
+  // --- 1. 各人の残ノルマ ---
+  for (let i = 1; i <= state.nP; i++) {
+    state.remOff[i] = 0;
+    if (state.skipRow[i] || state.leave[i]) continue;
+    // ★ 月間休日数は「通常」ルールでしか読まない（仕様書 §4.4）。
+    //   週N日・固定曜日の人は、そちらのルールで休みが決まる
+    if (state.rule[i] !== RULE.NORMAL) continue;
+
+    const quota = state.quota[i] < 0 ? state.targetOff : state.quota[i];
+
+    // 既にある休みのうち、ノルマ対象のものを数える。
+    // ノルマ外の記号（既定 有休・夏休）は数えない
+    let offN = 0;
+    for (let j = 1; j <= state.nD; j++) {
+      if (state.plan[i][j] !== ST_FOFF) continue;
+      const v = String(state.existing[i][j] || '').trim();
+      if (!isPaidOff(v, state.settings.paidSyms)) offN++;
+    }
+
+    state.remOff[i] = Math.max(0, quota - offN);
+  }
+
+  // --- 2. 週ごとの目標休日数を組み、3連休 → 2連休 → 単発 の順で置く ---
+  for (let i = 1; i <= state.nP; i++) {
+    if (state.remOff[i] <= 0) continue;
+    const need = state.remOff[i];
+    const tW = buildWeeklyOffTargets_(state, i, need);
+
+    for (let w = 1; w <= state.nW; w++) {
+      let n = Math.min(tW[w], state.remOff[i]);
+
+      // まとまった休みから置く。3連休が取れなければ2連休
+      while (n >= 2) {
+        let placedBlock = false;
+        if (n >= 3 && placeOffBlock_(state, i, state.wkList[w], 3)) {
+          state.remOff[i] -= 3;
+          n -= 3;
+          placedBlock = true;
+        }
+        if (!placedBlock) {
+          if (placeOffBlock_(state, i, state.wkList[w], 2)) {
+            state.remOff[i] -= 2;
+            n -= 2;
+          } else {
+            break;
+          }
+        }
+      }
+      // 残りは単発
+      while (n > 0) {
+        if (!placeOffSingle_(state, i, state.wkList[w])) break;
+        state.remOff[i]--;
+        n--;
+      }
+    }
+  }
+}
+
+/**
+ * 週ごとの目標休日数 tW を組む。移植元: AS_公休ノルマ の中段
+ *
+ *   tW = weekBase - その週の既存休。ただしその週の残り日数を超えない
+ *   月内日数が2日以下の端週は最大1
+ *   合計が残ノルマを超えるなら後ろの週から1ずつ削る（最大100巡）
+ *   足りないなら前の週から1ずつ足す（maxOffRun が上限。最大100巡）
+ *
+ * @return {number[]} 1 起点。添字は週の並び順
+ */
+function buildWeeklyOffTargets_(state, i, need) {
+  const tW = [null];
+  let sum = 0;
+
+  for (let w = 1; w <= state.nW; w++) {
+    let already = 0;
+    let daysInWeek = 0;
+    for (let j = 1; j <= state.nD; j++) {
+      if (!state.dayIn[j] || state.wkKey[j] !== state.wkList[w]) continue;
+      daysInWeek++;
+      if (state.plan[i][j] === ST_FOFF || state.plan[i][j] === ST_OFF) already++;
+    }
+
+    let t = state.settings.weekBase - already;
+    if (t > daysInWeek - already) t = daysInWeek - already;
+    if (daysInWeek <= 2 && t > 1) t = 1;      // 月初・月末の端週
+    if (t < 0) t = 0;
+
+    tW[w] = t;
+    sum += t;
+  }
+
+  // 多すぎる分を後ろの週から削る
+  let guard = 0;
+  while (sum > need && guard < ENGINE_LIMIT.OFF_QUOTA_MAX_PASS) {
+    for (let w = state.nW; w >= 1; w--) {
+      if (sum > need && tW[w] > 0) { tW[w]--; sum--; }
+    }
+    guard++;
+  }
+
+  // 足りない分を前の週から足す。1週に maxOffRun より多くは置かない
+  guard = 0;
+  while (sum < need && guard < ENGINE_LIMIT.OFF_QUOTA_MAX_PASS) {
+    let added = false;
+    for (let w = 1; w <= state.nW; w++) {
+      if (sum < need && tW[w] < state.settings.maxOffRun) {
+        tW[w]++;
+        sum++;
+        added = true;
+      }
+    }
+    if (!added) break;
+    guard++;
+  }
+
+  return tW;
 }
 
 /* ================================================================
@@ -356,7 +501,34 @@ function placeOffQuota_(state) {
  * 移植元: AS_残ノルマ配置
  */
 function placeRemainingQuota_(state) {
-  return notImplemented_(MODULE_ENGINE, 'placeRemainingQuota_', 3); // TODO(P3)
+  // ★ 1人1日ずつの総当たり。1人が一気に置ききると、その人だけ都合のよい日を
+  //   先取りしてしまう。VBA も外側のループで1周ずつ回している
+  let moved = true;
+  while (moved) {
+    moved = false;
+    for (let i = 1; i <= state.nP; i++) {
+      if (state.remOff[i] <= 0) continue;
+
+      let best = 0;
+      let bestScore = ENGINE_LIMIT.SCORE_INF;
+      for (let j = 1; j <= state.nD; j++) {
+        if (state.plan[i][j] !== ST_WORK) continue;
+        const sc = offScore_(state, i, j) + adjBonus_(state, i, j);
+        if (sc > bestScore) { bestScore = sc; best = j; }
+      }
+
+      if (best > 0) {
+        state.plan[i][best] = ST_OFF;
+        covAdd_(state, i, best, -1);
+        state.remOff[i]--;
+        moved = true;
+      } else {
+        // 置ける日が無い。誤差0を保つため、残りを未達として記録して打ち切る
+        state.unmet.push(`・${state.name[i]} : あと${state.remOff[i]}日 配置できず`);
+        state.remOff[i] = 0;
+      }
+    }
+  }
 }
 
 /**
@@ -372,7 +544,21 @@ function relaxWorkRuns_(state) {
  * 移植元: AS_記号割当
  */
 function assignSymbols_(state) {
-  return notImplemented_(MODULE_ENGINE, 'assignSymbols_', 3); // TODO(P3)
+  for (let i = 1; i <= state.nP; i++) {
+    state.cntE[i] = 0;
+    state.cntM[i] = 0;
+    state.cntL[i] = 0;
+    for (let j = 1; j <= state.nD; j++) state.symbol[i][j] = '';
+  }
+
+  countExistingSymbols_(state);
+
+  for (let j = 1; j <= state.nD; j++) {
+    if (!state.dayIn[j]) continue;
+    assignPharmSymbols_(state, j);
+    assignClerkSymbols_(state, j);
+    assignRestAsEarly_(state, j);
+  }
 }
 
 /**
@@ -418,12 +604,53 @@ function adjBonus_(state, i, j) {
 
 /** 連休ブロック（3連休/2連休）を1つ置く。移植元: PlaceOffBlock */
 function placeOffBlock_(state, i, weekKey, size) {
-  return notImplemented_(MODULE_ENGINE, 'placeOffBlock_', 3); // TODO(P3)
+  let best = 0;
+  let bestScore = ENGINE_LIMIT.SCORE_INF;
+
+  for (let j = 1; j <= state.nD - size + 1; j++) {
+    // size 日ぶんが「月内・同じ週・自動の出勤」で揃っているか
+    let ok = true;
+    for (let k = j; k < j + size; k++) {
+      if (!state.dayIn[k] || state.wkKey[k] !== weekKey || state.plan[i][k] !== ST_WORK) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+
+    let s = 0;
+    for (let k = j; k < j + size; k++) s += offScore_(state, i, k);
+
+    // 前後の休みと繋がって連休が長くなりすぎるなら減点
+    const offRun = size + offRunBefore_(state, i, j) + offRunAfter_(state, i, j + size - 1);
+    if (offRun > state.settings.maxOffRun) s -= 4 * (offRun - state.settings.maxOffRun);
+
+    if (s > bestScore) { bestScore = s; best = j; }
+  }
+
+  if (best === 0) return false;
+  for (let k = best; k < best + size; k++) {
+    state.plan[i][k] = ST_OFF;
+    covAdd_(state, i, k, -1);
+  }
+  return true;
 }
 
 /** 単発の休みを1つ置く。移植元: PlaceOffSingle */
 function placeOffSingle_(state, i, weekKey) {
-  return notImplemented_(MODULE_ENGINE, 'placeOffSingle_', 3); // TODO(P3)
+  let best = 0;
+  let bestScore = ENGINE_LIMIT.SCORE_INF;
+
+  for (let j = 1; j <= state.nD; j++) {
+    if (!state.dayIn[j] || state.wkKey[j] !== weekKey || state.plan[i][j] !== ST_WORK) continue;
+    const sc = offScore_(state, i, j) + adjBonus_(state, i, j);
+    if (sc > bestScore) { bestScore = sc; best = j; }
+  }
+
+  if (best === 0) return false;
+  state.plan[i][best] = ST_OFF;
+  covAdd_(state, i, best, -1);
+  return true;
 }
 
 /**
@@ -447,12 +674,30 @@ function isSameWeek_(state, j, k) {
 
 /** 既存入力の記号を個人別に数える。existing[][] だけを見る。移植元: AP_既存記号を数える */
 function countExistingSymbols_(state) {
-  return notImplemented_(MODULE_ENGINE, 'countExistingSymbols_', 3); // TODO(P3)
+  for (let i = 1; i <= state.nP; i++) {
+    if (state.skipRow[i]) continue;
+    for (let j = 1; j <= state.nD; j++) {
+      if (state.plan[i][j] !== ST_FWORK) continue;
+      // matchWorkSym を通す。分類・集計・表示で規則を1つに保つため
+      // （VBA は IsEarlySym と完全一致を混ぜていた）
+      const sym = matchWorkSym(state.existing[i][j]);
+      if (sym !== '') addSymCount_(state, i, sym, 1);
+    }
+  }
 }
 
 /** ある日の既存の記号数。移植元: AP_日別既存数 */
-function countDayExisting_(state, j, sym) {
-  return notImplemented_(MODULE_ENGINE, 'countDayExisting_', 3); // TODO(P3)
+function countDayExisting_(state, j, kind) {
+  const out = { early: 0, mid: 0, late: 0 };
+  for (let i = 1; i <= state.nP; i++) {
+    if (state.skipRow[i]) continue;
+    if (state.kind[i] !== kind || state.plan[i][j] !== ST_FWORK) continue;
+    const sym = matchWorkSym(state.existing[i][j]);
+    if (sym === SYM.EARLY) out.early++;
+    else if (sym === SYM.MID) out.mid++;
+    else if (sym === SYM.LATE) out.late++;
+  }
+  return out;
 }
 
 /**
@@ -461,13 +706,31 @@ function countDayExisting_(state, j, sym) {
  * 常に上の行を選ぶと1人に記号が偏るため。乱数ではないので再現性は保たれる。
  * 移植元: AP_最少候補
  */
-function pickLeastSymbolCandidate_(state, j, sym) {
-  return notImplemented_(MODULE_ENGINE, 'pickLeastSymbolCandidate_', 3); // TODO(P3)
+function pickLeastSymbolCandidate_(state, j, kind, sym, lateOnly) {
+  let best = 0;
+  let bestCount = ENGINE_LIMIT.CNT_LARGE;
+
+  for (let k = 0; k < state.nP; k++) {
+    // ★ 走査の開始位置を日ごとにずらす。常に上の行から見ると1人に記号が偏る。
+    //   乱数ではなく日付による巡回なので、同じ入力なら同じ結果になる
+    const i = ((j + k - 1) % state.nP) + 1;
+
+    if (state.skipRow[i]) continue;
+    if (state.kind[i] !== kind) continue;
+    if (state.plan[i][j] !== ST_WORK) continue;
+    if (state.symbol[i][j] !== '') continue;
+    if (lateOnly && !state.canLate[i]) continue;
+
+    const c = symCount_(state, i, sym);
+    if (c < bestCount) { bestCount = c; best = i; }
+  }
+  return best;
 }
 
 /** 記号を1つ置き、カウンタを更新する。移植元: AP_記号を置く */
 function putSymbol_(state, i, j, sym) {
-  return notImplemented_(MODULE_ENGINE, 'putSymbol_', 3); // TODO(P3)
+  state.symbol[i][j] = sym;
+  addSymCount_(state, i, sym, 1);
 }
 
 /**
@@ -476,22 +739,72 @@ function putSymbol_(state, i, j, sym) {
  * 移植元: AP_遅番目標
  */
 function lateTarget_(state, j) {
-  return notImplemented_(MODULE_ENGINE, 'lateTarget_', 3); // TODO(P3)
+  if (state.settings.lateBusy > 0 && state.dayDoc[j] >= DOC_BUSY_N) {
+    return state.settings.lateBusy;
+  }
+  return state.settings.lateMin;
 }
 
 /** 薬剤師の記号: ○ を earlyN 人まで → ▲ を lateTarget まで → 残りは ● ▲ 交互。移植元: AP_薬剤師の記号 */
 function assignPharmSymbols_(state, j) {
-  return notImplemented_(MODULE_ENGINE, 'assignPharmSymbols_', 3); // TODO(P3)
+  const day = countDayExisting_(state, j, KIND.PHARM);
+  let dayMid = day.mid;
+  let dayLate = day.late;
+
+  // 1. 早番を earlyN 人まで
+  let needEarly = state.settings.earlyN - day.early;
+  while (needEarly > 0) {
+    const bi = pickLeastSymbolCandidate_(state, j, KIND.PHARM, SYM.EARLY, false);
+    if (bi === 0) break;
+    putSymbol_(state, bi, j, SYM.EARLY);
+    needEarly--;
+  }
+
+  // 2. 遅番を目標人数まで（遅番可の人のみ）
+  let needLate = lateTarget_(state, j) - dayLate;
+  while (needLate > 0) {
+    const bi = pickLeastSymbolCandidate_(state, j, KIND.PHARM, SYM.LATE, true);
+    if (bi === 0) break;
+    putSymbol_(state, bi, j, SYM.LATE);
+    dayLate++;
+    needLate--;
+  }
+
+  // 3. 残りは ● と ▲ が同数に近づくよう交互に
+  //    ★ ここも lateOnly=true。遅番不可の人は ● も付かず、
+  //      assignRestAsEarly_ で ○ に回る（仕様書 §4.4 の「残り」）
+  for (;;) {
+    const sym = (dayMid <= dayLate) ? SYM.MID : SYM.LATE;
+    const bi = pickLeastSymbolCandidate_(state, j, KIND.PHARM, sym, true);
+    if (bi === 0) break;
+    putSymbol_(state, bi, j, sym);
+    if (sym === SYM.MID) dayMid++;
+    else dayLate++;
+  }
 }
 
 /** 事務員の記号: ○ を clerkEarlyN 人まで → 以降は gSym。移植元: AP_事務員の記号 */
 function assignClerkSymbols_(state, j) {
-  return notImplemented_(MODULE_ENGINE, 'assignClerkSymbols_', 3); // TODO(P3)
+  const day = countDayExisting_(state, j, KIND.CLERK);
+  let dayEarly = day.early;
+
+  for (;;) {
+    const sym = (dayEarly < state.settings.clerkEarlyN) ? SYM.EARLY : state.settings.gSym;
+    const bi = pickLeastSymbolCandidate_(state, j, KIND.CLERK, sym, false);
+    if (bi === 0) break;
+    putSymbol_(state, bi, j, sym);
+    if (sym === SYM.EARLY) dayEarly++;
+  }
 }
 
 /** ここまでで記号が付かなかった出勤は ○ にする。移植元: AP_残りは早番 */
 function assignRestAsEarly_(state, j) {
-  return notImplemented_(MODULE_ENGINE, 'assignRestAsEarly_', 3); // TODO(P3)
+  for (let i = 1; i <= state.nP; i++) {
+    if (state.skipRow[i]) continue;
+    if (state.plan[i][j] === ST_WORK && state.symbol[i][j] === '') {
+      putSymbol_(state, i, j, SYM.EARLY);
+    }
+  }
 }
 
 /* ================================================================
