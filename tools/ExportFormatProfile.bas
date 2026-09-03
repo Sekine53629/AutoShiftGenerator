@@ -131,8 +131,11 @@ Private Function BuildProfileJson(ByVal ws As Worksheet, _
     '--- 条件付き書式の一覧。GAS 側が色を拾い、残りは控えとして見せる ---
     parts.Add """_conditionalFormats"":" & ConditionalFormatsJson(ws, dateRow)
 
-    ' 表示形式は書き出さない。Excel の和暦書式（[$-ja-JP]ge"." m"月"）は
-    ' Sheets に無く、そのまま渡すと壊れる。GAS 側の既定値に任せる（仕様書 §5.2）
+    ' 表示形式そのものは書き出さない。Excel の和暦書式（[$-ja-JP]ge"." m"月"）は
+    ' Sheets に無く、そのまま渡すと壊れる（仕様書 §5.2）。
+    ' ただし「元が何だったか」は控えとして渡す。GAS 側は和暦の見出しを
+    ' 数式（title.formula）で組むので、その調整に使う。
+    parts.Add StrPair("_excelMonthFormat", ws.Cells(dateRow - 1, 1).NumberFormatLocal)
 
     BuildProfileJson = "{" & JoinCollection(parts, ",") & "}"
 End Function

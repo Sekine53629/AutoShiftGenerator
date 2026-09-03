@@ -169,8 +169,15 @@ function writeHeaderBlock_(sheet, pos, year, month, profile) {
     .setFormula(`=DATE(1900,${toColumnLetter(LAYOUT.COL_MONTH)}${h},1)`)
     .setNumberFormat(profile['format.month']);
 
-  // 和暦の見出し（令和のみ。元号が変わったらここを直す）
-  sheet.getRange(h, 4).setFormula(`="R"&(YEAR(A${h})-2018)&"."&MONTH(A${h})&"月"`);
+  // 和暦の見出し（§5.2）。
+  //
+  // 年月セル A は日付のまま置く。祝日サマリー・条件付き書式・日付行が
+  // すべて A を参照しているので、ここを文字列にすると全部が壊れる。
+  // Sheets に和暦の表示形式は無いため、和暦は別セルへ文字列として組む。
+  const titleFormula = buildTitleFormula_(profile['title.formula'], `A${h}`);
+  if (titleFormula) {
+    sheet.getRange(h, profile['title.col']).setFormula(titleFormula);
+  }
 
   const first = toColumnLetter(pos.firstCol);
   const last = toColumnLetter(pos.lastCol);
@@ -346,6 +353,23 @@ function applyRoleRange_(sheet, top, bottom, fmt, firstCol, numCols) {
   for (let r = top; r <= bottom; r++) {
     applyRoleFormat_(sheet, r, fmt, firstCol, numCols);
   }
+}
+
+/**
+ * 和暦の見出しの数式を組む。SpreadsheetApp を呼ばない純粋関数。
+ *
+ * テンプレートの `{month}` を年月セルの参照に差し替えるだけ。
+ * テンプレートが空なら空文字を返し、呼び出し側は何も書かない
+ * （手で入力したい人のための逃げ道）。
+ *
+ * @param {string} template 例 '="R"&TEXT(YEAR({month})-2018,"00")&"."&TEXT(MONTH({month}),"00")'
+ * @param {string} monthCell 年月セルの参照。例 'A1'
+ * @return {string} 数式。書かないなら空文字
+ */
+function buildTitleFormula_(template, monthCell) {
+  const t = String(template == null ? '' : template).trim();
+  if (t === '') return '';
+  return t.split('{month}').join(monthCell);
 }
 
 /**

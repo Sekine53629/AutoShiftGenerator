@@ -399,6 +399,10 @@ function describeProfileKey_(key) {
     'day.outMonthFg': '月外の日の文字色',
     'format.date': '日付の表示形式',
     'format.month': '年月セルの表示形式',
+    'title.col': '和暦の見出しを置く列（1=A / 4=D）',
+    'title.formula': '和暦の見出しの数式。{month} が年月セルに置き換わる。'
+      + '空にすると書かない（手で入力する）',
+    '_excelMonthFormat': '（参考）Excel 側の年月セルの表示形式。Sheets には持ち込めません',
     'label.doc': '集計行 A列の見出し（医師数）',
     'label.pharm': '集計行 A列の見出し（薬剤師出勤数）',
     'label.shortage': '集計行 A列の見出し（過不足）',

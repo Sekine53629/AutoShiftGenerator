@@ -686,6 +686,30 @@ test('横位置は Sheets が受ける語に揃える', function () {
   assert.strictEqual(sandbox.normalizeHAlign_('right'), 'right');
 });
 
+test('和暦の見出しは数式で組む（表示形式では作れないため）', function () {
+  const tpl = sandbox.FORMAT_DEFAULT['title.formula'];
+  const f = sandbox.buildTitleFormula_(tpl, 'A1');
+
+  assert.ok(f.indexOf('{month}') < 0, 'プレースホルダが残らない');
+  assert.ok(f.indexOf('A1') >= 0, '年月セルを参照する');
+  // 実物は R08.08 形式。TEXT で0埋めしないと R8.8 になる
+  assert.ok(f.indexOf('"00"') >= 0, '0埋めする');
+  assert.strictEqual((f.match(/A1/g) || []).length, 2, '年・月の2か所に入る');
+
+  // 空にすれば書かない（手で入力したい人のための逃げ道）
+  assert.strictEqual(sandbox.buildTitleFormula_('', 'A1'), '');
+  assert.strictEqual(sandbox.buildTitleFormula_('   ', 'A1'), '');
+  assert.strictEqual(sandbox.buildTitleFormula_(null, 'A1'), '');
+});
+
+test('年月セルは日付のまま。和暦は別セルに置く', function () {
+  // A1 を文字列にすると、祝日サマリー・条件付き書式・日付行が全部壊れる。
+  // 和暦の置き場は A 列以外でなければならない
+  assert.notStrictEqual(sandbox.FORMAT_DEFAULT['title.col'], 1,
+    '和暦の見出しを A 列に置いてはいけない');
+  assert.ok(sandbox.FORMAT_DEFAULT['title.col'] >= 1, '列番号は 1 以上');
+});
+
 test('roleFormat が役割の書式をまとめて返す', function () {
   const merged = sandbox.mergeProfileRows_(sandbox.FORMAT_DEFAULT, []);
   const fmt = sandbox.roleFormat(merged, 'grid');
