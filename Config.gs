@@ -204,6 +204,27 @@ const SETTING_DEFAULT = Object.freeze({
   runBonus: { label: '不足を埋めるときの連勤上限の上乗せ(日)', value: 0 },
 });
 
+/**
+ * 生成するシートの見出しと入力規則（Schema.gs が使う）。
+ * 見出しの文言を変えると既存ブックとの照合が崩れるので、
+ * 変えるときは実物のシートと突き合わせること。
+ */
+const SCHEMA = Object.freeze({
+  /** 自動作成設定 メンバー表の見出し（A〜I。CFG_MEMBER の列順と必ず揃える） */
+  CFG_MEMBER_HEADS: ['氏名', '区分', '休業', '勤務ルール', '固定曜日',
+                     '週勤務日数', '月間休日数', '遅番・遅半 可否', '備考'],
+  /** 全体設定の見出し（K/L） */
+  CFG_SETTING_HEADS: ['設定項目', '値'],
+  /** 医師名リストの見出し（N。§6.4 の置き場） */
+  CFG_DOCTOR_HEAD: '医師名',
+  /** 祝日マスタの見出し */
+  HOLIDAY_HEADS: ['日付', '名称'],
+
+  /** 入力規則の選択肢 */
+  CHOICE_CLOSED: ['○'],          // 休業（空欄 = 休業でない）
+  CHOICE_LATE: ['可', '不可'],    // 遅番・遅半 可否
+});
+
 /** 祝日マスタ（§3.4） */
 const HOLIDAY_SHEET = Object.freeze({
   HDR_ROW: 1, FIRST_ROW: 2, COL_DATE: 1, COL_NAME: 2,

@@ -63,6 +63,7 @@ Object.assign(sandbox, vm.runInContext(
   + ' SETTING_DEFAULT, HOLIDAY_SHEET, CHANGELOG_SHEET, ENGINE_LIMIT, DOC_BUSY_N,'
   + ' NON_NAME_LABELS, MASK_NAMES, SHEET_BUILD, SETUP_KNOWN_HEADS,'
   + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH, EDIT_REGION, STAMP_KIND, STAMP_REGION_RULES,'
+  + ' SCHEMA,'
   + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF })', sandbox));
 
 // ---- テストランナー ----------------------------------------------------
@@ -435,6 +436,82 @@ test('画面の出し分け表がサーバの判定と噛み合っている', fu
   assert.deepStrictEqual(Array.from(rules.symbol), [R.GRID], '記号は入力欄だけ');
   assert.deepStrictEqual(Array.from(rules.doctor), [R.DOCTOR], '医師名は医師名欄だけ');
   assert.ok(Array.from(rules.erase).length === 4, '消去はどこでも押せる');
+});
+
+// ---- 祝日 CSV の読み取り（§7.2） -------------------------------------
+
+test('祝日の日付は書き方の揺れを受け、ありえない日は弾く', function () {
+  const ok = sandbox.parseHolidayDate_('2026/1/1');
+  assert.ok(ok, '2026/1/1 を読める');
+  assert.strictEqual(ok.getFullYear(), 2026);
+  assert.strictEqual(ok.getMonth(), 0);
+  assert.strictEqual(ok.getDate(), 1);
+
+  ['2026-01-01', '2026.1.1'].forEach(function (t) {
+    assert.ok(sandbox.parseHolidayDate_(t), `${t} を読める`);
+  });
+
+  // Date は 2/30 を 3/2 へ繰り上げてしまう。黙って別の日を祝日にしないこと
+  assert.strictEqual(sandbox.parseHolidayDate_('2026/2/30'), null, '存在しない日は弾く');
+  assert.strictEqual(sandbox.parseHolidayDate_('2026/13/1'), null, '13月は弾く');
+  assert.strictEqual(sandbox.parseHolidayDate_('国民の祝日・休日月日'), null, '見出しは弾く');
+  assert.strictEqual(sandbox.parseHolidayDate_(''), null);
+});
+
+test('祝日 CSV の見出しや空行が混ざっても止まらない', function () {
+  const rows = sandbox.toHolidayRows_([
+    ['国民の祝日・休日月日', '国民の祝日・休日名称'],   // 見出し
+    ['2026/1/1', '元日'],
+    [],                                                  // 空行
+    ['2026/1/12', '成人の日'],
+    ['こわれた行'],
+  ]);
+  assert.strictEqual(rows.length, 2, '読めた行だけ残す');
+  assert.strictEqual(sandbox.toDateKey(rows[0][0]), '2026-01-01');
+  assert.strictEqual(rows[0][1], '元日');
+  assert.strictEqual(rows[1][1], '成人の日');
+  // 日付は Date 型で書く。文字列だと COUNTIF が一致せず祝日 0 件になる
+  // （vm の中で作られた Date なので instanceof は realm を跨げない。振る舞いで見る）
+  assert.strictEqual(typeof rows[0][0].getFullYear, 'function', '日付型で返す');
+  assert.strictEqual(typeof rows[0][0], 'object');
+});
+
+test('toDateKey が 0 埋めした yyyy-MM-dd を返す', function () {
+  const d = vm.runInContext('new Date(2026, 0, 5)', sandbox);
+  assert.strictEqual(sandbox.toDateKey(d), '2026-01-05');
+});
+
+// ---- 生成するシートのスキーマ ----------------------------------------
+
+test('メンバー表の見出しが CFG_MEMBER の列順と揃っている', function () {
+  const heads = Array.from(sandbox.SCHEMA.CFG_MEMBER_HEADS);
+  assert.strictEqual(heads.length, 9, 'A〜I の9列');
+  // 列定数と見出しの並びがずれると、氏名や区分を別の列から読むことになる
+  assert.strictEqual(heads[sandbox.CFG_MEMBER.COL_NAME - 1], '氏名');
+  assert.strictEqual(heads[sandbox.CFG_MEMBER.COL_KIND - 1], '区分');
+  assert.strictEqual(heads[sandbox.CFG_MEMBER.COL_RULE - 1], '勤務ルール');
+  assert.strictEqual(heads[sandbox.CFG_MEMBER.COL_MEMO - 1], '備考');
+});
+
+test('全体設定の既定値が過不足なく並ぶ', function () {
+  const keys = Object.keys(sandbox.SETTING_DEFAULT);
+  keys.forEach(function (key) {
+    const def = sandbox.SETTING_DEFAULT[key];
+    assert.ok(def.label && String(def.label).trim() !== '', `${key} にラベルがある`);
+    assert.ok(def.value !== undefined, `${key} に既定値がある`);
+  });
+  // 生成した行はそのまま readSettingNumber_ / readSettingText_ で読み戻せること
+  const pairs = keys.map(function (key) {
+    return [sandbox.SETTING_DEFAULT[key].label, sandbox.SETTING_DEFAULT[key].value];
+  });
+  assert.strictEqual(sandbox.readSettingNumber_(pairs, 'maxRun'),
+    sandbox.SETTING_DEFAULT.maxRun.value);
+  assert.strictEqual(sandbox.readSettingNumber_(pairs, 'clerkEarlyN'),
+    sandbox.SETTING_DEFAULT.clerkEarlyN.value, '事務員の早番を取り違えない');
+  assert.strictEqual(sandbox.readSettingNumber_(pairs, 'earlyN'),
+    sandbox.SETTING_DEFAULT.earlyN.value, '薬剤師の早番を取り違えない');
+  assert.strictEqual(sandbox.readSettingText_(pairs, 'paidSyms'),
+    sandbox.SETTING_DEFAULT.paidSyms.value);
 });
 
 // ---- ファイル名の衝突（Apps Script はファイル名が拡張子をまたいで一意） --
