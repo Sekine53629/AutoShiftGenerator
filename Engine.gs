@@ -468,69 +468,173 @@ function symbolBalance_(state) {
  *  ここも SpreadsheetApp を呼ばない。
  * ================================================================ */
 
+/**
+ * 【この節の try/catch について】
+ *   ここから下の計測ヘルパーは、1回の実行で数百万回呼ばれる（仕様書 §8.2）。
+ *   VBA 版は全関数に On Error を置いていたが、JS では配列の添字操作しか
+ *   していないため例外は起きない。起きるとすれば呼び出し側のバグで、
+ *   握り潰すと原因が消える。**入口の runEngine だけで捕える。**
+ */
+
+/** 出勤の状態か（自動・既存入力を問わない） */
+function isWorkState_(v) {
+  return v === ST_WORK || v === ST_FWORK;
+}
+
+/** 休みの状態か（自動・既存入力を問わない） */
+function isOffState_(v) {
+  return v === ST_OFF || v === ST_FOFF;
+}
+
 /** 個人 i の記号 sym の月合計。移植元: SymCnt */
 function symCount_(state, i, sym) {
-  return notImplemented_(MODULE_ENGINE, 'symCount_', 3); // TODO(P3)
+  if (sym === SYM.EARLY) return state.cntE[i];
+  if (sym === SYM.MID) return state.cntM[i];
+  if (sym === SYM.LATE) return state.cntL[i];
+  return 0;
 }
 
 /** 記号カウンタを d だけ増減。移植元: AddCnt */
 function addSymCount_(state, i, sym, d) {
-  return notImplemented_(MODULE_ENGINE, 'addSymCount_', 3); // TODO(P3)
+  if (sym === SYM.EARLY) state.cntE[i] += d;
+  else if (sym === SYM.MID) state.cntM[i] += d;
+  else if (sym === SYM.LATE) state.cntL[i] += d;
 }
 
-/** j を含む連勤の長さ。左右の伸び（lft / rgt）も返す。移植元: RunLenAt */
+/**
+ * j を含む連勤の長さ。左右の伸びも返す。移植元: RunLenAt
+ * VBA は lft / rgt を ByRef で返していたので、こちらはオブジェクトで返す。
+ * @return {{len:number, lft:number, rgt:number}}
+ */
 function runLenAt_(state, i, j) {
-  return notImplemented_(MODULE_ENGINE, 'runLenAt_', 3); // TODO(P3)
+  const plan = state.plan[i];
+  let a = j;
+  let b = j;
+  while (a > 1 && isWorkState_(plan[a - 1])) a--;
+  while (b < state.nD && isWorkState_(plan[b + 1])) b++;
+  return { len: b - a + 1, lft: j - a, rgt: b - j };
 }
 
-/** k を出勤にしたときの連勤長。移植元: WorkRunIf */
+/**
+ * k を出勤にしたときの連勤長。移植元: WorkRunIf
+ * 【注意】VBA と同じく k 自身の状態は見ない。
+ * 「k を出勤にしたら」の仮定なので、前後だけを数えて +1 する形になっている。
+ */
 function workRunIf_(state, i, k) {
-  return notImplemented_(MODULE_ENGINE, 'workRunIf_', 3); // TODO(P3)
+  const plan = state.plan[i];
+  let a = k;
+  let b = k;
+  while (a > 1 && isWorkState_(plan[a - 1])) a--;
+  while (b < state.nD && isWorkState_(plan[b + 1])) b++;
+  return b - a + 1;
 }
 
 /** j を休みにしたときの連休長。移植元: OffRunIf */
 function offRunIf_(state, i, j) {
-  return notImplemented_(MODULE_ENGINE, 'offRunIf_', 3); // TODO(P3)
+  return 1 + offRunBefore_(state, i, j) + offRunAfter_(state, i, j);
 }
 
 /** j の直前に続く休みの数。移植元: OffRunBefore */
 function offRunBefore_(state, i, j) {
-  return notImplemented_(MODULE_ENGINE, 'offRunBefore_', 3); // TODO(P3)
+  const plan = state.plan[i];
+  let n = 0;
+  let a = j - 1;
+  while (a >= 1 && isOffState_(plan[a])) { n++; a--; }
+  return n;
 }
 
 /** j の直後に続く休みの数。移植元: OffRunAfter */
 function offRunAfter_(state, i, j) {
-  return notImplemented_(MODULE_ENGINE, 'offRunAfter_', 3); // TODO(P3)
+  const plan = state.plan[i];
+  let n = 0;
+  let b = j + 1;
+  while (b <= state.nD && isOffState_(plan[b])) { n++; b++; }
+  return n;
 }
 
 /** 個人 i の混雑日出勤回数。移植元: FiveCnt */
 function fiveCnt_(state, i) {
-  return notImplemented_(MODULE_ENGINE, 'fiveCnt_', 3); // TODO(P3)
+  let n = 0;
+  for (let j = 1; j <= state.nD; j++) {
+    if (state.dayIn[j] && state.dayDoc[j] === DOC_BUSY_N && isWorkState_(state.plan[i][j])) n++;
+  }
+  return n;
 }
 
-/** 対象者全員の混雑日出勤回数の平均。移植元: FiveAvg */
+/**
+ * 対象者全員の混雑日出勤回数の平均。移植元: FiveAvg
+ * 対象は「skipRow でない薬剤師で休業でない人」。ルールは問わない
+ * （FiveBalance の対象者判定とは条件が違う。VBA のとおり）。
+ */
 function fiveAvg_(state) {
-  return notImplemented_(MODULE_ENGINE, 'fiveAvg_', 3); // TODO(P3)
+  let total = 0;
+  let count = 0;
+  for (let i = 1; i <= state.nP; i++) {
+    if (state.skipRow[i]) continue;
+    if (state.kind[i] === KIND.PHARM && !state.leave[i]) {
+      total += fiveCnt_(state, i);
+      count++;
+    }
+  }
+  return count > 0 ? total / count : 0;
 }
 
-/** 個人 i の最大連勤。判定不能なら ENGINE_LIMIT.CNT_LARGE。移植元: MaxRun */
+/** 個人 i の最大連勤。移植元: MaxRun */
 function maxRunOf_(state, i) {
-  return notImplemented_(MODULE_ENGINE, 'maxRunOf_', 3); // TODO(P3)
+  let best = 0;
+  let cur = 0;
+  for (let j = 1; j <= state.nD; j++) {
+    if (isWorkState_(state.plan[i][j])) {
+      cur++;
+      if (cur > best) best = cur;
+    } else {
+      cur = 0;
+    }
+  }
+  return best;
 }
 
 /** 個人 i の最大連休。移植元: MaxOffRun */
 function maxOffRunOf_(state, i) {
-  return notImplemented_(MODULE_ENGINE, 'maxOffRunOf_', 3); // TODO(P3)
+  let best = 0;
+  let cur = 0;
+  for (let j = 1; j <= state.nD; j++) {
+    if (isOffState_(state.plan[i][j])) {
+      cur++;
+      if (cur > best) best = cur;
+    } else {
+      cur = 0;
+    }
+  }
+  return best;
 }
 
-/** 日別出勤数カウンタを d だけ増減（薬剤師 cov / 事務員 covG を区別）。移植元: CovAdd */
+/**
+ * 日別出勤数カウンタを d だけ増減。移植元: CovAdd
+ * 薬剤師は cov、事務員は covG。それ以外の区分はどちらにも入らない
+ * （区分の打ち間違いが人数計算に影響しない代わりに、静かに無視される）。
+ */
 function covAdd_(state, i, j, d) {
-  return notImplemented_(MODULE_ENGINE, 'covAdd_', 3); // TODO(P3)
+  if (state.skipRow[i]) return;
+  if (state.kind[i] === KIND.PHARM) state.cov[j] += d;
+  else if (state.kind[i] === KIND.CLERK) state.covG[j] += d;
 }
 
-/** 固定曜日の文字列（例 "月火金土"）を boolean[7] に展開する。移植元: ParseWD */
+/**
+ * 固定曜日の文字列（例 "月火金土"）を boolean[8] に展開する。移植元: ParseWD
+ * 添字は 1=日 .. 7=土（VBA の Weekday と同じ）。0 番は使わない。
+ * @param {string} text
+ * @return {boolean[]}
+ */
 function parseFixedDow(text) {
-  return notImplemented_(MODULE_ENGINE, 'parseFixedDow', 3); // TODO(P3)
+  const WDS = '日月火水木金土';
+  const out = [false, false, false, false, false, false, false, false];
+  const s = String(text == null ? '' : text).trim();
+  for (let k = 0; k < s.length; k++) {
+    const w = WDS.indexOf(s.charAt(k)) + 1;   // 見つからなければ 0
+    if (w >= 1 && w <= 7) out[w] = true;
+  }
+  return out;
 }
 
 /**
@@ -596,7 +700,10 @@ function isShiftSymbol(value) {
 function isPaidOff(value, paidSyms) {
   const v = String(value || '').trim();
   if (v === '') return false;
+  // VBA は Replace(mPaidSyms, "、", ",") してから split している。
+  // 全角カンマで区切られた設定を取りこぼさないため、ここも合わせる
   return String(paidSyms || SETTING_DEFAULT.paidSyms.value)
+    .split('、').join(',')
     .split(',')
     .map(function (s) { return s.trim(); })
     .filter(function (s) { return s !== ''; })

@@ -786,6 +786,168 @@ test('トップレベルの宣言名がプロジェクト全体で一意', funct
     '.gs は全ファイルで1つのグローバルスコープを共有する: ' + dup.join(', '));
 });
 
+// ---- 配置エンジンの計測ヘルパー ---------------------------------------
+//
+// 盤面は文字で書く。1文字 = 1日。
+//   W 自動:出勤   O 自動:公休   w 既存:出勤   o 既存:休み   . 未決   - 対象外
+// VBA と同じ 1 起点の配列にするため、先頭にダミーを詰める。
+
+function stateFrom(rows, extra) {
+  const CODE = {
+    W: sandbox.ST_WORK, O: sandbox.ST_OFF, w: sandbox.ST_FWORK,
+    o: sandbox.ST_FOFF, '.': sandbox.ST_NONE, '-': sandbox.ST_SKIP,
+  };
+  const nP = rows.length;
+  const nD = rows[0].length;
+  const plan = [null];
+  rows.forEach(function (row) {
+    const line = [null];
+    for (let k = 0; k < row.length; k++) line.push(CODE[row.charAt(k)]);
+    plan.push(line);
+  });
+
+  const fill = function (v) {
+    const a = [null];
+    for (let k = 1; k <= nD; k++) a.push(v);
+    return a;
+  };
+  const fillP = function (v) {
+    const a = [null];
+    for (let k = 1; k <= nP; k++) a.push(v);
+    return a;
+  };
+
+  const st = {
+    nP: nP, nD: nD, plan: plan,
+    cntE: fillP(0), cntM: fillP(0), cntL: fillP(0),
+    cov: fill(0), covG: fill(0),
+    dayIn: fill(true), dayDoc: fill(4),
+    kind: fillP(sandbox.KIND.PHARM), leave: fillP(false), skipRow: fillP(false),
+  };
+  Object.keys(extra || {}).forEach(function (k) { st[k] = extra[k]; });
+  return st;
+}
+
+test('連勤の長さと左右の伸びを数える（RunLenAt）', function () {
+  //          1234567
+  const st = stateFrom(['OWWWwOO']);
+  const r = sandbox.runLenAt_(st, 1, 3);
+  assert.strictEqual(r.len, 4, '2〜5 の4連勤');
+  assert.strictEqual(r.lft, 1, '左へ1日伸びる');
+  assert.strictEqual(r.rgt, 2, '右へ2日伸びる');
+
+  // 既存入力の出勤（w）も連勤に数える
+  assert.strictEqual(sandbox.runLenAt_(st, 1, 5).len, 4);
+
+  // ★ VBA と同じく、渡した日自身の状態は見ない。
+  //   休みの日を渡すと「その日を出勤にしたら」の長さが返る。
+  //   1 は休みだが、右へ 2〜5 が繋がるので 5 になる。
+  //   実際の呼び出し元（OffScore）は出勤日しか渡さないので問題は出ないが、
+  //   休みの日を渡すと直感と違う値が返ることは覚えておく
+  assert.strictEqual(sandbox.runLenAt_(st, 1, 1).len, 5, '自分の状態は見ない');
+});
+
+test('その日を出勤にしたときの連勤長（WorkRunIf）', function () {
+  //          12345
+  const st = stateFrom(['WWOWW']);
+  // 3日目は休み。ここを出勤にすると 1〜5 が繋がる
+  assert.strictEqual(sandbox.workRunIf_(st, 1, 3), 5, '前後が繋がる');
+
+  const st2 = stateFrom(['OOWOO']);
+  assert.strictEqual(sandbox.workRunIf_(st2, 1, 1), 1, '孤立していれば1');
+});
+
+test('連休の前後を数える（OffRunBefore / After / If）', function () {
+  //          123456789
+  const st = stateFrom(['WOoOWWOOW']);
+  assert.strictEqual(sandbox.offRunBefore_(st, 1, 4), 2, '2〜3 が休み');
+  assert.strictEqual(sandbox.offRunAfter_(st, 1, 1), 3, '2〜4 が休み');
+  assert.strictEqual(sandbox.offRunIf_(st, 1, 5), 4, '5 を休みにすると 2〜5 で4連休');
+
+  // 端で止まる
+  assert.strictEqual(sandbox.offRunBefore_(st, 1, 1), 0);
+  assert.strictEqual(sandbox.offRunAfter_(st, 1, 9), 0);
+});
+
+test('最大連勤と最大連休（MaxRun / MaxOffRun）', function () {
+  const st = stateFrom(['WWWOOWWwwOOOW']);
+  assert.strictEqual(sandbox.maxRunOf_(st, 1), 4, '6〜9 の4連勤');
+  assert.strictEqual(sandbox.maxOffRunOf_(st, 1), 3, '10〜12 の3連休');
+
+  assert.strictEqual(sandbox.maxRunOf_(stateFrom(['OOO']), 1), 0, '出勤ゼロなら0');
+  assert.strictEqual(sandbox.maxOffRunOf_(stateFrom(['WWW']), 1), 0, '休みゼロなら0');
+});
+
+test('混雑日の出勤回数（FiveCnt / FiveAvg）', function () {
+  const st = stateFrom(['WWOW', 'WOWW'], {});
+  // 1・3日目だけ混雑日にする
+  st.dayDoc = [null, sandbox.DOC_BUSY_N, 3, sandbox.DOC_BUSY_N, 3];
+
+  assert.strictEqual(sandbox.fiveCnt_(st, 1), 1, '1日目のみ（3日目は休み）');
+  assert.strictEqual(sandbox.fiveCnt_(st, 2), 2, '1・3日目とも出勤');
+  assert.strictEqual(sandbox.fiveAvg_(st), 1.5);
+
+  // 月外の日は数えない
+  st.dayIn = [null, false, true, true, true];
+  assert.strictEqual(sandbox.fiveCnt_(st, 2), 1, '月外は除く');
+});
+
+test('休業者と対象外の行は平均に入れない（FiveAvg）', function () {
+  const st = stateFrom(['WW', 'WW', 'WW']);
+  st.dayDoc = [null, sandbox.DOC_BUSY_N, sandbox.DOC_BUSY_N];
+  st.leave = [null, false, true, false];      // 2人目は休業
+  st.skipRow = [null, false, false, true];    // 3人目は集計行など
+
+  assert.strictEqual(sandbox.fiveAvg_(st), 2, '対象は1人目だけ');
+});
+
+test('日別出勤数は区分ごとに数える（CovAdd）', function () {
+  const st = stateFrom(['WW', 'WW', 'WW']);
+  st.kind = [null, sandbox.KIND.PHARM, sandbox.KIND.CLERK, '看護師'];
+
+  sandbox.covAdd_(st, 1, 1, 1);
+  sandbox.covAdd_(st, 2, 1, 1);
+  sandbox.covAdd_(st, 3, 1, 1);   // 区分が正規値でない → どちらにも入らない
+  assert.strictEqual(st.cov[1], 1, '薬剤師だけ cov');
+  assert.strictEqual(st.covG[1], 1, '事務員だけ covG');
+
+  // 対象外の行は数えない
+  st.skipRow = [null, true, false, false];
+  sandbox.covAdd_(st, 1, 1, 1);
+  assert.strictEqual(st.cov[1], 1, 'skipRow は無視');
+});
+
+test('記号カウンタ（SymCnt / AddCnt）', function () {
+  const st = stateFrom(['WW']);
+  sandbox.addSymCount_(st, 1, sandbox.SYM.EARLY, 2);
+  sandbox.addSymCount_(st, 1, sandbox.SYM.LATE, 3);
+  sandbox.addSymCount_(st, 1, '知らない記号', 9);
+
+  assert.strictEqual(sandbox.symCount_(st, 1, sandbox.SYM.EARLY), 2);
+  assert.strictEqual(sandbox.symCount_(st, 1, sandbox.SYM.MID), 0);
+  assert.strictEqual(sandbox.symCount_(st, 1, sandbox.SYM.LATE), 3);
+  assert.strictEqual(sandbox.symCount_(st, 1, '知らない記号'), 0, '知らない記号は0');
+});
+
+test('固定曜日の文字列を展開する（ParseWD）', function () {
+  const wd = sandbox.parseFixedDow('月火金土');
+  // 添字は 1=日 .. 7=土
+  assert.deepStrictEqual(Array.from(wd), [false, false, true, true, false, false, true, true]);
+
+  assert.deepStrictEqual(Array.from(sandbox.parseFixedDow('')),
+    [false, false, false, false, false, false, false, false]);
+  // 曜日でない文字は無視する
+  assert.deepStrictEqual(Array.from(sandbox.parseFixedDow(' 月 x ')),
+    [false, false, true, false, false, false, false, false]);
+});
+
+test('ノルマ外の休み記号は全角カンマ区切りも受ける', function () {
+  // VBA は Replace(mPaidSyms, "、", ",") してから split している
+  assert.strictEqual(sandbox.isPaidOff('夏休', '有休、夏休'), true, '全角カンマ');
+  assert.strictEqual(sandbox.isPaidOff('夏休', '有休,夏休'), true, '半角カンマ');
+  assert.strictEqual(sandbox.isPaidOff('公休', '有休、夏休'), false);
+});
+
 // ---- 結果 -------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failures.length} failed`);
