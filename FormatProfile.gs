@@ -12,8 +12,21 @@
  *
  * 【値（セルの中身）は取らない】
  *   取るのは書式と、位置が決まっているラベル（集計行の見出しなど）だけ。
- *   氏名・医師名・面談日程は対象外。プロファイルはスプレッドシート上の
- *   「書式プロファイル」シートに置き、リポジトリには入れない。
+ *   氏名・医師名・面談日程は対象外。リポジトリには入れない。
+ *
+ * 【置き場：スクリプトプロパティが「正」】
+ *   環境ごとの設定なので、GAS で .env に相当するスクリプトプロパティ
+ *   （CONFIG.PROP_FORMAT_PROFILE）に JSON 1件で持つ。
+ *   ADMIN_EMAIL / EXPORT_FOLDER_ID と同じ置き場で、利用者が誤って壊せない。
+ *
+ *   「書式プロファイル」シートは**控えと手直し用**。生成はシートを読まない。
+ *   手で直したら「書式プロファイルを反映」を実行して書き戻す。
+ *   2か所を同時に正にすると、どちらが効いているのか分からなくなるため、
+ *   反映は明示的な一手にしてある。
+ *
+ *      取り込み : 実物のシート ──▶ プロパティ（正）─┬─▶ 控えシート
+ *      手直し   : 控えシート ──「反映」──▶ プロパティ（正）
+ *      生成     : プロパティ（正）──▶ 新しいシフト表
  *
  * 【読み書きの約束（§8.3-3）】
  *   書式の読み出しは表示ブロックを丸ごと1回。行の高さと列幅だけは
@@ -46,7 +59,8 @@ function captureFormatProfile() {
     }
 
     const profile = readSheetFormat_(sheet, layout);
-    writeProfileSheet_(profile, sheet.getName());
+    saveFormatProfile_(profile);              // ← 正はこちら
+    writeProfileSheet_(profile, sheet.getName());   // 控え（人が読む・直す用）
     SpreadsheetApp.flush();
 
     logSuccess(MODULE_FORMATPROFILE, 'captureFormatProfile',
@@ -56,10 +70,15 @@ function captureFormatProfile() {
     ui.alert([
       `「${sheet.getName()}」の書式を取り込みました。`,
       '',
-      `「${CONFIG.SHEET_PROFILE}」シートに ${Object.keys(profile).length} 項目を書きました。`,
-      '値は手で直せます。次に作るシフト表からこの書式で生成されます。',
+      `${Object.keys(profile).length} 項目をスクリプトプロパティに保存しました。`,
+      `同じ内容を「${CONFIG.SHEET_PROFILE}」シートにも控えとして書いています。`,
+      '',
+      '次に作るシフト表からこの書式で生成されます。',
+      'シートの値を手で直した場合は「書式プロファイルを反映」を実行してください',
+      '（生成が読むのはスクリプトプロパティのほうです）。',
       '',
       '※ 氏名・医師名・面談日程などセルの中身は取り込んでいません。',
+      '※ 元のシフト表は読んだだけで、書き換えていません。',
     ].join('\n'));
     return profile;
   } catch (error) {
@@ -205,6 +224,9 @@ function writeProfileSheet_(profile, sourceName) {
     return [key, profile[key], describeProfileKey_(key)];
   });
   rows.push(['(取り込み元)', sourceName, `${new Date().toLocaleString('ja-JP')} に取り込み`]);
+  rows.push(['(このシートについて)', '控え',
+    '生成が読むのはスクリプトプロパティです。ここを直したら'
+    + '「初期設定 → 書式プロファイルを反映」を実行してください']);
 
   const last = sheet.getLastRow();
   if (last >= FORMAT_PROFILE.FIRST_ROW) {
@@ -258,21 +280,105 @@ function describeProfileKey_(key) {
  * @return {Object<string,*>}
  */
 function loadFormatProfile() {
-  const profile = {};
-  Object.keys(FORMAT_DEFAULT).forEach(function (key) { profile[key] = FORMAT_DEFAULT[key]; });
-
   try {
-    const sheet = getSheetOrNull(CONFIG.SHEET_PROFILE);
-    if (!sheet) return profile;
-    const last = sheet.getLastRow();
-    if (last < FORMAT_PROFILE.FIRST_ROW) return profile;
-
-    const rows = sheet.getRange(FORMAT_PROFILE.FIRST_ROW, FORMAT_PROFILE.COL_KEY,
-      last - FORMAT_PROFILE.FIRST_ROW + 1, 2).getValues();
-    return mergeProfileRows_(profile, rows);
+    const json = PropertiesService.getScriptProperties()
+      .getProperty(CONFIG.PROP_FORMAT_PROFILE);
+    return parseProfileJson_(json, FORMAT_DEFAULT);
   } catch (error) {
     logError(MODULE_FORMATPROFILE, 'loadFormatProfile', error, '');
-    return profile;   // 読めなくても既定値で動かす
+    return parseProfileJson_(null, FORMAT_DEFAULT);   // 読めなくても既定値で動かす
+  }
+}
+
+/**
+ * スクリプトプロパティの JSON を既定値へ重ねる。SpreadsheetApp を呼ばない純粋関数。
+ *
+ * 壊れた JSON でも例外にしない。書式が読めないことで
+ * シフト表そのものが作れなくなるのは割に合わないので、既定値で作る側に倒す。
+ *
+ * @param {string|null} json 保存されている JSON
+ * @param {Object<string,*>} defaults 既定値
+ * @return {Object<string,*>}
+ */
+function parseProfileJson_(json, defaults) {
+  if (!json) return mergeProfileRows_(defaults, []);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(json);
+  } catch (ignored) {
+    console.error(`[${MODULE_FORMATPROFILE}.parseProfileJson_] `
+      + '書式プロファイルの JSON が壊れています。既定値で続行します。');
+    return mergeProfileRows_(defaults, []);
+  }
+  if (!parsed || typeof parsed !== 'object') return mergeProfileRows_(defaults, []);
+
+  const rows = Object.keys(parsed).map(function (key) { return [key, parsed[key]]; });
+  return mergeProfileRows_(defaults, rows);
+}
+
+/**
+ * 書式プロファイルをスクリプトプロパティへ保存する（ここが「正」）。
+ * 既定値と同じ項目だけを保存する（知らないキーを持ち込まない）。
+ */
+function saveFormatProfile_(profile) {
+  const clean = {};
+  Object.keys(FORMAT_DEFAULT).forEach(function (key) {
+    if (profile[key] !== undefined) clean[key] = profile[key];
+  });
+  PropertiesService.getScriptProperties()
+    .setProperty(CONFIG.PROP_FORMAT_PROFILE, JSON.stringify(clean));
+  return clean;
+}
+
+/**
+ * メニュー「書式プロファイルを反映」。
+ * 控えシートを手で直したあと、その内容をスクリプトプロパティ（正）へ書き戻す。
+ *
+ * 生成はシートを読まないので、**この一手を踏まないと直しは効かない**。
+ * 2か所を同時に正にするとどちらが効いているか分からなくなるため、
+ * あえて明示的な操作にしてある。
+ */
+function applyProfileSheet() {
+  const started = Date.now();
+  try {
+    const ui = SpreadsheetApp.getUi();
+    const sheet = getSheetOrNull(CONFIG.SHEET_PROFILE);
+    if (!sheet) {
+      ui.alert([
+        `「${CONFIG.SHEET_PROFILE}」シートがありません。`,
+        '',
+        '先に「初期設定 → 実物の書式を取り込む」を実行してください。',
+      ].join('\n'));
+      return null;
+    }
+
+    const last = sheet.getLastRow();
+    const rows = last < FORMAT_PROFILE.FIRST_ROW ? [] :
+      sheet.getRange(FORMAT_PROFILE.FIRST_ROW, FORMAT_PROFILE.COL_KEY,
+        last - FORMAT_PROFILE.FIRST_ROW + 1, 2).getValues();
+
+    const merged = mergeProfileRows_(FORMAT_DEFAULT, rows);
+    const saved = saveFormatProfile_(merged);
+    const changed = Object.keys(saved).filter(function (key) {
+      return saved[key] !== FORMAT_DEFAULT[key];
+    });
+
+    logSuccess(MODULE_FORMATPROFILE, 'applyProfileSheet',
+      `keys=${Object.keys(saved).length}; nonDefault=${changed.length}; `
+      + `elapsedMs=${Date.now() - started}`);
+
+    ui.alert([
+      '書式プロファイルを反映しました。',
+      '',
+      `${Object.keys(saved).length} 項目を保存（うち既定値と違うもの ${changed.length} 件）。`,
+      '次に作るシフト表からこの書式になります。',
+    ].join('\n'));
+    return saved;
+  } catch (error) {
+    logError(MODULE_FORMATPROFILE, 'applyProfileSheet', error, '', true);
+    SpreadsheetApp.getUi().alert(`反映に失敗しました。\n\n${error.message}`);
+    throw error;
   }
 }
 

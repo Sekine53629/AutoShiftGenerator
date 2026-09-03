@@ -36,6 +36,12 @@ const CONFIG = Object.freeze({
   PROP_EXPORT_FOLDER_ID: 'EXPORT_FOLDER_ID',
   /** 期替わり判定で覚えている対象月（ドキュメントプロパティ） */
   PROP_LAST_MONTH: 'LAST_TARGET_MONTH',
+  /**
+   * 書式プロファイル（スクリプトプロパティ）。JSON 1件で持つ。
+   * ここが「正」で、書式プロファイルシートは控えと手直し用。
+   * シートを直したら「書式プロファイルを反映」で明示的に書き戻す。
+   */
+  PROP_FORMAT_PROFILE: 'FORMAT_PROFILE',
 
   /** 実行ログシートの保持行数。超えた分は古い行から削る */
   RUNLOG_MAX_ROWS: 2000,

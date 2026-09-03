@@ -573,6 +573,51 @@ test('値の型が既定値と揃う（setFontSize に文字列を渡さない�
   assert.strictEqual(typeof merged['role.date.bg'], 'string');
 });
 
+test('環境設定（JSON）が壊れていても既定値で動く', function () {
+  const d = sandbox.FORMAT_DEFAULT;
+
+  // 書式が読めないせいでシフト表そのものが作れなくなるのは割に合わない。
+  // どの壊れ方でも既定値へ落として、生成できる側に倒す
+  ['', null, undefined, '{壊れた', '[]', '123', '"文字列"', 'null'].forEach(function (json) {
+    const p = sandbox.parseProfileJson_(json, d);
+    assert.strictEqual(p['col.day.width'], d['col.day.width'],
+      `${JSON.stringify(json)} でも既定値`);
+  });
+});
+
+test('環境設定の JSON が既定値を上書きする', function () {
+  const d = sandbox.FORMAT_DEFAULT;
+  const p = sandbox.parseProfileJson_(JSON.stringify({
+    'col.day.width': 26,
+    'role.grid.fontSize': 9,
+    'day.satBg': '#cfe2f3',
+    'label.doc': '医師数',
+    'まったく知らないキー': 'x',
+  }), d);
+
+  assert.strictEqual(p['col.day.width'], 26);
+  assert.strictEqual(p['role.grid.fontSize'], 9);
+  assert.strictEqual(p['day.satBg'], '#cfe2f3');
+  assert.strictEqual(p['label.doc'], '医師数');
+  assert.strictEqual(p['まったく知らないキー'], undefined, '知らないキーは持ち込まない');
+  assert.strictEqual(p['col.agg.width'], d['col.agg.width'], '触っていない項目は既定値');
+});
+
+test('シートを直して反映する経路と、JSON から読む経路が同じ結果になる', function () {
+  const d = sandbox.FORMAT_DEFAULT;
+  // 控えシートを手で直した想定
+  const fromSheet = sandbox.mergeProfileRows_(d, [
+    ['col.day.width', '26'],
+    ['role.grid.bold', 'TRUE'],
+  ]);
+  // それを保存して読み直した想定
+  const fromJson = sandbox.parseProfileJson_(JSON.stringify(fromSheet), d);
+
+  Object.keys(d).forEach(function (key) {
+    assert.strictEqual(fromJson[key], fromSheet[key], `${key} が往復で変わらない`);
+  });
+});
+
 test('roleFormat が役割の書式をまとめて返す', function () {
   const merged = sandbox.mergeProfileRows_(sandbox.FORMAT_DEFAULT, []);
   const fmt = sandbox.roleFormat(merged, 'grid');
