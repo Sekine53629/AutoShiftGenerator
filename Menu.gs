@@ -33,6 +33,7 @@ function onOpen() {
         .addItem('祝日マスタを取り込む', 'importHolidays'))
       .addSeparator()
       .addItem('PDF 出力', 'exportShiftPdf')
+      .addItem('レイアウト診断', 'diagnoseSheetLayout')
       .addItem('シート構造を表示', 'runSheetSurvey')
       .addToUi();
   } catch (error) {
@@ -73,5 +74,22 @@ function openWebApp() {
  * @param {string} body 本文（プレーンテキスト）
  */
 function showReportDialog(title, body) {
-  return notImplemented_(MODULE_MENU, 'showReportDialog', 4); // TODO(P4)
+  try {
+    const escaped = String(body == null ? '' : body)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const html = HtmlService
+      .createHtmlOutput(
+        '<style>body{font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;'
+        + 'margin:0;padding:10px;white-space:pre-wrap;word-break:break-all}</style>'
+        + `<div>${escaped}</div>`)
+      .setWidth(760)
+      .setHeight(560);
+    SpreadsheetApp.getUi().showModalDialog(html, title);
+  } catch (error) {
+    logError(MODULE_MENU, 'showReportDialog', error, `title=${title}`);
+    // レポートが出せないだけで処理を止めない。中身はログに残す
+    console.log(`[${MODULE_MENU}.showReportDialog] ${title}\n${body}`);
+  }
 }
