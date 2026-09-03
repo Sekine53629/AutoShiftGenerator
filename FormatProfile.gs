@@ -59,18 +59,28 @@ function captureFormatProfile() {
     }
 
     const profile = readSheetFormat_(sheet, layout);
-    saveFormatProfile_(profile);              // ← 正はこちら
+    const saved = saveFormatProfile_(profile);      // ← 正はこちら
     writeProfileSheet_(profile, sheet.getName());   // 控え（人が読む・直す用）
     SpreadsheetApp.flush();
 
     logSuccess(MODULE_FORMATPROFILE, 'captureFormatProfile',
-      `from=${sheet.getName()}; keys=${Object.keys(profile).length}; `
+      `from=${sheet.getName()}; keys=${Object.keys(saved).length}; `
+      + `cfRules=${(profile._conditionalFormats || []).length}; `
       + `elapsedMs=${Date.now() - started}`);
+
+    const cfRules = profile._conditionalFormats || [];
+    const cfUsed = Object.keys(deriveDayColorsFromRules_(cfRules)).length;
 
     ui.alert([
       `「${sheet.getName()}」の書式を取り込みました。`,
       '',
-      `${Object.keys(profile).length} 項目をスクリプトプロパティに保存しました。`,
+      `${Object.keys(saved).length} 項目をスクリプトプロパティに保存しました。`,
+      cfRules.length > 0
+        ? `条件付き書式が ${cfRules.length} 件見つかり、うち ${cfUsed} 件を`
+          + '土日・月外の色として使いました。'
+          + `残り ${cfRules.length - cfUsed} 件は引き継いでいません`
+          + `（「${CONFIG.SHEET_PROFILE}」シートの末尾に一覧があります）。`
+        : '条件付き書式は見つかりませんでした。',
       `同じ内容を「${CONFIG.SHEET_PROFILE}」シートにも控えとして書いています。`,
       '',
       '次に作るシフト表からこの書式で生成されます。',
@@ -130,9 +140,20 @@ function readSheetFormat_(sheet, layout) {
   profile['col.day.width'] = sheet.getColumnWidth(layout.firstCol);
   profile['col.agg.width'] = sheet.getColumnWidth(LAYOUT.COL_AGG_FIRST);
 
-  // --- 曜日ごとの色。実物の日付行から、その曜日の列を探して拾う ---
-  const dayColors = readWeekdayColors_(sheet, layout, bg, fg, values);
-  Object.keys(dayColors).forEach(function (key) { profile[key] = dayColors[key]; });
+  // --- 曜日ごとの色 ---
+  //
+  // 【落とし穴】getBackgrounds() はセルに直接設定された色しか返さない。
+  // 条件付き書式で付いた色は返らず、下地（たいてい白）が返る。
+  // 実物が条件付き書式で土日を色分けしていると、ここが真っ白になる。
+  // エラーも出ないので、静的な色と条件付き書式の両方から拾って突き合わせる。
+  const staticColors = readWeekdayColors_(sheet, layout, bg, fg, values);
+  const cfRules = readConditionalFormats_(sheet);
+  const cfColors = deriveDayColorsFromRules_(cfRules);
+
+  ['day.satBg', 'day.sunBg', 'day.outMonthBg', 'day.outMonthFg'].forEach(function (key) {
+    profile[key] = pickDayColor_(staticColors[key], cfColors[key], FORMAT_DEFAULT[key]);
+  });
+  profile._conditionalFormats = cfRules;   // 控えシートに載せるための添え物（保存はしない）
 
   // --- 表示形式 ---
   profile['format.date'] = at(numFmt, layout.dateRow, layout.firstCol);
@@ -202,6 +223,100 @@ function readWeekdayColors_(sheet, layout, bg, fg, values) {
   return out;
 }
 
+/**
+ * シートの条件付き書式を、扱いやすい形にして返す。
+ *
+ * getBackgrounds() では条件付き書式の色が取れないので、ルール側から直接読む。
+ * ここで読んだものは色の抽出に使い、**使わなかったルールも控えシートに載せる**。
+ * 黙って落とすと「実物にあった色分けが再現されない」理由が誰にも分からなくなる。
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet 実物のシフト表
+ * @return {Array<{index:number, kind:string, formula:string, bg:string,
+ *                 fontColor:string, ranges:string}>}
+ */
+function readConditionalFormats_(sheet) {
+  try {
+    return sheet.getConditionalFormatRules().map(function (rule, i) {
+      const ranges = rule.getRanges()
+        .map(function (r) { return r.getA1Notation(); }).join(', ');
+      const cond = rule.getBooleanCondition();
+      if (!cond) {
+        // グラデーションルール。色の抽出には使えない
+        return { index: i + 1, kind: 'グラデーション', formula: '', bg: '',
+                 fontColor: '', ranges: ranges };
+      }
+      const values = cond.getCriteriaValues() || [];
+      return {
+        index: i + 1,
+        kind: String(cond.getCriteriaType()),
+        formula: values.length ? String(values[0]) : '',
+        bg: cond.getBackground() || '',
+        fontColor: cond.getFontColor() || '',
+        ranges: ranges,
+      };
+    });
+  } catch (error) {
+    logError(MODULE_FORMATPROFILE, 'readConditionalFormats_', error, '');
+    return [];
+  }
+}
+
+/**
+ * 条件付き書式のルールから、土曜・日曜・月外の色を推測する。
+ * SpreadsheetApp を呼ばない純粋関数なのでテストできる。
+ *
+ * 数式の中身から役割を当てる**推測**であることに注意。
+ * 当たらなかったものは控えシートに残るので、利用者が見て直せる。
+ *
+ * @param {Array<Object>} rules readConditionalFormats_ の戻り値
+ * @return {Object<string,string>}
+ */
+function deriveDayColorsFromRules_(rules) {
+  const out = {};
+  (rules || []).forEach(function (rule) {
+    const f = String(rule.formula || '');
+    if (f === '' || !rule.bg) return;
+
+    // 月外の判定を先に見る。WEEKDAY と MONTH の両方を含む式もあるため
+    if (/MONTH\s*\(/i.test(f) && /<>/.test(f)) {
+      if (!out['day.outMonthBg']) {
+        out['day.outMonthBg'] = rule.bg;
+        if (rule.fontColor) out['day.outMonthFg'] = rule.fontColor;
+      }
+      return;
+    }
+    if (/WEEKDAY\s*\([^)]*\)\s*=\s*7/i.test(f) && !out['day.satBg']) {
+      out['day.satBg'] = rule.bg;
+      return;
+    }
+    if (/WEEKDAY\s*\([^)]*\)\s*=\s*1/i.test(f) && !out['day.sunBg']) {
+      out['day.sunBg'] = rule.bg;
+    }
+  });
+  return out;
+}
+
+/**
+ * 静的な背景色と、条件付き書式から拾った色のどちらを採るか決める。
+ *
+ * 静的な色が白／未設定なら「塗っていない」とみなし、条件付き書式の色を採る。
+ * どちらも無ければ既定値。
+ *
+ * @param {string} staticColor getBackgrounds() から拾った色
+ * @param {string} cfColor 条件付き書式から拾った色
+ * @param {string} fallback 既定値
+ * @return {string}
+ */
+function pickDayColor_(staticColor, cfColor, fallback) {
+  const isBlank = function (c) {
+    const v = String(c || '').trim().toLowerCase();
+    return v === '' || v === '#ffffff' || v === 'white' || v === '#fff';
+  };
+  if (!isBlank(staticColor)) return staticColor;
+  if (!isBlank(cfColor)) return cfColor;
+  return fallback;
+}
+
 /** ラベルが空なら既定値を使う。手で変えた見出しは尊重する。 */
 function labelOrDefault_(value, key) {
   const v = String(value == null ? '' : value).trim();
@@ -220,13 +335,35 @@ function writeProfileSheet_(profile, sourceName) {
     [FORMAT_PROFILE.HEADS]);
   styleHeaderRange_(sheet.getRange(FORMAT_PROFILE.HDR_ROW, FORMAT_PROFILE.COL_KEY, 1, 3));
 
-  const rows = Object.keys(profile).sort().map(function (key) {
-    return [key, profile[key], describeProfileKey_(key)];
-  });
+  // `_` で始まるキーは添え物（保存対象ではない）。設定として並べない
+  const rows = Object.keys(profile)
+    .filter(function (key) { return key.indexOf('_') !== 0; })
+    .sort()
+    .map(function (key) { return [key, profile[key], describeProfileKey_(key)]; });
+
   rows.push(['(取り込み元)', sourceName, `${new Date().toLocaleString('ja-JP')} に取り込み`]);
   rows.push(['(このシートについて)', '控え',
     '生成が読むのはスクリプトプロパティです。ここを直したら'
     + '「初期設定 → 書式プロファイルを反映」を実行してください']);
+
+  // --- 見つけた条件付き書式を全部載せる ---
+  //   色として拾えたものだけを黙って使うと、拾えなかったルールの存在が
+  //   誰にも見えなくなる。「実物にあった色分けが再現されない」理由を
+  //   追えるように、使わなかったものも含めて並べる。
+  const cfRules = profile._conditionalFormats || [];
+  if (cfRules.length > 0) {
+    rows.push(['(条件付き書式)', `${cfRules.length} 件`,
+      '下は実物にあったルールの一覧です。設定項目ではありません。'
+      + '土日・月外の色はここから拾っています。'
+      + 'それ以外のルール（担当者の色分けなど）は引き継いでいません']);
+    cfRules.forEach(function (rule) {
+      rows.push([
+        `(条件付き書式 ${rule.index})`,
+        rule.bg || '(色なし)',
+        `${rule.ranges} / ${rule.kind} / ${rule.formula}`,
+      ]);
+    });
+  }
 
   const last = sheet.getLastRow();
   if (last >= FORMAT_PROFILE.FIRST_ROW) {

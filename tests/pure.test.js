@@ -618,6 +618,49 @@ test('シートを直して反映する経路と、JSON から読む経路が同
   });
 });
 
+test('条件付き書式で色分けしているシートから色を拾える', function () {
+  // getBackgrounds() は条件付き書式の色を返さない。ルール側から拾う必要がある
+  const rules = [
+    { index: 1, kind: 'CUSTOM_FORMULA', bg: '#f2f2f2', fontColor: '#999999',
+      formula: '=MONTH(B$2)<>MONTH($A$1)', ranges: 'B2:AF33' },
+    { index: 2, kind: 'CUSTOM_FORMULA', bg: '#f4cccc', fontColor: '',
+      formula: '=WEEKDAY(B$2)=1', ranges: 'B2:AF3' },
+    { index: 3, kind: 'CUSTOM_FORMULA', bg: '#cfe2f3', fontColor: '',
+      formula: '=WEEKDAY(B$2)=7', ranges: 'B2:AF3' },
+  ];
+  const got = sandbox.deriveDayColorsFromRules_(rules);
+  assert.strictEqual(got['day.satBg'], '#cfe2f3');
+  assert.strictEqual(got['day.sunBg'], '#f4cccc');
+  assert.strictEqual(got['day.outMonthBg'], '#f2f2f2');
+  assert.strictEqual(got['day.outMonthFg'], '#999999');
+});
+
+test('拾えない条件付き書式があっても壊れない', function () {
+  const got = sandbox.deriveDayColorsFromRules_([
+    { index: 1, kind: 'グラデーション', bg: '', fontColor: '', formula: '', ranges: '' },
+    { index: 2, kind: 'TEXT_EQUAL_TO', bg: '#00ff00', fontColor: '',
+      formula: '担当', ranges: 'B9:AF9' },      // 担当者の色分け。曜日とは無関係
+    { index: 3, kind: 'CUSTOM_FORMULA', bg: '', fontColor: '',
+      formula: '=WEEKDAY(B$2)=7', ranges: '' },  // 色が無いルールは使わない
+  ]);
+  // vm の中で作られたオブジェクトなので、キーの一覧で比べる
+  assert.deepStrictEqual(Object.keys(got).sort(), [], '当たらなければ何も返さない');
+  assert.deepStrictEqual(Object.keys(sandbox.deriveDayColorsFromRules_([])), []);
+  assert.deepStrictEqual(Object.keys(sandbox.deriveDayColorsFromRules_(null)), []);
+});
+
+test('静的な色が塗られていれば条件付き書式より優先する', function () {
+  const pick = sandbox.pickDayColor_;
+  assert.strictEqual(pick('#dce6f1', '#cfe2f3', '#000000'), '#dce6f1', '静的が勝つ');
+
+  // 白＝「塗っていない」とみなす。ここを見落とすと真っ白なプロファイルになる
+  ['', '#ffffff', '#FFFFFF', 'white', '#fff', '   '].forEach(function (blank) {
+    assert.strictEqual(pick(blank, '#cfe2f3', '#000000'), '#cfe2f3',
+      `${JSON.stringify(blank)} は塗っていない扱い`);
+  });
+  assert.strictEqual(pick('', '', '#000000'), '#000000', 'どちらも無ければ既定値');
+});
+
 test('roleFormat が役割の書式をまとめて返す', function () {
   const merged = sandbox.mergeProfileRows_(sandbox.FORMAT_DEFAULT, []);
   const fmt = sandbox.roleFormat(merged, 'grid');
