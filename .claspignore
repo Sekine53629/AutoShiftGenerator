@@ -16,5 +16,7 @@
 # サーバ側のスクリプト（直下の .gs だけ。archive/*.gs は除外のまま）
 !*.gs
 
-# Web アプリの画面
-!WebAppView.html
+# 画面（直下の .html だけ。archive/*.html は除外のまま）
+#   ファイル名を名指しすると、画面を増やしたときに送り忘れる。
+#   実際 ImportProfileView.html を足したとき、ここが原因で push されなかった。
+!*.html
