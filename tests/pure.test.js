@@ -948,6 +948,198 @@ test('ノルマ外の休み記号は全角カンマ区切りも受ける', funct
   assert.strictEqual(sandbox.isPaidOff('公休', '有休、夏休'), false);
 });
 
+// ---- 配置エンジンの工程6〜10 ------------------------------------------
+
+/** 2026年9月の n 日分を作る。1日は火曜 */
+function makeDays(n, tweak) {
+  const days = [];
+  for (let d = 1; d <= n; d++) {
+    const date = vm.runInContext(`new Date(2026, 8, ${d})`, sandbox);
+    const weekday = date.getDay() + 1;                       // 1=日 .. 7=土
+    const serial = Math.floor(date.getTime() / 86400000);
+    const day = {
+      date: date, inMonth: true, weekday: weekday, isHoliday: false,
+      docCount: 4, required: 5, weekKey: serial - (weekday - 1),
+    };
+    if (tweak) tweak(day, d);
+    days.push(day);
+  }
+  return days;
+}
+
+function member(over) {
+  const m = {
+    name: 'x', kind: sandbox.KIND.PHARM, rule: sandbox.RULE.NORMAL,
+    leave: false, canLate: true, quota: -1, weekN: 0,
+    fixedDow: sandbox.parseFixedDow(''), skipRow: false,
+  };
+  Object.keys(over || {}).forEach(function (k) { m[k] = over[k]; });
+  return m;
+}
+
+function buildFor(members, days, existing) {
+  return sandbox.buildState_({
+    settings: { earlyN: 1, lateMin: 3, maxRun: 3, maxOffRun: 3, weekBase: 2,
+                reqPlus: 1, paidSyms: '有休,夏休', gSym: '●',
+                clerkEarlyN: 1, lateBusy: 0, runBonus: 0 },
+    days: days, members: members, existing: existing || [],
+  });
+}
+
+test('既存分類は記号を出勤、それ以外の文字を休みにする（工程6）', function () {
+  const days = makeDays(4);
+  const st = buildFor([member(), member({ leave: true }), member({ skipRow: true })],
+    days, [['○', '公休', '', '▲'], ['', '', '', ''], ['', '', '', '']]);
+  sandbox.classifyExisting_(st);
+
+  assert.strictEqual(st.plan[1][1], sandbox.ST_FWORK, '○ は既存の出勤');
+  assert.strictEqual(st.plan[1][2], sandbox.ST_FOFF, '公休は既存の休み');
+  assert.strictEqual(st.plan[1][3], sandbox.ST_NONE, '空欄は未決');
+  assert.strictEqual(st.plan[1][4], sandbox.ST_FWORK, '▲ も出勤');
+
+  assert.strictEqual(st.plan[2][1], sandbox.ST_SKIP, '休業者は行ごと対象外');
+  assert.strictEqual(st.plan[3][1], sandbox.ST_SKIP, 'skipRow も対象外');
+});
+
+test('月外の日は対象外になる（工程6）', function () {
+  const days = makeDays(3, function (d, n) { if (n === 3) d.inMonth = false; });
+  const st = buildFor([member()], days, [['○', '', '○']]);
+  sandbox.classifyExisting_(st);
+
+  assert.strictEqual(st.plan[1][1], sandbox.ST_FWORK);
+  assert.strictEqual(st.plan[1][3], sandbox.ST_SKIP, '月外は中身によらず対象外');
+});
+
+test('勤務ルールの適用（工程7）', function () {
+  const days = makeDays(7);   // 9/1(火) 〜 9/7(月)
+  const st = buildFor([
+    member(),                                                   // 通常
+    member({ rule: sandbox.RULE.MANUAL }),                      // 手動
+    member({ rule: sandbox.RULE.FIXED_DOW,
+             fixedDow: sandbox.parseFixedDow('火水') }),        // 固定曜日
+  ], days);
+  sandbox.classifyExisting_(st);
+  sandbox.applyMemberRules_(st);
+
+  assert.strictEqual(st.plan[1][1], sandbox.ST_WORK, '通常は仮で全出勤');
+  assert.strictEqual(st.plan[2][1], sandbox.ST_NONE, '★手動は触らない（未決のまま）');
+  assert.strictEqual(st.plan[3][1], sandbox.ST_WORK, '9/1 は火曜なので出勤');
+  assert.strictEqual(st.plan[3][3], sandbox.ST_OFF, '9/3 は木曜なので休み');
+});
+
+test('既存入力はルール適用でも上書きされない（工程7）', function () {
+  const days = makeDays(3);
+  const st = buildFor([member({ rule: sandbox.RULE.FIXED_DOW,
+    fixedDow: sandbox.parseFixedDow('火水木') })], days, [['公休', '', '']]);
+  sandbox.classifyExisting_(st);
+  sandbox.applyMemberRules_(st);
+
+  // 固定曜日は火水木。9/1 は火曜だが、既に公休が入っている
+  assert.strictEqual(st.plan[1][1], sandbox.ST_FOFF, '既存入力が勝つ');
+});
+
+test('日別出勤数は区分ごとに数える（工程8）', function () {
+  const days = makeDays(2);
+  const st = buildFor([
+    member(),
+    member({ kind: sandbox.KIND.CLERK }),
+    member({ skipRow: true }),
+  ], days);
+  sandbox.classifyExisting_(st);
+  sandbox.applyMemberRules_(st);
+  sandbox.countCoverage_(st);
+
+  assert.strictEqual(st.cov[1], 1, '薬剤師1人');
+  assert.strictEqual(st.covG[1], 1, '事務員1人');
+});
+
+test('週リストは日曜起点の週キーを重複なく並べる（工程10）', function () {
+  const days = makeDays(10);   // 9/1(火) 〜 9/10(木)。週は 8/30-9/5, 9/6-9/12
+  const st = buildFor([member()], days);
+  sandbox.buildWeekList_(st);
+
+  assert.strictEqual(st.nW, 2, '2つの週にまたがる');
+  assert.ok(st.wkList[1] < st.wkList[2], '昇順');
+  assert.strictEqual(st.wkList[1], days[0].weekKey);
+});
+
+test('週N日ルールは週の出勤日数を目標まで絞る（工程9）', function () {
+  const days = makeDays(7);
+  const st = buildFor([member({ rule: sandbox.RULE.WEEK_N, weekN: 4 })], days);
+  sandbox.classifyExisting_(st);
+  sandbox.applyMemberRules_(st);
+  sandbox.countCoverage_(st);
+  sandbox.applyWeekNRule_(st);
+
+  // 9/1(火)〜9/5(土) が1つ目の週（5日）、9/6(日)〜9/7(月) が2つ目（2日）
+  const countWork = function (key) {
+    let n = 0;
+    for (let j = 1; j <= st.nD; j++) {
+      if (st.wkKey[j] === key && sandbox.isWorkState_(st.plan[1][j])) n++;
+    }
+    return n;
+  };
+  // 端週は日数で按分する。5日の週 → round(4*5/7)=3、2日の週 → round(4*2/7)=1
+  assert.strictEqual(countWork(days[0].weekKey), 3, '5日の週は3日');
+  assert.strictEqual(countWork(days[5].weekKey), 1, '2日の週は1日');
+});
+
+test('OffScore は不足・混雑日・連勤・土日祝を見る', function () {
+  const days = makeDays(7);
+  const st = buildFor([member()], days);
+  sandbox.classifyExisting_(st);
+  sandbox.applyMemberRules_(st);
+  sandbox.countCoverage_(st);
+
+  // cov=1, required=5 → 5.0 * (1 - 1 - 5) = -25
+  // 9/1 は火曜、連勤は7日で maxRun+1=4 を超える → 8 + min(lft,rgt)
+  const score1 = sandbox.offScore_(st, 1, 1);
+  const score5 = sandbox.offScore_(st, 1, 5);   // 9/5 は土曜 → +2
+
+  assert.ok(score5 > score1, '土曜のほうが休みにしやすい');
+  assert.strictEqual(score5 - score1, 2 + (Math.min(4, 2) - Math.min(0, 6)),
+    '土曜の +2 と、連勤の中央寄りの差');
+});
+
+test('OffScore は事務員がゼロになる日を強く避ける', function () {
+  const days = makeDays(2);
+  const st = buildFor([member({ kind: sandbox.KIND.CLERK })], days);
+  sandbox.classifyExisting_(st);
+  sandbox.applyMemberRules_(st);
+  sandbox.countCoverage_(st);
+
+  // 事務員1人しかいない → 休ませると 0 人になる → -12
+  assert.ok(sandbox.offScore_(st, 1, 1) <= -12, '強い減点が入る');
+});
+
+test('AdjBonus は連休になる位置を優遇し、長すぎる連休を罰する', function () {
+  const st = stateFrom(['OO.WWWW'], {});
+  st.settings = { maxOffRun: 3 };
+
+  // 3日目を休みにすると 1〜3 の3連休 → maxOffRun ちょうど → +4
+  assert.strictEqual(sandbox.adjBonus_(st, 1, 3), 4);
+
+  // 連休上限を超えると罰する
+  const st2 = stateFrom(['OOO.WWW'], {});
+  st2.settings = { maxOffRun: 3 };
+  assert.strictEqual(sandbox.adjBonus_(st2, 1, 4), -3, '4連休 → -3 * (4-3)');
+
+  // 単発の休みは加点も減点も無い
+  const st3 = stateFrom(['WW.WW'], {});
+  st3.settings = { maxOffRun: 3 };
+  assert.strictEqual(sandbox.adjBonus_(st3, 1, 3), 0);
+});
+
+test('公休ノルマは土日 + 平日の祝日。二重に数えない', function () {
+  // 9/1(火)〜9/7(月)。土=9/5、日=9/6
+  const days = makeDays(7, function (d, n) {
+    if (n === 3) d.isHoliday = true;    // 9/3(木) 平日の祝日
+    if (n === 5) d.isHoliday = true;    // 9/5(土) 土曜と重なる祝日
+  });
+  const st = buildFor([member()], days);
+  assert.strictEqual(st.targetOff, 3, '土 + 日 + 平日の祝日1 = 3（土曜の祝日は重複しない）');
+});
+
 // ---- 結果 -------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

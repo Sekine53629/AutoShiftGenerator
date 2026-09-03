@@ -42,7 +42,146 @@ const MODULE_ENGINE = 'Engine';
  *           diagnostics:{coverBalance:Object, fiveBalance:Object}}}
  */
 function runEngine(input) {
-  return notImplemented_(MODULE_ENGINE, 'runEngine', 3); // TODO(P3)
+  const started = Date.now();
+  try {
+    const state = buildState_(input);
+
+    classifyExisting_(state);      // 6
+    applyMemberRules_(state);      // 7
+    countCoverage_(state);         // 8
+    applyWeekNRule_(state);        // 9
+    buildWeekList_(state);         // 10
+    placeOffQuota_(state);         // 11
+    placeRemainingQuota_(state);   // 12
+    relaxWorkRuns_(state);         // 13
+    coverBalance_(state);          // 14
+    fiveBalance_(state);           // 15
+    assignSymbols_(state);         // 16
+    symbolBalance_(state);         // 17
+
+    return {
+      plan: state.plan,
+      symbol: state.symbol,
+      counts: { cntE: state.cntE, cntM: state.cntM, cntL: state.cntL },
+      targetOff: state.targetOff,
+      unmet: state.unmet,
+      diagnostics: state.diagnostics,
+      elapsedMs: Date.now() - started,
+    };
+  } catch (error) {
+    // 内側の純粋関数は try/catch を持たない。ここで一括して捕える
+    logError(MODULE_ENGINE, 'runEngine', error,
+      `nP=${input && input.members && input.members.length}; `
+      + `nD=${input && input.days && input.days.length}`);
+    throw error;
+  }
+}
+
+/**
+ * 入力から作業用の状態を組み立てる。
+ *
+ * **配列は 1 起点にする。**VBA と同じ添字にしておかないと、
+ * 記号割当の `i = ((j + k - 1) % nP) + 1` のような 1 起点前提の式を
+ * 書き換えることになり、そこが移植のバグの温床になる。0 番は使わない。
+ *
+ * @param {Object} input runEngine の引数
+ * @return {Object} state
+ */
+function buildState_(input) {
+  const members = input.members || [];
+  const days = input.days || [];
+  const nP = members.length;
+  const nD = days.length;
+
+  // 0 起点の配列を 1 起点へ写す
+  const fromMembers = function (pick) {
+    const a = [null];
+    for (let k = 0; k < nP; k++) a.push(pick(members[k]));
+    return a;
+  };
+  const fromDays = function (pick) {
+    const a = [null];
+    for (let k = 0; k < nD; k++) a.push(pick(days[k]));
+    return a;
+  };
+  const filled = function (n, v) {
+    const a = [null];
+    for (let k = 1; k <= n; k++) a.push(v);
+    return a;
+  };
+  const grid = function (v) {
+    const a = [null];
+    for (let i = 1; i <= nP; i++) a.push(filled(nD, v));
+    return a;
+  };
+
+  const existing = [null];
+  for (let i = 0; i < nP; i++) {
+    const row = [null];
+    const src = (input.existing && input.existing[i]) || [];
+    for (let j = 0; j < nD; j++) row.push(String(src[j] == null ? '' : src[j]));
+    existing.push(row);
+  }
+
+  const state = {
+    settings: input.settings,
+    nP: nP,
+    nD: nD,
+
+    name: fromMembers(function (m) { return m.name; }),
+    kind: fromMembers(function (m) { return m.kind; }),
+    rule: fromMembers(function (m) { return m.rule; }),
+    leave: fromMembers(function (m) { return !!m.leave; }),
+    canLate: fromMembers(function (m) { return m.canLate !== false; }),
+    skipRow: fromMembers(function (m) { return !!m.skipRow; }),
+    quota: fromMembers(function (m) { return m.quota === undefined ? -1 : m.quota; }),
+    weekN: fromMembers(function (m) { return m.weekN || 0; }),
+    fixedDow: fromMembers(function (m) {
+      return m.fixedDow || [false, false, false, false, false, false, false, false];
+    }),
+
+    dayDt: fromDays(function (d) { return d.date; }),
+    dayIn: fromDays(function (d) { return !!d.inMonth; }),
+    dayWD: fromDays(function (d) { return d.weekday; }),
+    dayHol: fromDays(function (d) { return !!d.isHoliday; }),
+    dayDoc: fromDays(function (d) { return d.docCount || 0; }),
+    dayReq: fromDays(function (d) { return d.required || 0; }),
+    wkKey: fromDays(function (d) { return d.weekKey; }),
+
+    existing: existing,
+    plan: grid(ST_NONE),
+    symbol: grid(''),
+    cov: filled(nD, 0),
+    covG: filled(nD, 0),
+    cntE: filled(nP, 0),
+    cntM: filled(nP, 0),
+    cntL: filled(nP, 0),
+    remOff: filled(nP, 0),
+
+    wkList: [null],
+    nW: 0,
+    unmet: [],
+    diagnostics: {},
+  };
+
+  state.targetOff = (input.targetOff === undefined)
+    ? countTargetOff_(state) : input.targetOff;
+  return state;
+}
+
+/**
+ * 公休ノルマ（土日 + 平日の祝日の日数）。移植元: AS_日情報 の該当部
+ * 祝日が土日に重なっても二重に数えない（仕様書 §4.4）。
+ */
+function countTargetOff_(state) {
+  let n = 0;
+  for (let j = 1; j <= state.nD; j++) {
+    if (!state.dayIn[j]) continue;
+    const wd = state.dayWD[j];
+    if (wd === 1 || wd === 7) n++;          // 日曜・土曜
+    else if (state.dayHol[j]) n++;          // 平日の祝日
+  }
+  return n;
 }
 
 /* ================================================================
@@ -56,7 +195,22 @@ function runEngine(input) {
  * 移植元: AS_既存分類
  */
 function classifyExisting_(state) {
-  return notImplemented_(MODULE_ENGINE, 'classifyExisting_', 3); // TODO(P3)
+  for (let i = 1; i <= state.nP; i++) {
+    for (let j = 1; j <= state.nD; j++) {
+      if (state.skipRow[i] || !state.dayIn[j] || state.leave[i]) {
+        state.plan[i][j] = ST_SKIP;
+        continue;
+      }
+      const v = String(state.existing[i][j] || '').trim();
+      if (v === '') {
+        state.plan[i][j] = ST_NONE;
+      } else if (matchWorkSym(v) !== '') {
+        state.plan[i][j] = ST_FWORK;
+      } else {
+        state.plan[i][j] = ST_FOFF;      // 希休・有休・公休など
+      }
+    }
+  }
 }
 
 /**
@@ -64,7 +218,22 @@ function classifyExisting_(state) {
  * 移植元: AS_ルール適用
  */
 function applyMemberRules_(state) {
-  return notImplemented_(MODULE_ENGINE, 'applyMemberRules_', 3); // TODO(P3)
+  for (let i = 1; i <= state.nP; i++) {
+    if (state.skipRow[i] || state.leave[i]) continue;
+
+    if (state.rule[i] === RULE.FIXED_DOW) {
+      for (let j = 1; j <= state.nD; j++) {
+        if (state.plan[i][j] !== ST_NONE) continue;
+        state.plan[i][j] = state.fixedDow[i][state.dayWD[j]] ? ST_WORK : ST_OFF;
+      }
+    } else if (state.rule[i] === RULE.MANUAL) {
+      // 手動は触らない。未決（ST_NONE）のまま残り、以降の工程も埋めない
+    } else {
+      for (let j = 1; j <= state.nD; j++) {
+        if (state.plan[i][j] === ST_NONE) state.plan[i][j] = ST_WORK;
+      }
+    }
+  }
 }
 
 /**
@@ -72,7 +241,16 @@ function applyMemberRules_(state) {
  * 移植元: AS_予定出勤数
  */
 function countCoverage_(state) {
-  return notImplemented_(MODULE_ENGINE, 'countCoverage_', 3); // TODO(P3)
+  for (let j = 1; j <= state.nD; j++) {
+    state.cov[j] = 0;
+    state.covG[j] = 0;
+    for (let i = 1; i <= state.nP; i++) {
+      if (state.skipRow[i]) continue;
+      if (!isWorkState_(state.plan[i][j])) continue;
+      if (state.kind[i] === KIND.PHARM) state.cov[j]++;
+      else if (state.kind[i] === KIND.CLERK) state.covG[j]++;
+    }
+  }
 }
 
 /**
@@ -80,7 +258,53 @@ function countCoverage_(state) {
  * 移植元: AS_週N日ルール
  */
 function applyWeekNRule_(state) {
-  return notImplemented_(MODULE_ENGINE, 'applyWeekNRule_', 3); // TODO(P3)
+  for (let i = 1; i <= state.nP; i++) {
+    if (state.skipRow[i] || state.leave[i]) continue;
+    if (state.rule[i] !== RULE.WEEK_N || state.weekN[i] <= 0) continue;
+
+    const processed = [];
+    for (let j0 = 1; j0 <= state.nD; j0++) {
+      if (!state.dayIn[j0] || processed[j0]) continue;
+
+      // この週の月内日数と、既に出勤で埋まっている日数を数える
+      let cnt = 0;
+      let fixedWork = 0;
+      for (let j = 1; j <= state.nD; j++) {
+        if (!state.dayIn[j] || state.wkKey[j] !== state.wkKey[j0]) continue;
+        processed[j] = true;
+        cnt++;
+        if (state.plan[i][j] === ST_FWORK) fixedWork++;
+      }
+
+      // 端週は日数が少ないので、週N日を日数で按分する。四捨五入
+      let target = Math.floor(state.weekN[i] * cnt / 7 + 0.5);
+      if (target > cnt) target = cnt;
+
+      // 多すぎる分を、休みにする価値が高い日から順に落とす
+      for (;;) {
+        let autoWork = 0;
+        for (let j = 1; j <= state.nD; j++) {
+          if (state.dayIn[j] && state.wkKey[j] === state.wkKey[j0]
+            && state.plan[i][j] === ST_WORK) autoWork++;
+        }
+        if (fixedWork + autoWork <= target) break;
+
+        let best = 0;
+        let bestScore = ENGINE_LIMIT.SCORE_INF;
+        for (let j = 1; j <= state.nD; j++) {
+          if (state.dayIn[j] && state.wkKey[j] === state.wkKey[j0]
+            && state.plan[i][j] === ST_WORK) {
+            const sc = offScore_(state, i, j);
+            if (sc > bestScore) { bestScore = sc; best = j; }
+          }
+        }
+        if (best === 0) break;   // 落とせる日が無い
+
+        state.plan[i][best] = ST_OFF;
+        covAdd_(state, i, best, -1);
+      }
+    }
+  }
 }
 
 /**
@@ -89,7 +313,19 @@ function applyWeekNRule_(state) {
  * 移植元: AS_週リスト
  */
 function buildWeekList_(state) {
-  return notImplemented_(MODULE_ENGINE, 'buildWeekList_', 3); // TODO(P3)
+  state.wkList = [null];
+  state.nW = 0;
+  for (let j = 1; j <= state.nD; j++) {
+    if (!state.dayIn[j]) continue;
+    let exists = false;
+    for (let w = 1; w <= state.nW; w++) {
+      if (state.wkList[w] === state.wkKey[j]) { exists = true; break; }
+    }
+    if (!exists) {
+      state.nW++;
+      state.wkList[state.nW] = state.wkKey[j];
+    }
+  }
 }
 
 /**
@@ -145,7 +381,25 @@ function assignSymbols_(state) {
  * @return {number}
  */
 function offScore_(state, i, j) {
-  return notImplemented_(MODULE_ENGINE, 'offScore_', 3); // TODO(P3)
+  let s = 0;
+
+  if (state.kind[i] === KIND.PHARM) {
+    s += 5.0 * (state.cov[j] - 1 - state.dayReq[j]);          // 不足を日別に均す（ソフト）
+    if (state.dayDoc[j] === DOC_BUSY_N) {
+      s += 3.0 * (fiveCnt_(state, i) - fiveAvg_(state));
+    }
+  } else if (state.kind[i] === KIND.CLERK) {
+    if (state.covG[j] - 1 < 1) s -= 12;                       // 事務員ゼロの日は強く回避
+    else s += 4.0 * (state.covG[j] - 2);                      // 重なる日を優先して休みに
+  }
+
+  const run = runLenAt_(state, i, j);
+  if (run.len >= state.settings.maxRun + 1) {
+    s += 8 + Math.min(run.lft, run.rgt);
+  }
+  if (state.dayWD[j] === 1 || state.dayWD[j] === 7 || state.dayHol[j]) s += 2;
+
+  return s;
 }
 
 /**
@@ -155,7 +409,11 @@ function offScore_(state, i, j) {
  * 移植元: AdjBonus
  */
 function adjBonus_(state, i, j) {
-  return notImplemented_(MODULE_ENGINE, 'adjBonus_', 3); // TODO(P3)
+  const total = 1 + offRunBefore_(state, i, j) + offRunAfter_(state, i, j);
+  const maxOffRun = state.settings.maxOffRun;
+  if (total >= 2 && total <= maxOffRun) return 4;
+  if (total > maxOffRun) return -3 * (total - maxOffRun);
+  return 0;
 }
 
 /** 連休ブロック（3連休/2連休）を1つ置く。移植元: PlaceOffBlock */
