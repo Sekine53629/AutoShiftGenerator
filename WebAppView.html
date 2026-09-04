@@ -36,6 +36,11 @@
   .group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
   .group > .tag { color: var(--muted); font-size: 12px; }
   #summary { font-weight: 600; }
+  select.big { font-size: 15px; font-weight: 700; padding: 5px 8px; }
+  .tag { color: var(--muted); font-size: 12px; }
+  .badge { background: var(--short); color: #fff; border-radius: 10px;
+           padding: 1px 9px; font-size: 12px; font-weight: 700; }
+  body.dirty header { box-shadow: inset 0 0 0 2px var(--short); }
   #status { padding: 4px 12px; min-height: 1.6em; }
   #status.err { color: var(--short); }
 
@@ -68,12 +73,16 @@
 
 <header>
   <div class="bar">
-    <label>シート <select id="sheetSelect"></select></label>
-    <span id="summary" class="muted">—</span>
+    <span class="tag">編集中</span>
+    <select id="sheetSelect" class="big"></select>
+    <span id="dirtyBadge" class="badge" hidden>未保存</span>
     <span class="grow"></span>
     <button id="newSheet">シートを作る</button>
     <button id="runAuto">自動作成</button>
     <button id="reload">再読込</button>
+  </div>
+  <div class="bar">
+    <span id="summary" class="muted">—</span>
   </div>
   <div class="bar" id="paletteBar"></div>
   <div class="bar">
@@ -341,7 +350,19 @@
     $('save').disabled = n === 0;
     $('discard').disabled = n === 0;
     $('save').textContent = n === 0 ? '保存' : `保存 (${n})`;
+
+    // どのシートを触っているのか、保存し忘れていないかを目立たせる
+    $('dirtyBadge').hidden = n === 0;
+    $('dirtyBadge').textContent = `未保存 ${n}`;
+    document.body.className = n === 0 ? '' : 'dirty';
   }
+
+  // 保存せずに閉じようとしたら止める
+  window.addEventListener('beforeunload', function (e) {
+    if (dirty.size === 0) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
 
   $('save').onclick = function () {
     const edits = [];

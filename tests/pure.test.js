@@ -1416,6 +1416,43 @@ test('置けない日があると未達として記録される', function () {
   assert.ok(String(out.unmet[0]).indexOf('A') >= 0, '誰か分かる');
 });
 
+// ---- 控え（バックアップ） ---------------------------------------------
+
+test('控えのシート名を分解できる', function () {
+  const b = sandbox.parseBackupName_('控_2026年10月_20261004-093015');
+  assert.ok(b, '控えとして認識する');
+  assert.strictEqual(b.source, '2026年10月', '元のシート名');
+  assert.strictEqual(b.takenAt, '20261004-093015');
+  assert.strictEqual(b.label, '10/04 09:30', '人が読む形');
+});
+
+test('控えでないシート名は控えと誤認しない', function () {
+  // 誤認すると、本物のシフト表を控えとみなして編集対象から外してしまう
+  ['2026年10月', '自動作成設定', '控え', '控_', '控_2026年10月',
+   '控_2026年10月_ふつうの文字', '控_2026年10月_2026-10-04'].forEach(function (name) {
+    assert.strictEqual(sandbox.parseBackupName_(name), null,
+      `${name} は控えではない`);
+  });
+});
+
+test('元のシート名にアンダースコアが入っていても分解できる', function () {
+  // 区切りは最後の _ で切る。前半にいくつ入っていても元の名前が復元できる
+  const b = sandbox.parseBackupName_('控_2026_10_臨時_20261004-093015');
+  assert.ok(b);
+  assert.strictEqual(b.source, '2026_10_臨時');
+});
+
+test('シート名に使えない文字を落とす', function () {
+  // Google スプレッドシートのシート名は [ ] * ? / \ : が使えない
+  const cleaned = sandbox.sanitizeSheetName_('控_2026/10:臨時[A]_20261004-093015');
+  assert.ok(cleaned.indexOf('/') < 0 && cleaned.indexOf(':') < 0);
+  assert.ok(cleaned.indexOf('[') < 0 && cleaned.indexOf(']') < 0);
+  assert.ok(cleaned.length <= 100, '100文字に収まる');
+
+  const long = sandbox.sanitizeSheetName_('控_' + 'あ'.repeat(200) + '_20261004-093015');
+  assert.strictEqual(long.length, 100, '長すぎる名前は詰める');
+});
+
 // ---- 結果 -------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

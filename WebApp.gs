@@ -56,10 +56,12 @@ function doGet(e) {
 function apiListSheets() {
   try {
     const skip = [CONFIG.SHEET_CFG, CONFIG.SHEET_HOLIDAY, CONFIG.SHEET_LOG,
-                  CONFIG.SHEET_RUNLOG, CONFIG.SHEET_SURVEY];
+                  CONFIG.SHEET_RUNLOG, CONFIG.SHEET_SURVEY, CONFIG.SHEET_PROFILE];
     const list = SpreadsheetApp.getActive().getSheets()
       .filter(function (sheet) {
         if (skip.indexOf(sheet.getName()) >= 0) return false;
+        // 控えは編集対象ではない。名前の形で見分ける
+        if (parseBackupName_(sheet.getName())) return false;
         try {
           resolveLayout(sheet);
           return true;

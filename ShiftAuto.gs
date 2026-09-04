@@ -39,14 +39,20 @@ function runAutoShift() {
       return null;
     }
 
+    // ★ 書き込む前に控えを取る。自動作成で希望休が消えても戻せるようにする。
+    //   控えが取れなくても自動作成は続ける（操作できないほうが困る）
+    const backupName = snapshotBeforeChange(ctx.sheet, '自動作成');
+
     const output = runEngine(buildEngineInput_(ctx));
     const written = writePlanToSheet_(ctx, output);
+    ctx.backupName = backupName;
     SpreadsheetApp.flush();
 
     logSuccess(MODULE_SHIFTAUTO, 'runAutoShift',
       `sheet=${ctx.sheet.getName()}; members=${ctx.activeCount}; days=${ctx.nD}; `
       + `written=${written}; unmet=${output.unmet.length}; `
-      + `engineMs=${output.elapsedMs}; elapsedMs=${Date.now() - started}`);
+      + `engineMs=${output.elapsedMs}; backup=${ctx.backupName}; `
+      + `elapsedMs=${Date.now() - started}`);
 
     showReportDialog('シフト自動作成の結果', buildReport(ctx, output, written));
     return output;

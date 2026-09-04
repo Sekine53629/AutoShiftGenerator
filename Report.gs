@@ -33,6 +33,12 @@ function buildReport(ctx, output, written) {
     lines.push(`書込セル  : ${written} 個`);
     if (offset > 0) lines.push(`前月の持越: ${offset} 日（連勤・連休の判定に使用）`);
     lines.push(`所要時間  : ${output.elapsedMs} ms`);
+    if (ctx.backupName) {
+      lines.push(`控え      : ${ctx.backupName}`);
+      lines.push('            （シフト → 控えから戻す で元に戻せます）');
+    } else {
+      lines.push('控え      : ★取れませんでした。戻せません');
+    }
     lines.push('');
 
     // --- 個人別 ---
