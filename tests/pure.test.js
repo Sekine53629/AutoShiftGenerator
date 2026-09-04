@@ -759,6 +759,43 @@ test('プロファイルのキーに説明が付く（人が読めること）',
 
 // ---- ファイル名の衝突（Apps Script はファイル名が拡張子をまたいで一意） --
 
+test('HTML の <script> が構文として通る', function () {
+  // ★ このセッションで3回踏んだ事故の再発防止。
+  //   文字列の中に実改行が紛れると（例: split('  改行  ')）JavaScript は
+  //   構文エラーになり、画面のスクリプトが1行も動かない。
+  //   ブラウザで開くまで気づけず、しかも「何も表示されない」としか分からない。
+  const files = fs.readdirSync(ROOT).filter(function (f) { return f.endsWith('.html'); });
+  assert.ok(files.length > 0, '検査対象の HTML がある');
+
+  files.forEach(function (file) {
+    const html = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const m = html.match(/<script>([\s\S]*?)<\/script>/);
+    if (!m) return;
+
+    // テンプレートのスクリプトレット（<?= x ?> / <?!= x ?>）は値に置き換える
+    const code = m[1].replace(/<\?!?=[\s\S]*?\?>/g, '"X"');
+    try {
+      new vm.Script(code, { filename: file });
+    } catch (e) {
+      assert.fail(`${file} の <script> が構文エラー: ${e.message}`);
+    }
+  });
+});
+
+test('.gs の文字列に実改行が紛れていない', function () {
+  // 同じ事故の .gs 版。こちらは node --check でも捕まるが、
+  // 「どのファイルか」をすぐ言えるようにしておく
+  fs.readdirSync(ROOT).filter(function (f) { return f.endsWith('.gs'); })
+    .forEach(function (file) {
+      const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
+      try {
+        new vm.Script(code, { filename: file });
+      } catch (e) {
+        assert.fail(`${file} が構文エラー: ${e.message}`);
+      }
+    });
+});
+
 test('.gs と .html に同じ基底名が無い', function () {
   const names = fs.readdirSync(ROOT);
   const gs = names.filter(function (f) { return f.endsWith('.gs'); })

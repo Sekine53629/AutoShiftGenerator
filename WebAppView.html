@@ -166,8 +166,7 @@
         renderPalette();
         renderGrid();
       } catch (e) {
-        const where = String((e && e.stack) || '').split('
-')[1] || '';
+        const where = String((e && e.stack) || '').split(/\r?\n/)[1] || '';
         setStatus(`画面の描画でエラー: ${e.message}${where ? ' @' + where.trim() : ''}`, true);
         return;
       }
