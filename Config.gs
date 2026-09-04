@@ -36,7 +36,7 @@ const CONFIG = Object.freeze({
    * 「直したのに反映されない」の切り分けがこれ無しでは付かない。
    * コードを変えたら必ず上げること。
    */
-  APP_VERSION: '2026-09-05a',
+  APP_VERSION: '2026-09-05b',
 
   /** 内閣府 祝日 CSV（Shift_JIS） */
   HOLIDAY_CSV_URL: 'https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv',

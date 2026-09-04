@@ -155,11 +155,28 @@
     updateDirtyUi();
     call('apiLoadGrid', [name]).then(function (payload) {
       data = payload;
-      renderPalette();
-      renderGrid();
+
+      // サーバから何が届いたかを先に出す。描画で落ちても手掛かりが残る
+      $('diag').textContent = '受信: ' + Object.keys(payload || {}).join(',');
+
+      // ★ サーバのエラーと画面の描画エラーを分ける。
+      //   まとめて catch すると「読み込みに失敗」としか出ず、
+      //   どちら側の問題か分からないまま時間を使うことになる
+      try {
+        renderPalette();
+        renderGrid();
+      } catch (e) {
+        const where = String((e && e.stack) || '').split('
+')[1] || '';
+        setStatus(`画面の描画でエラー: ${e.message}${where ? ' @' + where.trim() : ''}`, true);
+        return;
+      }
+
       $('summary').textContent = payload.summary || payload.monthLabel || '';
       setStatus('スタンプを選んでセルを押すと入ります。保存するまでシートは変わりません。');
-    }).catch(function (e) { setStatus('読み込みに失敗しました: ' + e.message, true); });
+    }).catch(function (e) {
+      setStatus('サーバでエラー: ' + (e && e.message ? e.message : e), true);
+    });
   }
 
   // ---- パレット -----------------------------------------------------
