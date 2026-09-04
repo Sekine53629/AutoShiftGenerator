@@ -34,7 +34,10 @@ function doGet(e) {
     // 必ず JSON にしてから <?!= ?> で出すこと
     template.initialSheetJson = JSON.stringify(
       (e && e.parameter && e.parameter.sheet) || '');
-    // 動いているコードの版。デプロイが古いままかを画面で見分けるため
+    // 動いているコードの版。デプロイが古いままかを画面で見分けるため。
+    // HTML へ直接埋める用（appVersion）と、JS から読む用（JSON）の両方を渡す。
+    // JS の最後で書いていると、その前で落ちたときに版すら出ない
+    template.appVersion = CONFIG.APP_VERSION;
     template.appVersionJson = JSON.stringify(CONFIG.APP_VERSION);
     return template.evaluate()
       .setTitle('シフト表')

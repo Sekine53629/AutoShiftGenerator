@@ -85,7 +85,7 @@
     <span id="summary" class="muted">—</span>
     <span class="grow"></span>
     <span class="tag" id="diag"></span>
-    <span class="tag" id="version" title="動いているコードの版。デプロイが古いと更新されません"></span>
+    <span class="tag" id="version" title="動いているコードの版。デプロイが古いと更新されません">画面版 <?= appVersion ?></span>
   </div>
   <div class="bar" id="paletteBar"></div>
   <div class="bar">
@@ -484,10 +484,6 @@
       loadSheet(data.sheetName);
     }).catch(function (e) { setStatus(e.message, true); });
   };
-
-  // 版を出す。画面（HTML）とサーバ（.gs）は同じデプロイに含まれるので、
-  // ここが古ければ両方古い
-  $('version').textContent = '画面版 ' + APP_VERSION;
 
   // 画面側の例外を握り潰さない。iframe の中なので DevTools では見つけにくい
   window.addEventListener('error', function (e) {
