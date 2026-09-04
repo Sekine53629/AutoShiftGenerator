@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<base target="_top">
+<!--
+  WebAppView.html — Web アプリの画面（サーバ側は WebApp.gs）
+
+  ※ Apps Script はファイル名が拡張子をまたいで一意でなければならない。
+    `WebApp.gs` と `WebApp.html` は同居できないので、画面側を別名にしてある。
+
+  【押せる場所の制約（仕様書 §6.3）】
+    ここでのボタンの出し分けは**見た目の親切**でしかない。
+    実際の可否はサーバの stampRejectReason_() が値そのものを見て決める。
+    画面の制限だけに頼ると、集計行や医師名欄に記号が入って表が黙って壊れる。
+-->
+<style>
+  :root {
+    --bg: #ffffff; --fg: #202124; --line: #d0d3d7; --head: #f1f3f4;
+    --sat: #dce6f1; --sun: #f2dcdb; --out: #f2f2f2; --muted: #70757a;
+    --accent: #1a73e8; --short: #c5221f; --sect: #fafafa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+
+  header { position: sticky; top: 0; z-index: 30; background: var(--bg);
+           border-bottom: 1px solid var(--line); padding: 8px 12px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .bar + .bar { margin-top: 6px; }
+  select, button, input { font: inherit; padding: 5px 8px; }
+  button { cursor: pointer; }
+  button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .grow { flex: 1 1 auto; }
+  .muted { color: var(--muted); }
+  .group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .group > .tag { color: var(--muted); font-size: 12px; }
+  #summary { font-weight: 600; }
+  select.big { font-size: 15px; font-weight: 700; padding: 5px 8px; }
+  .tag { color: var(--muted); font-size: 12px; }
+  .badge { background: var(--short); color: #fff; border-radius: 10px;
+           padding: 1px 9px; font-size: 12px; font-weight: 700; }
+  body.dirty header { box-shadow: inset 0 0 0 2px var(--short); }
+  #status { padding: 4px 12px; min-height: 1.6em; }
+  #status.err { color: var(--short); }
+
+  .scroll { overflow: auto; max-height: calc(100vh - 210px); }
+  table { border-collapse: separate; border-spacing: 0; }
+  th, td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+           padding: 2px 4px; text-align: center; white-space: nowrap; }
+  thead th { position: sticky; top: 0; z-index: 20; background: var(--head); }
+  thead tr:nth-child(2) th { top: 26px; }
+  .name { position: sticky; left: 0; z-index: 10; background: var(--bg);
+          text-align: left; min-width: 128px; max-width: 128px;
+          overflow: hidden; text-overflow: ellipsis; border-left: 1px solid var(--line); }
+  thead .name { z-index: 25; background: var(--head); }
+  td.day { min-width: 30px; }
+  td.day.can { cursor: pointer; }
+  td.day.can:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+  td.day.blocked { cursor: not-allowed; }
+  td.day.formula { cursor: not-allowed; color: var(--muted); font-style: italic; }
+  td.day.dirty { box-shadow: inset 0 0 0 2px var(--accent); }
+  .sat { background: var(--sat); }
+  .sun { background: var(--sun); }
+  .out { background: var(--out); color: #aaa; }
+  .agg { background: var(--head); min-width: 42px; }
+  tr.sect td { background: var(--sect); }
+  tr.total td { background: var(--head); font-weight: 600; }
+  td.neg { color: var(--short); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <span class="tag">編集中</span>
+    <select id="sheetSelect" class="big"></select>
+    <span id="dirtyBadge" class="badge" hidden>未保存</span>
+    <span class="grow"></span>
+    <button id="newSheet">シートを作る</button>
+    <button id="runAuto">自動作成</button>
+    <button id="reload">再読込</button>
+  </div>
+  <div class="bar">
+    <span id="summary" class="muted">—</span>
+    <span class="grow"></span>
+    <span class="tag" id="diag"></span>
+    <span class="tag" id="version" title="動いているコードの版。デプロイが古いと更新されません">画面版 <?= appVersion ?></span>
+  </div>
+  <div class="bar" id="paletteBar"></div>
+  <div class="bar">
+    <span class="grow"></span>
+    <button id="save" disabled>保存</button>
+    <button id="discard" disabled>取消</button>
+  </div>
+</header>
+
+<div id="status" class="muted">読み込み中…</div>
+<div class="scroll"><table id="grid"></table></div>
+
+<script>
+  // ---- 状態 ---------------------------------------------------------
+  // stamp: {kind, value}。null なら押しても何もしない
+  // dirty: 未保存の編集。キーは "row,col"
+  let data = null;
+  let stamp = null;
+  const dirty = new Map();
+
+  const APP_VERSION = <?!= appVersionJson ?>;
+
+  const $ = function (id) { return document.getElementById(id); };
+  const keyOf = function (row, col) { return row + ',' + col; };
+
+  function setStatus(text, isError) {
+    const el = $('status');
+    el.textContent = text;
+    el.className = isError ? 'err' : 'muted';
+  }
+
+  function call(name, args) {
+    return new Promise(function (resolve, reject) {
+      // runner を this にして呼ぶ。null を渡すと google.script.run 側が壊れる
+      const runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject);
+      runner[name].apply(runner, args || []);
+    });
+  }
+
+  // ---- 起動 ---------------------------------------------------------
+  function boot() {
+    call('apiListSheets').then(function (sheets) {
+      const sel = $('sheetSelect');
+      sel.innerHTML = '';
+      if (sheets.length === 0) {
+        setStatus('シフト表として読めるシートがありません。「シートを作る」から始めてください。');
+        return;
+      }
+      sheets.forEach(function (s) {
+        const opt = document.createElement('option');
+        opt.value = s.name;
+        opt.textContent = s.name;
+        sel.appendChild(opt);
+      });
+      const initial = <?!= initialSheetJson ?>;
+      sel.value = sheets.some(function (s) { return s.name === initial; })
+        ? initial : sheets[0].name;
+      loadSheet(sel.value);
+    }).catch(function (e) { setStatus('シートの一覧を取れませんでした: ' + e.message, true); });
+  }
+
+  function loadSheet(name) {
+    setStatus('読み込み中…');
+    dirty.clear();
+    updateDirtyUi();
+    call('apiLoadGrid', [name]).then(function (payload) {
+      data = payload;
+
+      // サーバから何が届いたかを先に出す。描画で落ちても手掛かりが残る
+      $('diag').textContent = '受信: ' + Object.keys(payload || {}).join(',');
+
+      // ★ サーバのエラーと画面の描画エラーを分ける。
+      //   まとめて catch すると「読み込みに失敗」としか出ず、
+      //   どちら側の問題か分からないまま時間を使うことになる
+      try {
+        renderPalette();
+        renderGrid();
+      } catch (e) {
+        const where = String((e && e.stack) || '').split('
+')[1] || '';
+        setStatus(`画面の描画でエラー: ${e.message}${where ? ' @' + where.trim() : ''}`, true);
+        return;
+      }
+
+      $('summary').textContent = payload.summary || payload.monthLabel || '';
+      setStatus('スタンプを選んでセルを押すと入ります。保存するまでシートは変わりません。');
+    }).catch(function (e) {
+      setStatus('サーバでエラー: ' + (e && e.message ? e.message : e), true);
+    });
+  }
+
+  // ---- パレット -----------------------------------------------------
+  function renderPalette() {
+    const bar = $('paletteBar');
+    bar.innerHTML = '';
+
+    // サーバが古い版だと項目名が違う。落ちずに「何が来たか」を出せるようにする
+    const p = data.palette || {};
+    const work = p.work || [];
+    const off = p.off || [];
+    const note = p.note || [];
+    const doctors = p.doctorNames || [];
+
+    const asKind = function (kind) {
+      return function (x) { return { kind: kind, value: x.value, label: x.label }; };
+    };
+
+    if (work.length) addPaletteGroup(bar, '出勤', work.map(asKind('symbol')));
+    if (off.length) addPaletteGroup(bar, '休み', off.map(asKind('symbol')));
+
+    // 備考スタンプ（銀行など）。備考マスタが持つ
+    if (note.length) {
+      addPaletteGroup(bar, '備考', note.map(asKind('text')));
+    } else {
+      addPaletteHint_(bar, '備考なし');
+    }
+
+    if (doctors.length) {
+      addPaletteGroup(bar, '医師名',
+        doctors.map(function (n) { return { kind: 'doctor', value: n, label: n }; }));
+    } else {
+      addPaletteHint_(bar, '医師名は「医師マスタ」に登録すると出ます');
+    }
+
+    addPaletteGroup(bar, '', [{ kind: 'erase', value: '', label: '消去' }]);
+    bar.appendChild(Object.assign(document.createElement('span'), { className: 'grow' }));
+
+    // サーバから何が返ったかを画面に出す。DevTools を開かずに切り分けるため
+    $('diag').textContent =
+      `出勤${work.length} / 休み${off.length} / 備考${note.length} / 医師${doctors.length}`
+      + (p.version ? ` / サーバ版 ${p.version}` : ' / サーバ版 不明（古いデプロイ）');
+  }
+
+  /** 候補が無い理由を出す。ボタンが消えているように見えるのを防ぐ */
+  function addPaletteHint_(bar, text) {
+    const span = document.createElement('span');
+    span.className = 'tag';
+    span.textContent = text;
+    bar.appendChild(span);
+  }
+
+  function addPaletteGroup(bar, title, items) {
+    const group = document.createElement('div');
+    group.className = 'group';
+    if (title) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = title;
+      group.appendChild(tag);
+    }
+    items.forEach(function (item) {
+      const b = document.createElement('button');
+      b.textContent = item.label;
+      if (stamp && stamp.kind === item.kind && stamp.value === item.value) b.className = 'on';
+      b.onclick = function () {
+        const same = stamp && stamp.kind === item.kind && stamp.value === item.value;
+        stamp = same ? null : { kind: item.kind, value: item.value };
+        renderPalette();
+        renderGrid();
+      };
+      group.appendChild(b);
+    });
+    bar.appendChild(group);
+  }
+
+  /** いま選んでいるスタンプをこの領域に押せるか（見た目の出し分けだけ） */
+  function canStampInto(region) {
+    if (!stamp) return false;
+    const allowed = data.regionRules[stamp.kind] || [];
+    return allowed.indexOf(region) >= 0;
+  }
+
+  function blockedReason(region) {
+    if (!stamp) return '先に上のスタンプを選んでください。';
+    if (stamp.kind === 'symbol') return 'シフト記号はシフト入力欄にだけ入れられます。';
+    if (stamp.kind === 'doctor') return '医師名は医師名欄にだけ入れられます。';
+    return 'ここには押せません。';
+  }
+
+  // ---- グリッド -----------------------------------------------------
+  function dayClass(day) {
+    if (!day.inMonth) return 'out';
+    if (day.weekday === 1 || day.isHoliday) return 'sun';
+    if (day.weekday === 7) return 'sat';
+    return '';
+  }
+
+  function renderGrid() {
+    const t = $('grid');
+    t.innerHTML = '';
+
+    const thead = document.createElement('thead');
+    thead.appendChild(headRow(data.monthLabel, function (d) { return d.label; }, false));
+    thead.appendChild(headRow('', function (d) { return d.weekLabel; }, true));
+    t.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    data.sections.filter(function (s) { return s.place === 'above'; })
+      .forEach(function (s) { tbody.appendChild(sectionRow(s)); });
+
+    data.rows.forEach(function (row) { tbody.appendChild(staffRow(row)); });
+
+    data.sections.filter(function (s) { return s.place === 'below'; })
+      .forEach(function (s) { tbody.appendChild(sectionRow(s)); });
+
+    tbody.appendChild(totalRow(data.aggRowLabels.doc, function (d) { return d.docCount; }));
+    tbody.appendChild(totalRow(data.aggRowLabels.pharm, function (d) { return d.pharmCount; }));
+    tbody.appendChild(totalRow(data.aggRowLabels.shortage,
+      function (d) { return d.shortage; }, true));
+    t.appendChild(tbody);
+  }
+
+  function headRow(label, pick, withAggHeads) {
+    const tr = document.createElement('tr');
+    tr.appendChild(th(label, 'name'));
+    data.days.forEach(function (d) {
+      const cell = th(pick(d), dayClass(d));
+      if (d.holidayName) cell.title = d.holidayName;
+      tr.appendChild(cell);
+    });
+    data.aggHeads.forEach(function (h) { tr.appendChild(th(withAggHeads ? h : '', 'agg')); });
+    return tr;
+  }
+
+  /**
+   * 押せる／押せないの見た目と挙動を1か所にまとめる。
+   * スタッフ行も医師名欄も備考行も、セルの作り方はここだけ。
+   */
+  function dayCell(cell, day, sheetRow, region) {
+    const el = td(cell.v, 'day ' + dayClass(day));
+
+    const key = keyOf(sheetRow, day.col);
+    if (dirty.has(key)) {
+      el.textContent = dirty.get(key);
+      el.classList.add('dirty');
+    }
+
+    if (cell.f) {
+      el.classList.add('formula');
+      el.title = '数式のセルなので書き換えません';
+      return el;
+    }
+    if (canStampInto(region)) {
+      el.classList.add('can');
+      el.onclick = function () { stampCell(el, sheetRow, day.col); };
+    } else {
+      el.classList.add('blocked');
+      el.onclick = function () { setStatus(blockedReason(region), true); };
+    }
+    return el;
+  }
+
+  function staffRow(row) {
+    const tr = document.createElement('tr');
+    tr.appendChild(td(row.name, 'name', row.kind || '区分が未登録です'));
+    row.cells.forEach(function (cell, i) {
+      tr.appendChild(dayCell(cell, data.days[i], row.row, row.region));
+    });
+    row.agg.forEach(function (v) { tr.appendChild(td(v, 'agg')); });
+    return tr;
+  }
+
+  function sectionRow(section) {
+    const tr = document.createElement('tr');
+    tr.className = 'sect';
+    tr.appendChild(td(section.label, 'name'));
+    section.cells.forEach(function (cell, i) {
+      tr.appendChild(dayCell(cell, data.days[i], section.row, section.region));
+    });
+    data.aggHeads.forEach(function () { tr.appendChild(td('', 'agg')); });
+    return tr;
+  }
+
+  function totalRow(label, pick, markNegative) {
+    const tr = document.createElement('tr');
+    tr.className = 'total';
+    tr.appendChild(td(label, 'name'));
+    data.days.forEach(function (d) {
+      const v = pick(d);
+      const el = td(v === '' || v === null ? '' : v, dayClass(d));
+      if (markNegative && Number(v) < 0) el.classList.add('neg');
+      tr.appendChild(el);
+    });
+    data.aggHeads.forEach(function () { tr.appendChild(td('', 'agg')); });
+    return tr;
+  }
+
+  function th(text, cls) {
+    const el = document.createElement('th');
+    el.textContent = text == null ? '' : text;
+    if (cls) el.className = cls;
+    return el;
+  }
+
+  function td(text, cls, title) {
+    const el = document.createElement('td');
+    el.textContent = text == null ? '' : text;
+    if (cls) el.className = cls;
+    if (title) el.title = title;
+    return el;
+  }
+
+  // ---- 編集 ---------------------------------------------------------
+  function stampCell(el, row, col) {
+    dirty.set(keyOf(row, col), stamp.value);
+    el.textContent = stamp.value;
+    el.classList.add('dirty');
+    updateDirtyUi();
+  }
+
+  function updateDirtyUi() {
+    const n = dirty.size;
+    $('save').disabled = n === 0;
+    $('discard').disabled = n === 0;
+    $('save').textContent = n === 0 ? '保存' : `保存 (${n})`;
+
+    // どのシートを触っているのか、保存し忘れていないかを目立たせる
+    $('dirtyBadge').hidden = n === 0;
+    $('dirtyBadge').textContent = `未保存 ${n}`;
+    document.body.className = n === 0 ? '' : 'dirty';
+  }
+
+  // 保存せずに閉じようとしたら止める
+  window.addEventListener('beforeunload', function (e) {
+    if (dirty.size === 0) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+
+  $('save').onclick = function () {
+    const edits = [];
+    dirty.forEach(function (value, key) {
+      const parts = key.split(',');
+      edits.push({ row: Number(parts[0]), col: Number(parts[1]), value: value });
+    });
+    $('save').disabled = true;
+    setStatus(`${edits.length} セルを保存しています…`);
+    call('apiSaveCells', [data.sheetName, edits]).then(function (res) {
+      let msg = `${res.written} セルを保存しました。`;
+      if (res.rejected.length) {
+        // 拒否は黙って捨てない。理由をそのまま見せる
+        msg += ` ${res.rejected.length} セルは書き込めませんでした: `
+          + res.rejected[0].reason;
+      }
+      setStatus(msg, res.rejected.length > 0);
+      loadSheet(data.sheetName);
+    }).catch(function (e) {
+      setStatus('保存に失敗しました: ' + e.message, true);
+      updateDirtyUi();
+    });
+  };
+
+  $('discard').onclick = function () {
+    dirty.clear();
+    renderGrid();
+    updateDirtyUi();
+    setStatus('未保存の編集を取り消しました。');
+  };
+
+  // ---- ツールバー ---------------------------------------------------
+  function confirmDiscard(action) {
+    return dirty.size === 0
+      || confirm(`未保存の編集が ${dirty.size} 件あります。破棄して${action}しますか？`);
+  }
+
+  $('sheetSelect').onchange = function () {
+    if (!confirmDiscard('切り替え')) {
+      $('sheetSelect').value = data.sheetName;
+      return;
+    }
+    loadSheet($('sheetSelect').value);
+  };
+
+  $('reload').onclick = function () {
+    if (!confirmDiscard('読み直')) return;
+    loadSheet(data.sheetName);
+  };
+
+  $('newSheet').onclick = function () {
+    const text = prompt('作る月を「yyyy/m」で入力してください（例 2026/10）');
+    if (!text) return;
+    const m = text.match(/(\d{4})\s*[\/\-年.]\s*(\d{1,2})/);
+    if (!m) { setStatus('「2026/10」のような形式で入力してください。', true); return; }
+    setStatus('シートを作っています…');
+    call('apiCreateSheet', [Number(m[1]), Number(m[2])]).then(function (res) {
+      setStatus(`シート「${res.sheetName}」を作りました。`);
+      boot();
+    }).catch(function (e) { setStatus('作れませんでした: ' + e.message, true); });
+  };
+
+  $('runAuto').onclick = function () {
+    setStatus('自動作成を実行しています…');
+    call('apiRunAutoShift', [data.sheetName]).then(function () {
+      loadSheet(data.sheetName);
+    }).catch(function (e) { setStatus(e.message, true); });
+  };
+
+  // 画面側の例外を握り潰さない。iframe の中なので DevTools では見つけにくい
+  window.addEventListener('error', function (e) {
+    setStatus('画面でエラーが起きました: ' + (e.message || e.type), true);
+  });
+
+  boot();
+</script>
+</body>
+</html>

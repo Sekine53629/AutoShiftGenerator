@@ -20,6 +20,23 @@ const CONFIG = Object.freeze({
   SHEET_LOG: 'シフト変更ログ',
   SHEET_RUNLOG: '実行ログ',
   SHEET_SURVEY: 'シート構造調査',
+  SHEET_PROFILE: '書式プロファイル',
+  SHEET_DOCTOR: '医師マスタ',
+  SHEET_PATTERN: 'シフトパターン',
+  SHEET_NOTE: '備考マスタ',
+
+  /** appsscript.json の timeZone と必ず同じ値にすること */
+  TIMEZONE_HINT: 'Asia/Tokyo',
+
+  /**
+   * 版。**画面に出して、動いているコードを見分けるために使う。**
+   *
+   * Web アプリはデプロイ時点のバージョンを動かし続けるので、
+   * clasp push だけでは URL の中身が変わらない。
+   * 「直したのに反映されない」の切り分けがこれ無しでは付かない。
+   * コードを変えたら必ず上げること。
+   */
+  APP_VERSION: '2026-09-05b',
 
   /** 内閣府 祝日 CSV（Shift_JIS） */
   HOLIDAY_CSV_URL: 'https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv',
@@ -32,6 +49,12 @@ const CONFIG = Object.freeze({
   PROP_EXPORT_FOLDER_ID: 'EXPORT_FOLDER_ID',
   /** 期替わり判定で覚えている対象月（ドキュメントプロパティ） */
   PROP_LAST_MONTH: 'LAST_TARGET_MONTH',
+  /**
+   * 書式プロファイル（スクリプトプロパティ）。JSON 1件で持つ。
+   * ここが「正」で、書式プロファイルシートは控えと手直し用。
+   * シートを直したら「書式プロファイルを反映」で明示的に書き戻す。
+   */
+  PROP_FORMAT_PROFILE: 'FORMAT_PROFILE',
 
   /** 実行ログシートの保持行数。超えた分は古い行から削る */
   RUNLOG_MAX_ROWS: 2000,
@@ -84,6 +107,59 @@ const SYM = Object.freeze({
   /** 休み記号の全体。ノルマ対象/外の振り分けは設定 L11 の部分一致で決まる */
   OFF_ALL: ['公休', '希休', '夏休', '有休', '有休※'],
 });
+
+/**
+ * 出勤記号の判定を「先頭一致」にするか。★ VBA 版と結果が変わる箇所
+ *
+ * 実物のシフト表では、派遣行に「▲佐藤典昭」のように記号と氏名が同じセルに入る。
+ * VBA 版は完全一致でしか出勤を数えないので、これらは
+ *   - 既存分類で ST_FOFF（休み）になり
+ *   - 薬剤師出勤数の COUNTIF にも入らない
+ * ため、派遣が出ている日を「人が足りない日」と誤判定していた。
+ *
+ * true にすると先頭一致で出勤として数える（配置は別の話で、
+ * 派遣行は勤務ルールを「手動」にして自動配置の対象から外す）。
+ *
+ * false に戻せば VBA 版と同じ完全一致に戻る。移植の突き合わせ検証
+ * （仕様書 §9 フェーズ3）では **false にして比べること**。
+ */
+const WORK_SYM_PREFIX_MATCH = true;
+
+/**
+ * 書き込める行の種別（Web アプリの検証で使う）。
+ * どこに何を書いてよいかは仕様書 §6.3 の規則をそのまま引き継ぐ。
+ */
+const EDIT_REGION = Object.freeze({
+  NONE: 'none',      // 書き込めない行（日付行・集計行・空行）
+  GRID: 'grid',      // シフト入力欄（スタッフの行）
+  DOCTOR: 'doctor',  // 医師名欄
+  NOTE: 'note',      // 備考行
+  FREE: 'free',      // 自由行（発注担当など。マクロは読まない）
+});
+
+/** スタンプの種別 */
+const STAMP_KIND = Object.freeze({
+  SYMBOL: 'symbol',  // シフト記号（○ ● ▲ 公休 …）
+  DOCTOR: 'doctor',  // 医師名
+  TEXT: 'text',      // 備考・自由記入
+  ERASE: 'erase',    // 消去
+});
+
+/**
+ * どの種別をどの行に押せるか（§6.3）。
+ * 画面のボタンを無効化するための表で、**これは見た目のための目安**。
+ * 実際の可否はサーバの stampRejectReason_() が値そのものを見て決める。
+ * 消去はどこでも許す（書き間違いを直せなくなるため）。
+ */
+const STAMP_REGION_RULES = Object.freeze({
+  symbol: [EDIT_REGION.GRID],
+  doctor: [EDIT_REGION.DOCTOR],
+  text: [EDIT_REGION.NOTE, EDIT_REGION.FREE],
+  erase: [EDIT_REGION.GRID, EDIT_REGION.DOCTOR, EDIT_REGION.NOTE, EDIT_REGION.FREE],
+});
+
+/** 出勤とみなす記号の全体（○ の別字体 ◯ を含む） */
+const WORK_SYMS = Object.freeze(['○', '◯', '▲', '●']);
 
 /** 区分の正規値。これ以外は設定チェックで警告する */
 const KIND = Object.freeze({ PHARM: '薬剤師', CLERK: '事務員' });
@@ -139,12 +215,118 @@ const SETTING_DEFAULT = Object.freeze({
   maxRun: { label: '連勤の上限(日)', value: 3 },
   maxOffRun: { label: '連休の上限(日)', value: 3 },
   weekBase: { label: '週の基本休日数', value: 2 },
-  reqPlus: { label: '必要出勤数(医師数+n)の n', value: 1 },
+  /** matchKey は数式の MATCH に埋める前方一致キー（VBA 版は "必要出勤*"） */
+  reqPlus: { label: '必要出勤数(医師数+n)の n', value: 1, matchKey: '必要出勤' },
   paidSyms: { label: 'ノルマ外の休み記号(カンマ区切り)', value: '有休,夏休' },
   gSym: { label: '事務員の2人目以降の記号', value: '●' },
   clerkEarlyN: { label: '事務員の早番(○) 人数/日', value: 1 },
   lateBusy: { label: '混雑日_医師5名_の遅番(▲) 最低人数/日', value: 0 },
   runBonus: { label: '不足を埋めるときの連勤上限の上乗せ(日)', value: 0 },
+});
+
+/**
+ * 生成するシートの見出しと入力規則（Schema.gs が使う）。
+ * 見出しの文言を変えると既存ブックとの照合が崩れるので、
+ * 変えるときは実物のシートと突き合わせること。
+ */
+const SCHEMA = Object.freeze({
+  /** 自動作成設定 メンバー表の見出し（A〜I。CFG_MEMBER の列順と必ず揃える） */
+  CFG_MEMBER_HEADS: ['氏名', '区分', '休業', '勤務ルール', '固定曜日',
+                     '週勤務日数', '月間休日数', '遅番・遅半 可否', '備考'],
+  /** 全体設定の見出し（K/L） */
+  CFG_SETTING_HEADS: ['設定項目', '値'],
+  /** 医師名リストの見出し（N。§6.4 の置き場） */
+  CFG_DOCTOR_HEAD: '医師名',
+  /** 祝日マスタの見出し */
+  HOLIDAY_HEADS: ['日付', '名称'],
+
+  /** 入力規則の選択肢 */
+  CHOICE_CLOSED: ['○'],          // 休業（空欄 = 休業でない）
+  CHOICE_LATE: ['可', '不可'],    // 遅番・遅半 可否
+});
+
+/**
+ * マスタの構成（リレーショナルに分ける）。
+ *
+ * 【なぜ分けるか】
+ *   医師名は 自動作成設定 の N 列に1列だけ間借りしていて、略称も表示順も
+ *   持てなかった。シフト記号は Config に埋め込みで、時間帯（10:00〜19:00）も
+ *   備考スタンプ（銀行）も置き場が無かった。表に出す凡例も作れない。
+ *
+ * 【従業員マスタはどこか】
+ *   `自動作成設定` の A〜I 列がそれ。**別シートに切り出していない。**
+ *   シート名と列位置は Layout・エンジン・数式が参照していて、
+ *   移し替えると影響範囲が広い。移植が固まってからにする。
+ *
+ * 【ノルマ対象/外はここに持たない】
+ *   休み記号がノルマを食うかは 自動作成設定 L列「ノルマ外の休み記号」が正。
+ *   ここにも持つと二重管理になり、どちらが効いているのか分からなくなる。
+ */
+const DOCTOR_MASTER = Object.freeze({
+  HDR_ROW: 1,
+  FIRST_ROW: 2,
+  COL_NAME: 1,     // A 医師名（シフト表の医師名欄に押す文字）
+  COL_SHORT: 2,    // B 略称（狭い欄に入れたいとき）
+  COL_ORDER: 3,    // C 表示順（小さいほど先。空欄は最後）
+  COL_MEMO: 4,     // D 備考
+  HEADS: ['医師名', '略称', '表示順', '備考'],
+});
+
+/**
+ * 備考マスタ（備考行に押す文字）。
+ *
+ * シフトパターンとは別のシートにする。銀行はシフトのパターンではないし、
+ * 混ぜると `開始` `終了` の列が意味を持たない行ができて、
+ * シフトパターンというシートの意味自体が曖昧になる。
+ */
+const NOTE_MASTER = Object.freeze({
+  HDR_ROW: 1,
+  FIRST_ROW: 2,
+  COL_TEXT: 1,     // A 備考（備考行に入る文字そのもの）
+  COL_DESC: 2,     // B 説明
+  COL_ORDER: 3,    // C 表示順
+  HEADS: ['備考', '説明', '表示順'],
+  SEED: [
+    ['銀行', '銀行対応の日', 1],
+  ],
+});
+
+/** シフトパターン（記号・名称・時間帯・種別） */
+const PATTERN_MASTER = Object.freeze({
+  HDR_ROW: 1,
+  FIRST_ROW: 2,
+  COL_SYM: 1,      // A 記号（セルに入る文字そのもの）
+  COL_NAME: 2,     // B 名称
+  COL_FROM: 3,     // C 開始
+  COL_TO: 4,       // D 終了
+  COL_KIND: 5,     // E 種別
+  COL_ORDER: 6,    // F 表示順
+  HEADS: ['記号', '名称', '開始', '終了', '種別', '表示順'],
+
+  /**
+   * 種別。出勤か休みか。
+   * KIND_NOTE は**旧い版との互換のためだけ**に残してある。
+   * 備考は 備考マスタ が正で、こちらに書いても新しくは読まない
+   * （備考マスタが空のときだけ拾う）。
+   */
+  KIND_WORK: '出勤',
+  KIND_OFF: '休み',
+  KIND_NOTE: '備考',
+
+  /**
+   * 初期値。実物の凡例に合わせてある。
+   * 生成は空欄のセルにしか書かないので、あとから自由に足せる。
+   */
+  SEED: [
+    ['○', '早番', '10:00', '19:00', '出勤', 1],
+    ['●', '遅半', '10:30', '19:30', '出勤', 2],
+    ['▲', '遅番', '11:00', '20:00', '出勤', 3],
+    ['公休', '公休', '', '', '休み', 11],
+    ['希休', '希望休', '', '', '休み', 12],
+    ['夏休', '夏季休暇', '', '', '休み', 13],
+    ['有休', '有給休暇', '', '', '休み', 14],
+    ['有休※', '有給休暇（※）', '', '', '休み', 15],
+  ],
 });
 
 /** 祝日マスタ（§3.4） */
@@ -194,5 +376,209 @@ const NON_NAME_LABELS = Object.freeze([
   'シフトパレット', '備考', '医師名',
 ]);
 
+/**
+ * シートの控え（Backup.gs）。VBA 版に無い機能。
+ *
+ * 控えのシート名は `控_<元のシート名>_<yyyyMMdd-HHmmss>` の形にする。
+ * 名前の形で「自分が作った控え」を見分けるので、
+ * **prefix と区切りを変えると過去の控えが認識できなくなる**。
+ */
+const BACKUP = Object.freeze({
+  PREFIX: '控_',
+  SEP: '_',
+  /** 元のシートごとに残す件数。超えた分は古いものから消す */
+  KEEP: 10,
+  /** 控えの中に書き残す「何の直前か」の見出し */
+  NOTE_HEAD: '控えを取った理由: ',
+});
+
 /** シート構造調査の氏名マスク（§7.4。個人情報保護のため必ず true を保つ） */
 const MASK_NAMES = true;
+
+/**
+ * 書式プロファイル（FormatProfile.gs）。
+ *
+ * 運用中のシフト表から書式を吸い出し、生成時に同じ見た目を再現するための仕組み。
+ * VBA 版には無い。
+ *
+ * 【位置ではなく「行の役割」で持つ】
+ *   セル位置ごとに丸写しすると、スタッフが1人増えただけで全部ずれる。
+ *   また、丸写しは医師名や面談日程まで持ち出すことになる。
+ *   だから「日付行の背景色」「入力欄の文字サイズ」という単位で取る。
+ *
+ * 【値（セルの中身）は取らない】
+ *   取るのは書式と、位置が決まっているラベル（集計行の見出しなど）だけ。
+ *   氏名・医師名・面談日程は対象外。プロファイルはスプレッドシート上に置き、
+ *   リポジトリには入れない。
+ */
+const FORMAT_PROFILE = Object.freeze({
+  HDR_ROW: 1,
+  FIRST_ROW: 2,
+  COL_KEY: 1,
+  COL_VALUE: 2,
+  COL_NOTE: 3,
+  HEADS: ['項目', '値', '説明'],
+
+  /** 行の役割。プロファイルのキー `role.<役割>.<属性>` の前半になる */
+  ROLES: Object.freeze([
+    { key: 'header', label: '年月・タイトル行' },
+    { key: 'date', label: '日付行' },
+    { key: 'week', label: '曜日行' },
+    { key: 'doctor', label: '医師名欄' },
+    { key: 'free', label: '自由行（発注担当など）' },
+    { key: 'repeatDate', label: '日付の再掲行' },
+    { key: 'grid', label: 'シフト入力欄' },
+    { key: 'note', label: '備考行' },
+    { key: 'total', label: '集計行（医師数・出勤数・過不足）' },
+  ]),
+
+  /** 役割ごとに取る書式 */
+  ATTRS: Object.freeze([
+    { key: 'height', label: '行の高さ(px)' },
+    { key: 'bg', label: '背景色' },
+    { key: 'fontColor', label: '文字色' },
+    { key: 'fontSize', label: '文字サイズ' },
+    { key: 'bold', label: '太字' },
+    { key: 'hAlign', label: '横位置' },
+  ]),
+});
+
+/**
+ * 書式プロファイルの既定値。
+ * プロファイルシートが無い／項目が欠けているときは必ずここへ落ちる。
+ * 実物から吸い出す前でもシートが作れること、が要件。
+ */
+const FORMAT_DEFAULT = Object.freeze({
+  'col.name.width': 118,
+  'col.day.width': 34,
+  'col.agg.width': 48,
+
+  'day.satBg': '#dce6f1',
+  'day.sunBg': '#f2dcdb',
+  'day.outMonthBg': '#f2f2f2',
+  'day.outMonthFg': '#999999',
+  'sheet.borderColor': '#808080',
+  'sheet.leaveBg': '#bfbfbf',
+
+  'role.header.height': 24,
+  'role.header.bg': '#ffffff',
+  'role.header.fontColor': '#000000',
+  'role.header.fontSize': 14,
+  'role.header.bold': true,
+  'role.header.hAlign': 'left',
+
+  'role.date.height': 20,
+  'role.date.bg': '#d9d9d9',
+  'role.date.fontColor': '#000000',
+  'role.date.fontSize': 10,
+  'role.date.bold': true,
+  'role.date.hAlign': 'center',
+
+  'role.week.height': 20,
+  'role.week.bg': '#d9d9d9',
+  'role.week.fontColor': '#000000',
+  'role.week.fontSize': 10,
+  'role.week.bold': true,
+  'role.week.hAlign': 'center',
+
+  'role.doctor.height': 20,
+  'role.doctor.bg': '#ffffff',
+  'role.doctor.fontColor': '#000000',
+  'role.doctor.fontSize': 10,
+  'role.doctor.bold': false,
+  'role.doctor.hAlign': 'center',
+
+  'role.free.height': 20,
+  'role.free.bg': '#ffffff',
+  'role.free.fontColor': '#000000',
+  'role.free.fontSize': 9,
+  'role.free.bold': false,
+  'role.free.hAlign': 'center',
+
+  'role.repeatDate.height': 20,
+  'role.repeatDate.bg': '#d9d9d9',
+  'role.repeatDate.fontColor': '#000000',
+  'role.repeatDate.fontSize': 10,
+  'role.repeatDate.bold': true,
+  'role.repeatDate.hAlign': 'center',
+
+  'role.grid.height': 20,
+  'role.grid.bg': '#ffffff',
+  'role.grid.fontColor': '#000000',
+  'role.grid.fontSize': 10,
+  'role.grid.bold': false,
+  'role.grid.hAlign': 'center',
+
+  'role.note.height': 20,
+  'role.note.bg': '#ffffff',
+  'role.note.fontColor': '#000000',
+  'role.note.fontSize': 9,
+  'role.note.bold': false,
+  'role.note.hAlign': 'center',
+
+  'role.total.height': 20,
+  'role.total.bg': '#d9d9d9',
+  'role.total.fontColor': '#000000',
+  'role.total.fontSize': 10,
+  'role.total.bold': true,
+  'role.total.hAlign': 'center',
+
+  'format.date': 'd',
+  'format.month': 'yyyy"年"m"月"',
+
+  /**
+   * 和暦の見出し（§5.2）。
+   *
+   * Sheets に和暦の「表示形式」は無いので、年月セルを和暦で表示することはできない。
+   * ただし文字列を数式で組むことはできるので、別セルに出す。
+   * 毎月手で入力させないための逃げ道。
+   *
+   * {month} は年月セル（A列）の参照に置き換わる。
+   * 既定は実物に合わせた R08.08 形式。空文字にすると何も書かないので、
+   * 手で入力したい場合はそうする。
+   *
+   * ★ -2018 は令和固有。元号が変わったらここを直す（自動追従はできない）。
+   */
+  'title.col': 4,
+  'title.formula': '="R"&TEXT(YEAR({month})-2018,"00")&"."&TEXT(MONTH({month}),"00")',
+
+  'label.doc': '医師数(診)',
+  'label.pharm': '薬剤師出勤数',
+  'label.shortage': '過不足',
+  'label.note': '備考',
+  'label.doctors': '医師名',
+  'label.agg': '公休,有休,○早番,▲遅番,●遅半,5診出勤',
+});
+
+/**
+ * シフト表シートの生成（SheetBuilder.gs）。
+ * VBA 版には無い機能。VBA 版は既存の Excel ブックが前提で、シフトシート自体を
+ * 作る手段が無かった（ShiftSetup は既存シートに数式を当てるだけ）。
+ */
+const SHEET_BUILD = Object.freeze({
+  /** 自動作成設定にメンバーが1人もいないときに用意する空のスタッフ行数 */
+  DEFAULT_STAFF_ROWS: 16,
+  /** メンバー数に上乗せする予備行（派遣の自由記入行など） */
+  SPARE_STAFF_ROWS: 4,
+  /** 月ごとにシートを分けるときのシート名 */
+  MONTH_SHEET_FORMAT: 'yyyy年M月',
+
+  /** 集計列（AH〜AM）の見出し。§5.4 の並びと一致させること */
+  AGG_HEADS: ['公休', '有休', '○早番', '▲遅番', '●遅半', '5診出勤'],
+  /** 集計行（A列）の見出し */
+  ROW_HEAD_DOC: '医師数(診)',
+  ROW_HEAD_PHARM: '薬剤師出勤数',
+  ROW_HEAD_SHORTAGE: '過不足',
+
+  COL_WIDTH_NAME: 118,
+  COL_WIDTH_DAY: 34,
+  COL_WIDTH_AGG: 48,
+
+  COLOR_HEADER_BG: '#d9d9d9',
+  COLOR_SAT_BG: '#dce6f1',
+  COLOR_SUN_BG: '#f2dcdb',
+  COLOR_OUT_MONTH_BG: '#f2f2f2',
+  COLOR_BORDER: '#808080',
+  /** 休業者の行に塗る色（マクロが塗った色。これと同じときだけ塗りを外す） */
+  COLOR_LEAVE_BG: '#bfbfbf',
+});

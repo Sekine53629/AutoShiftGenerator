@@ -55,6 +55,12 @@ Never per-cell in a loop (Tier 2 prohibits it, and here it also breaks the time 
 Resolve positions once and pass the object around. The VBA version re-resolved on
 every call; that pattern does not survive the port.
 
+### Where a stamp may land is decided on the server
+
+`WebApp.stampRejectReason_()` is the authority. The browser only greys out buttons —
+never trust it. A shift symbol that lands in the doctor block inflates `医師数(診)`
+(a `COUNTA` over that block) and throws off the required headcount for the whole month.
+
 ### Existing input is never overwritten
 
 `ST_FWORK` / `ST_FOFF` (cells the user already filled) are read-only to every
@@ -75,16 +81,24 @@ personal data in it.
 
 ## GAS-specific gotchas that have already bitten this port
 
+- **File names must be unique across extensions.** Apps Script stores a name and a
+  type, so `WebApp.gs` and `WebApp.html` collide — the editor refuses the second one.
+  Pair a server file with a differently-named view: `WebApp.gs` + `WebAppView.html`.
+  `tests/pure.test.js` guards this.
 - **All `.gs` files share one global scope.** Top-level `const` and `function` names
   must be unique across the whole project. Per-file module names are therefore
-  `MODULE_ENGINE`, `MODULE_LAYOUT`, … not a repeated `MODULE_NAME`.
+  `MODULE_ENGINE`, `MODULE_LAYOUT`, … not a repeated `MODULE_NAME`. A duplicate is a
+  load-time error, so it takes the whole project down, not just one file.
+  `tests/pure.test.js` guards this too.
 - **`MATCH` does not accept an array in Sheets.** It silently reads only the first
   element and returns a wrong headcount with no error. The pharmacist-count formula
   uses a hidden helper column (`AN`) instead — see §5.3 and `Setup.gs`.
 - **Named ranges cannot hold a formula in Sheets**, only an address. `Layout.gs` is
   the authority; named ranges are signposts for the user.
-- **No cell events.** No `SelectionChange`, `BeforeDoubleClick`, `BeforeRightClick`.
-  Click input is a sidebar that acts on the selection at the moment a button is pressed.
+- **No cell events, and no selection in a web app.** No `SelectionChange`,
+  `BeforeDoubleClick`, `BeforeRightClick`; `getActiveRange()` does not exist in a web
+  app either. Input is the web app's own grid (`WebApp.gs` / `WebAppView.html`), which
+  tracks the clicked cell itself. The old sidebar skeleton is in `archive/`.
 - **No Japanese-era (和暦) number format.** Western year only.
 
 ---
@@ -99,6 +113,10 @@ personal data in it.
   implementation phase from spec §9. Grep `TODO(P3)` to find what is left in a phase.
 - Every implemented function gets `try/catch` + `console.error` (Tier 2). Stubs do
   not — add it when you write the body.
+- Anything pure goes in `tests/pure.test.js` (`node tests/pure.test.js`). It runs the
+  `.gs` files in a `vm` with stubbed GAS globals — no spreadsheet needed. Note the
+  cross-realm traps: `instanceof Date` and `deepStrictEqual` fail on values built
+  outside the vm, so construct them with `vm.runInContext` or copy with `Array.from`.
 - Call `logSuccess()` on normal completion. The VBA-era practice of judging test
   results from the log continues here. Include `elapsedMs` for the auto-generation run.
 
