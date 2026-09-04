@@ -169,9 +169,11 @@
     addPaletteGroup(bar, '出勤', data.palette.work.map(asKind('symbol')));
     addPaletteGroup(bar, '休み', data.palette.off.map(asKind('symbol')));
 
-    // 備考スタンプ（銀行など）。シフトパターンのマスタに種別「備考」で入っている
+    // 備考スタンプ（銀行など）。備考マスタが持つ
     if (data.palette.note.length) {
       addPaletteGroup(bar, '備考', data.palette.note.map(asKind('text')));
+    } else {
+      addPaletteHint_(bar, '備考は「備考マスタ」に登録すると出ます');
     }
 
     if (data.palette.doctorNames.length) {

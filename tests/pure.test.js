@@ -64,6 +64,7 @@ Object.assign(sandbox, vm.runInContext(
   + ' NON_NAME_LABELS, MASK_NAMES, SHEET_BUILD, SETUP_KNOWN_HEADS,'
   + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH, EDIT_REGION, STAMP_KIND, STAMP_REGION_RULES,'
   + ' SCHEMA, FORMAT_PROFILE, FORMAT_DEFAULT, DOCTOR_MASTER, PATTERN_MASTER,'
+  + ' NOTE_MASTER,'
   + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF })', sandbox));
 
 // ---- テストランナー ----------------------------------------------------
@@ -1477,8 +1478,8 @@ test('シフトパターンの初期値が種別ごとに揃っている', funct
 
   assert.strictEqual(kinds[sandbox.PATTERN_MASTER.KIND_WORK], 3, '出勤は ○ ● ▲ の3つ');
   assert.strictEqual(kinds[sandbox.PATTERN_MASTER.KIND_OFF], 5, '休みは5つ');
-  assert.ok(kinds[sandbox.PATTERN_MASTER.KIND_NOTE] >= 1,
-    '★備考スタンプ（銀行）が初期値に入っている');
+  assert.strictEqual(kinds[sandbox.PATTERN_MASTER.KIND_NOTE], undefined,
+    '★備考はシフトパターンに混ぜない（備考マスタが持つ）');
 
   // 初期値の記号が Config の定義と食い違っていないか
   const workSyms = seed
@@ -1491,6 +1492,15 @@ test('シフトパターンの初期値が種別ごとに揃っている', funct
     .map(function (r) { return r[0]; });
   assert.deepStrictEqual(offSyms, Array.from(sandbox.SYM.OFF_ALL),
     '休み記号は Config の SYM.OFF_ALL と一致する');
+});
+
+test('備考マスタが備考スタンプを持つ', function () {
+  const seed = Array.from(sandbox.NOTE_MASTER.SEED);
+  assert.ok(seed.length >= 1, '初期値がある');
+  assert.strictEqual(seed[0][sandbox.NOTE_MASTER.COL_TEXT - 1], '銀行');
+
+  // 備考はシフト記号ではない。ここが混ざると入力欄の集計に紛れ込む
+  assert.strictEqual(sandbox.isShiftSymbol('銀行'), false);
 });
 
 test('マスタで足した記号もシフト記号として扱う', function () {

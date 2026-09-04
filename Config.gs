@@ -23,6 +23,7 @@ const CONFIG = Object.freeze({
   SHEET_PROFILE: '書式プロファイル',
   SHEET_DOCTOR: '医師マスタ',
   SHEET_PATTERN: 'シフトパターン',
+  SHEET_NOTE: '備考マスタ',
 
   /** appsscript.json の timeZone と必ず同じ値にすること */
   TIMEZONE_HINT: 'Asia/Tokyo',
@@ -261,6 +262,25 @@ const DOCTOR_MASTER = Object.freeze({
   HEADS: ['医師名', '略称', '表示順', '備考'],
 });
 
+/**
+ * 備考マスタ（備考行に押す文字）。
+ *
+ * シフトパターンとは別のシートにする。銀行はシフトのパターンではないし、
+ * 混ぜると `開始` `終了` の列が意味を持たない行ができて、
+ * シフトパターンというシートの意味自体が曖昧になる。
+ */
+const NOTE_MASTER = Object.freeze({
+  HDR_ROW: 1,
+  FIRST_ROW: 2,
+  COL_TEXT: 1,     // A 備考（備考行に入る文字そのもの）
+  COL_DESC: 2,     // B 説明
+  COL_ORDER: 3,    // C 表示順
+  HEADS: ['備考', '説明', '表示順'],
+  SEED: [
+    ['銀行', '銀行対応の日', 1],
+  ],
+});
+
 /** シフトパターン（記号・名称・時間帯・種別） */
 const PATTERN_MASTER = Object.freeze({
   HDR_ROW: 1,
@@ -273,7 +293,12 @@ const PATTERN_MASTER = Object.freeze({
   COL_ORDER: 6,    // F 表示順
   HEADS: ['記号', '名称', '開始', '終了', '種別', '表示順'],
 
-  /** 種別。どこに押せるかを決める */
+  /**
+   * 種別。出勤か休みか。
+   * KIND_NOTE は**旧い版との互換のためだけ**に残してある。
+   * 備考は 備考マスタ が正で、こちらに書いても新しくは読まない
+   * （備考マスタが空のときだけ拾う）。
+   */
   KIND_WORK: '出勤',
   KIND_OFF: '休み',
   KIND_NOTE: '備考',
@@ -291,7 +316,6 @@ const PATTERN_MASTER = Object.freeze({
     ['夏休', '夏季休暇', '', '', '休み', 13],
     ['有休', '有給休暇', '', '', '休み', 14],
     ['有休※', '有給休暇（※）', '', '', '休み', 15],
-    ['銀行', '銀行対応', '', '', '備考', 21],
   ],
 });
 

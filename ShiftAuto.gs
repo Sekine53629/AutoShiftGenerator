@@ -563,8 +563,48 @@ function readShiftPatterns() {
 }
 
 /**
+ * 備考行に押す文字（銀行など）。**備考マスタが正**。
+ *
+ * 備考マスタが無い・空のときだけ、旧い置き場（シフトパターンの種別「備考」）を
+ * 見る。以前このツールは備考をシフトパターンに混ぜていたため、
+ * 先に作ったブックとの互換のために残してある。
+ *
+ * @return {Array<{text:string, desc:string}>} 表示順
+ */
+function readNoteStamps() {
+  try {
+    const sheet = getSheetOrNull(CONFIG.SHEET_NOTE);
+    if (sheet) {
+      const last = sheet.getLastRow();
+      const rows = last - NOTE_MASTER.FIRST_ROW + 1;
+      if (rows > 0) {
+        const values = sheet.getRange(NOTE_MASTER.FIRST_ROW, 1, rows,
+          NOTE_MASTER.HEADS.length).getValues();
+        const list = sortByOrder_(values
+          .map(function (row) {
+            return {
+              text: String(row[NOTE_MASTER.COL_TEXT - 1] || '').trim(),
+              desc: String(row[NOTE_MASTER.COL_DESC - 1] || '').trim(),
+              order: row[NOTE_MASTER.COL_ORDER - 1],
+            };
+          })
+          .filter(function (n) { return n.text !== ''; }));
+        if (list.length > 0) return list;
+      }
+    }
+    // 旧い置き場との互換。シフトパターンに種別「備考」で入っていたもの
+    return readShiftPatterns()
+      .filter(function (p) { return p.kind === PATTERN_MASTER.KIND_NOTE; })
+      .map(function (p) { return { text: p.sym, desc: p.name }; });
+  } catch (error) {
+    logError(MODULE_SHIFTAUTO, 'readNoteStamps', error, '');
+    return [];
+  }
+}
+
+/**
  * マスタが無いときのシフトパターン。Config の記号から組み立てる。
- * 備考スタンプはここには無い（マスタにしか無い）。
+ * 備考は含まない（備考マスタが持つ）。
  */
 function defaultShiftPatterns_() {
   const out = [];

@@ -251,7 +251,10 @@ function buildPalette_() {
   return {
     work: pick(PATTERN_MASTER.KIND_WORK).map(toItem),
     off: pick(PATTERN_MASTER.KIND_OFF).map(toItem),
-    note: pick(PATTERN_MASTER.KIND_NOTE).map(toItem),
+    // 備考は別のマスタ。銀行はシフトのパターンではない
+    note: readNoteStamps().map(function (n) {
+      return { value: n.text, label: n.desc ? `${n.text}（${n.desc}）` : n.text };
+    }),
     doctorNames: readDoctorNames(),
     // サーバ側の検証にも使う。マスタで足した記号を知らせるため
     allSymbols: pick(PATTERN_MASTER.KIND_WORK).concat(pick(PATTERN_MASTER.KIND_OFF))

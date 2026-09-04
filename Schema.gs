@@ -28,6 +28,7 @@ function buildMissingSheets() {
       buildConfigSheet(),
       buildDoctorMaster(),
       buildPatternMaster(),
+      buildNoteMaster(),
       buildHolidaySheet(),
       buildChangeLogSheet(),
     ];
@@ -49,7 +50,8 @@ function buildMissingSheets() {
       '次にやること:',
       '・「自動作成設定」にメンバーを登録（A列=氏名 / B列=区分）',
       '・「医師マスタ」に医師名を登録（Web アプリの医師名スタンプになります）',
-      '・「シフトパターン」を確認（記号・時間帯・備考スタンプ）',
+      '・「シフトパターン」を確認（記号・時間帯）',
+      '・「備考マスタ」を確認（備考行に押す文字。銀行など）',
       '・「初期設定 → 祝日マスタを取り込む」で祝日を入れる',
     ]).join('\n'));
 
@@ -192,6 +194,42 @@ function buildPatternMaster() {
     return { name: CONFIG.SHEET_PATTERN, created: got.created };
   } catch (error) {
     logError(MODULE_SCHEMA, 'buildPatternMaster', error, '');
+    throw error;
+  }
+}
+
+/**
+ * 備考マスタを作る。備考行に押す文字（銀行など）。
+ *
+ * シフトパターンとは別にする。銀行はシフトのパターンではなく、
+ * 混ぜると開始・終了の列が意味を持たない行ができる。
+ *
+ * @return {{name:string, created:boolean}}
+ */
+function buildNoteMaster() {
+  try {
+    const got = getOrAddSheet_(CONFIG.SHEET_NOTE);
+    const sheet = got.sheet;
+    const heads = NOTE_MASTER.HEADS;
+
+    setIfBlank_(sheet.getRange(NOTE_MASTER.HDR_ROW, 1, 1, heads.length), [heads]);
+    styleHeaderRange_(sheet.getRange(NOTE_MASTER.HDR_ROW, 1, 1, heads.length));
+
+    const seed = NOTE_MASTER.SEED;
+    setIfBlank_(sheet.getRange(NOTE_MASTER.FIRST_ROW, 1, seed.length, heads.length),
+      seed.map(function (row) { return row.slice(); }));
+
+    if (got.created) {
+      sheet.setColumnWidth(NOTE_MASTER.COL_TEXT, 100);
+      sheet.setColumnWidth(NOTE_MASTER.COL_DESC, 220);
+      sheet.setFrozenRows(NOTE_MASTER.HDR_ROW);
+    }
+
+    logSuccess(MODULE_SCHEMA, 'buildNoteMaster',
+      `sheet=${CONFIG.SHEET_NOTE}; created=${got.created}; seed=${seed.length}`);
+    return { name: CONFIG.SHEET_NOTE, created: got.created };
+  } catch (error) {
+    logError(MODULE_SCHEMA, 'buildNoteMaster', error, '');
     throw error;
   }
 }
