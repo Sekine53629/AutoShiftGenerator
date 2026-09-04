@@ -38,6 +38,7 @@ function onOpen() {
       .addSeparator()
       .addItem('PDF 出力', 'exportShiftPdf')
       .addItem('レイアウト診断', 'diagnoseSheetLayout')
+      .addItem('スタンプの診断', 'showPaletteDiagnosis')
       .addItem('シート構造を表示', 'runSheetSurvey')
       .addToUi();
   } catch (error) {

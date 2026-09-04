@@ -534,6 +534,67 @@ function apiRunAutoShift(sheetName) {
 }
 
 /**
+ * メニュー「スタンプの診断」。
+ *
+ * **メニューからの実行は常に最新コードで動く。**Web アプリはデプロイ時点の
+ * バージョンを動かし続けるので、「直したのに反映されない」ときに
+ * どちらが古いのかを切り分けられない。ここで同じ関数を叩いて答えを出す。
+ *
+ * URL も出す。デプロイが複数あると、更新したデプロイと開いている URL が
+ * 別物、ということが起きるため。
+ */
+function showPaletteDiagnosis() {
+  try {
+    const lines = [];
+    lines.push(`コードの版 : ${CONFIG.APP_VERSION}`);
+    lines.push('（この画面はメニューから開いたので、常に最新コードです）');
+    lines.push('');
+
+    const url = getWebAppUrl();
+    lines.push('■ Web アプリの URL');
+    lines.push(`  ${url || '（未デプロイ）'}`);
+    lines.push('  開いている URL と同じか確かめてください。');
+    lines.push('  違えば、更新したデプロイと見ている URL が別物です。');
+    lines.push('');
+
+    lines.push('■ マスタのシート');
+    [CONFIG.SHEET_NOTE, CONFIG.SHEET_PATTERN, CONFIG.SHEET_DOCTOR, CONFIG.SHEET_CFG]
+      .forEach(function (name) {
+        const sh = getSheetOrNull(name);
+        lines.push(`  ${name}: ${sh ? `あり（${sh.getLastRow()} 行）` : 'なし'}`);
+      });
+    lines.push('');
+
+    const palette = buildPalette_();
+    lines.push('■ パレットに返している中身');
+    lines.push(`  出勤  ${palette.work.length} 件: `
+      + palette.work.map(function (x) { return x.value; }).join(' '));
+    lines.push(`  休み  ${palette.off.length} 件: `
+      + palette.off.map(function (x) { return x.value; }).join(' '));
+    lines.push(`  備考  ${palette.note.length} 件: `
+      + palette.note.map(function (x) { return x.value; }).join(' '));
+    lines.push(`  医師名 ${palette.doctorNames.length} 件`);
+    lines.push('');
+
+    if (palette.note.length > 0) {
+      lines.push('→ サーバは備考スタンプを返しています。');
+      lines.push('   Web アプリに出ないなら、動いているのは古いデプロイです。');
+      lines.push('   デプロイを管理 → 鉛筆 → バージョン「新バージョン」→ デプロイ');
+      lines.push('   それでも変わらなければ、上の URL を直接開いてください。');
+    } else {
+      lines.push('→ サーバが備考スタンプを返していません。コード側の問題です。');
+    }
+
+    showReportDialog('スタンプの診断', lines.join('\n'));
+    logSuccess(MODULE_WEBAPP, 'showPaletteDiagnosis',
+      `note=${palette.note.length}; doctors=${palette.doctorNames.length}`);
+  } catch (error) {
+    logError(MODULE_WEBAPP, 'showPaletteDiagnosis', error, '');
+    SpreadsheetApp.getUi().alert(`診断に失敗しました。\n\n${error.message}`);
+  }
+}
+
+/**
  * デプロイ済み Web アプリの URL。メニューから開けるようにするために使う。
  * デプロイ前は空文字を返す。
  * @return {string}
