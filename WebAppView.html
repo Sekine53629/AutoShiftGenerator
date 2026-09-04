@@ -84,6 +84,7 @@
   <div class="bar">
     <span id="summary" class="muted">—</span>
     <span class="grow"></span>
+    <span class="tag" id="diag"></span>
     <span class="tag" id="version" title="動いているコードの版。デプロイが古いと更新されません"></span>
   </div>
   <div class="bar" id="paletteBar"></div>
@@ -166,31 +167,41 @@
     const bar = $('paletteBar');
     bar.innerHTML = '';
 
+    // サーバが古い版だと項目名が違う。落ちずに「何が来たか」を出せるようにする
+    const p = data.palette || {};
+    const work = p.work || [];
+    const off = p.off || [];
+    const note = p.note || [];
+    const doctors = p.doctorNames || [];
+
     const asKind = function (kind) {
-      return function (p) { return { kind: kind, value: p.value, label: p.label }; };
+      return function (x) { return { kind: kind, value: x.value, label: x.label }; };
     };
 
-    addPaletteGroup(bar, '出勤', data.palette.work.map(asKind('symbol')));
-    addPaletteGroup(bar, '休み', data.palette.off.map(asKind('symbol')));
+    if (work.length) addPaletteGroup(bar, '出勤', work.map(asKind('symbol')));
+    if (off.length) addPaletteGroup(bar, '休み', off.map(asKind('symbol')));
 
     // 備考スタンプ（銀行など）。備考マスタが持つ
-    if (data.palette.note.length) {
-      addPaletteGroup(bar, '備考', data.palette.note.map(asKind('text')));
+    if (note.length) {
+      addPaletteGroup(bar, '備考', note.map(asKind('text')));
     } else {
-      addPaletteHint_(bar, '備考は「備考マスタ」に登録すると出ます');
+      addPaletteHint_(bar, '備考なし');
     }
 
-    if (data.palette.doctorNames.length) {
+    if (doctors.length) {
       addPaletteGroup(bar, '医師名',
-        data.palette.doctorNames.map(function (n) {
-          return { kind: 'doctor', value: n, label: n };
-        }));
+        doctors.map(function (n) { return { kind: 'doctor', value: n, label: n }; }));
     } else {
       addPaletteHint_(bar, '医師名は「医師マスタ」に登録すると出ます');
     }
 
     addPaletteGroup(bar, '', [{ kind: 'erase', value: '', label: '消去' }]);
     bar.appendChild(Object.assign(document.createElement('span'), { className: 'grow' }));
+
+    // サーバから何が返ったかを画面に出す。DevTools を開かずに切り分けるため
+    $('diag').textContent =
+      `出勤${work.length} / 休み${off.length} / 備考${note.length} / 医師${doctors.length}`
+      + (p.version ? ` / サーバ版 ${p.version}` : ' / サーバ版 不明（古いデプロイ）');
   }
 
   /** 候補が無い理由を出す。ボタンが消えているように見えるのを防ぐ */
@@ -459,7 +470,12 @@
 
   // 版を出す。画面（HTML）とサーバ（.gs）は同じデプロイに含まれるので、
   // ここが古ければ両方古い
-  $('version').textContent = '版 ' + APP_VERSION;
+  $('version').textContent = '画面版 ' + APP_VERSION;
+
+  // 画面側の例外を握り潰さない。iframe の中なので DevTools では見つけにくい
+  window.addEventListener('error', function (e) {
+    setStatus('画面でエラーが起きました: ' + (e.message || e.type), true);
+  });
 
   boot();
 </script>
