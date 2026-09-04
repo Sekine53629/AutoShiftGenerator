@@ -1528,6 +1528,97 @@ test('備考スタンプは備考行に入り、入力欄には入らない', fu
   assert.strictEqual(toGrid, '', '入力欄も自由記入なので通る（医師名以外なら可）');
 });
 
+// ---- Web アプリの集計（シートの数式に頼らない） -----------------------
+
+/** WebApp の内部が使う view を偽物で作る */
+function fakeView(rows, opts) {
+  const o = opts || {};
+  const L = sandbox.LAYOUT;
+  const layout = {
+    headerRow: 1, dateRow: 2, weekRow: 3,
+    doctorTop: 4, doctorBottom: 8,
+    repeatDateRow: 10, gridTop: 11, gridBottom: 10 + rows.length,
+    noteRow: 10 + rows.length + 2, docRow: 10 + rows.length + 4,
+    pharmRow: 10 + rows.length + 5, shortageRow: 10 + rows.length + 6,
+    firstCol: L.COL_FIRST, lastCol: L.COL_FIRST + (rows[0].length - 1),
+  };
+
+  const maxRow = layout.shortageRow;
+  const maxCol = L.COL_KIND_WORK;
+  const values = [];
+  for (let r = 0; r < maxRow; r++) {
+    values.push(new Array(maxCol).fill(''));
+  }
+  // 氏名・区分・入力欄
+  rows.forEach(function (row, i) {
+    const r = layout.gridTop + i - 1;
+    values[r][0] = 'P' + i;
+    values[r][L.COL_KIND_WORK - 1] = (o.kinds && o.kinds[i]) || sandbox.KIND.PHARM;
+    row.forEach(function (v, k) { values[r][L.COL_FIRST + k - 1] = v; });
+  });
+  // 医師数の行
+  (o.docCounts || []).forEach(function (n, k) {
+    values[layout.docRow - 1][L.COL_FIRST + k - 1] = n;
+  });
+
+  return {
+    layout: layout,
+    values: values,
+    display: values,
+    formulas: values.map(function (r) { return r.map(function () { return ''; }); }),
+    paidSyms: o.paidSyms || '有休,夏休',
+    reqPlus: o.reqPlus === undefined ? 1 : o.reqPlus,
+    at: function (grid, row, col) { return this[grid][row - 1][col - 1]; },
+  };
+}
+
+test('集計列をシートの数式に頼らず数える', function () {
+  const view = fakeView([['○', '公休', '有休', '▲', '●', '希休', '夏休']]);
+  const agg = sandbox.countRowAggregates_(view, view.layout.gridTop);
+
+  // 並びは 公休 / 有休 / ○早番 / ▲遅番 / ●遅半 / 5診出勤
+  assert.strictEqual(agg[0], 2, '公休 + 希休 = ノルマ対象2');
+  assert.strictEqual(agg[1], 2, '有休 + 夏休 = ノルマ外2');
+  assert.strictEqual(agg[2], 1, '○');
+  assert.strictEqual(agg[3], 1, '▲');
+  assert.strictEqual(agg[4], 1, '●');
+});
+
+test('ノルマ外の振り分けは設定に従う', function () {
+  // L11 を「有休」だけにすると、夏休はノルマ対象へ回る
+  const view = fakeView([['公休', '有休', '夏休']], { paidSyms: '有休' });
+  const agg = sandbox.countRowAggregates_(view, view.layout.gridTop);
+  assert.strictEqual(agg[0], 2, '公休 + 夏休');
+  assert.strictEqual(agg[1], 1, '有休だけ');
+});
+
+test('5診出勤は医師数から数える', function () {
+  const view = fakeView([['○', '▲', '●']], { docCounts: [5, 4, 5] });
+  const agg = sandbox.countRowAggregates_(view, view.layout.gridTop);
+  assert.strictEqual(agg[5], 2, '1日目と3日目が医師5名');
+});
+
+test('医師数が空欄なら医師名欄から数える', function () {
+  const view = fakeView([['○']], { docCounts: [] });
+  // 医師名欄（4〜8行）の1列目に3人入れる
+  const L = sandbox.LAYOUT;
+  view.values[3][L.COL_FIRST - 1] = '医師A';
+  view.values[4][L.COL_FIRST - 1] = '医師B';
+  view.values[5][L.COL_FIRST - 1] = '医師C';
+
+  assert.strictEqual(sandbox.readDocCount_(view, L.COL_FIRST), 3,
+    'シートに値が無ければ医師名欄を数える');
+});
+
+test('日ごとの薬剤師出勤数を数える', function () {
+  const view = fakeView([['○', '公休'], ['▲', '●'], ['○', '○']],
+    { kinds: [sandbox.KIND.PHARM, sandbox.KIND.PHARM, sandbox.KIND.CLERK] });
+  const counts = sandbox.countPharmPerDay_(view);
+
+  assert.strictEqual(counts[0], 2, '1日目は薬剤師2人（事務員は数えない）');
+  assert.strictEqual(counts[1], 1, '2日目は1人');
+});
+
 // ---- 結果 -------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

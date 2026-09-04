@@ -95,11 +95,14 @@ function apiLoadGrid(sheetName) {
 
     const layout = resolveLayout(sheet);
     const block = sheet.getRange(1, 1, layout.shortageRow, LAYOUT.COL_KIND_WORK);
+    const cfgPairs = readSettingPairs();
     const view = {
       layout: layout,
       values: block.getValues(),
       display: block.getDisplayValues(),
       formulas: block.getFormulas(),
+      paidSyms: readSettingText_(cfgPairs, 'paidSyms'),
+      reqPlus: readSettingNumber_(cfgPairs, 'reqPlus'),
       at: function (grid, row, col) { return this[grid][row - 1][col - 1]; },
     };
 
@@ -152,12 +155,65 @@ function buildDayCells_(view) {
       inMonth: isDate && date.getMonth() === targetMonth,
       isHoliday: Object.prototype.hasOwnProperty.call(holidays, key),
       holidayName: holidays[key] || '',
-      docCount: view.at('values', layout.docRow, c),
-      pharmCount: view.at('values', layout.pharmRow, c),
-      shortage: view.at('values', layout.shortageRow, c),
+      // 医師数は「入力」。シートに書かれた値をそのまま使う
+      docCount: readDocCount_(view, c),
+      // 薬剤師出勤数と過不足は「導出」。入力欄から数え直す。
+      // シートの数式に頼ると、数式の無いシートでは空欄になる（要件 §4.6）
+      pharmCount: 0,
+      shortage: 0,
     });
   }
+
+  // 導出値をまとめて計算する
+  const counts = countPharmPerDay_(view);
+  days.forEach(function (d, k) {
+    d.pharmCount = counts[k];
+    d.shortage = d.pharmCount - (Number(d.docCount) || 0) - view.reqPlus;
+  });
   return days;
+}
+
+/**
+ * 医師数（入力値）。シートに値があればそれを使い、無ければ医師名欄から数える。
+ *
+ * 生成したシートは数式（COUNTA）で入るが、実物から移したシートは
+ * 手入力の数値だったり空だったりする。どちらでも動くようにする。
+ */
+function readDocCount_(view, col) {
+  const raw = view.at('values', view.layout.docRow, col);
+  if (raw !== '' && raw !== null && !isNaN(Number(raw))) return Number(raw);
+
+  let n = 0;
+  for (let r = view.layout.doctorTop; r <= view.layout.doctorBottom; r++) {
+    if (String(view.at('values', r, col) || '').trim() !== '') n++;
+  }
+  return n;
+}
+
+/**
+ * 日ごとの薬剤師の出勤数を数える。
+ * 区分は作業列（AN）を見る。作業列が無いシートでは 0 になるので、
+ * その場合は区分を問わず数える（実物から移したシートへの配慮）。
+ */
+function countPharmPerDay_(view) {
+  const layout = view.layout;
+  const out = [];
+  let hasKind = false;
+  for (let r = layout.gridTop; r <= layout.gridBottom; r++) {
+    if (String(view.at('values', r, LAYOUT.COL_KIND_WORK) || '').trim() !== '') hasKind = true;
+  }
+
+  for (let c = layout.firstCol; c <= layout.lastCol; c++) {
+    let n = 0;
+    for (let r = layout.gridTop; r <= layout.gridBottom; r++) {
+      if (String(view.at('values', r, 1) || '').trim() === '') continue;
+      if (hasKind && String(view.at('values', r, LAYOUT.COL_KIND_WORK) || '').trim()
+        !== KIND.PHARM) continue;
+      if (matchWorkSym(view.at('values', r, c)) !== '') n++;
+    }
+    out.push(n);
+  }
+  return out;
 }
 
 /** 1行分のセル（表示文字列・数式か・正規化した出勤記号）。 */
@@ -179,20 +235,54 @@ function buildStaffRows_(view) {
   const layout = view.layout;
   const rows = [];
   for (let r = layout.gridTop; r <= layout.gridBottom; r++) {
-    const agg = [];
-    for (let c = LAYOUT.COL_AGG_FIRST; c <= LAYOUT.COL_AGG_LAST; c++) {
-      agg.push(view.at('display', r, c));
-    }
     rows.push({
       row: r,
       region: EDIT_REGION.GRID,
       name: String(view.at('values', r, 1) || ''),
       kind: String(view.at('values', r, LAYOUT.COL_KIND_WORK) || ''),
       cells: buildRowCells_(view, r),
-      agg: agg,
+      // 集計列は「導出」。シートの数式ではなく入力欄から数え直す（要件 §4.6）
+      agg: countRowAggregates_(view, r),
     });
   }
   return rows;
+}
+
+/**
+ * 1人分の集計列を数える。並びは SHEET_BUILD.AGG_HEADS と同じ。
+ *   公休 / 有休 / ○早番 / ▲遅番 / ●遅半 / 5診出勤
+ *
+ * 公休と有休の振り分けは **Engine.isPaidOff と同じ規則**にすること。
+ * ここがずれると、画面の数字と自動作成が使うノルマが食い違う。
+ */
+function countRowAggregates_(view, row) {
+  const layout = view.layout;
+  let quotaOff = 0;
+  let paidOff = 0;
+  let early = 0;
+  let late = 0;
+  let mid = 0;
+  let busy = 0;
+
+  for (let c = layout.firstCol; c <= layout.lastCol; c++) {
+    const raw = String(view.at('values', row, c) || '').trim();
+    if (raw === '') continue;
+
+    const sym = matchWorkSym(raw);
+    if (sym !== '') {
+      if (sym === SYM.EARLY) early++;
+      else if (sym === SYM.LATE) late++;
+      else if (sym === SYM.MID) mid++;
+      // 医師数は空欄のこともあるので readDocCount_ を通す（医師名欄から数え直す）
+      if (readDocCount_(view, c) === DOC_BUSY_N) busy++;
+      continue;
+    }
+    // 記号でない非空文字は休み。ノルマ対象かどうかで振り分ける
+    if (isPaidOff(raw, view.paidSyms)) paidOff++;
+    else quotaOff++;
+  }
+
+  return [quotaOff, paidOff, early, late, mid, busy];
 }
 
 /**
