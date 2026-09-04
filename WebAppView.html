@@ -83,6 +83,8 @@
   </div>
   <div class="bar">
     <span id="summary" class="muted">—</span>
+    <span class="grow"></span>
+    <span class="tag" id="version" title="動いているコードの版。デプロイが古いと更新されません"></span>
   </div>
   <div class="bar" id="paletteBar"></div>
   <div class="bar">
@@ -102,6 +104,8 @@
   let data = null;
   let stamp = null;
   const dirty = new Map();
+
+  const APP_VERSION = <?!= appVersionJson ?>;
 
   const $ = function (id) { return document.getElementById(id); };
   const keyOf = function (row, col) { return row + ',' + col; };
@@ -452,6 +456,10 @@
       loadSheet(data.sheetName);
     }).catch(function (e) { setStatus(e.message, true); });
   };
+
+  // 版を出す。画面（HTML）とサーバ（.gs）は同じデプロイに含まれるので、
+  // ここが古ければ両方古い
+  $('version').textContent = '版 ' + APP_VERSION;
 
   boot();
 </script>

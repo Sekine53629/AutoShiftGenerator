@@ -28,6 +28,16 @@ const CONFIG = Object.freeze({
   /** appsscript.json の timeZone と必ず同じ値にすること */
   TIMEZONE_HINT: 'Asia/Tokyo',
 
+  /**
+   * 版。**画面に出して、動いているコードを見分けるために使う。**
+   *
+   * Web アプリはデプロイ時点のバージョンを動かし続けるので、
+   * clasp push だけでは URL の中身が変わらない。
+   * 「直したのに反映されない」の切り分けがこれ無しでは付かない。
+   * コードを変えたら必ず上げること。
+   */
+  APP_VERSION: '2026-09-05a',
+
   /** 内閣府 祝日 CSV（Shift_JIS） */
   HOLIDAY_CSV_URL: 'https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv',
 

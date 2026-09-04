@@ -34,6 +34,8 @@ function doGet(e) {
     // 必ず JSON にしてから <?!= ?> で出すこと
     template.initialSheetJson = JSON.stringify(
       (e && e.parameter && e.parameter.sheet) || '');
+    // 動いているコードの版。デプロイが古いままかを画面で見分けるため
+    template.appVersionJson = JSON.stringify(CONFIG.APP_VERSION);
     return template.evaluate()
       .setTitle('シフト表')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -346,6 +348,7 @@ function buildPalette_() {
       return { value: n.text, label: n.desc ? `${n.text}（${n.desc}）` : n.text };
     }),
     doctorNames: readDoctorNames(),
+    version: CONFIG.APP_VERSION,
     // サーバ側の検証にも使う。マスタで足した記号を知らせるため
     allSymbols: pick(PATTERN_MASTER.KIND_WORK).concat(pick(PATTERN_MASTER.KIND_OFF))
       .map(function (p) { return p.sym; }),
