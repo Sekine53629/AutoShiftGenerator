@@ -1262,11 +1262,13 @@ function matchWorkSym(value) {
  * @param {string} value セルの文字列
  * @return {boolean}
  */
-function isShiftSymbol(value) {
+function isShiftSymbol(value, extraSymbols) {
   const v = String(value || '').trim();
   if (v === '') return false;
   if (matchWorkSym(v) !== '') return true;
-  return SYM.OFF_ALL.indexOf(v) >= 0;
+  if (SYM.OFF_ALL.indexOf(v) >= 0) return true;
+  // マスタで足された記号（利用者が「シフトパターン」に追加したもの）
+  return !!(extraSymbols && extraSymbols.indexOf(v) >= 0);
 }
 
 /**

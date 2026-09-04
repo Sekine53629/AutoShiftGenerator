@@ -234,14 +234,29 @@ function buildSectionRows_(view) {
  * シフト記号は Config から、医師名は自動作成設定 N 列から。実名はコードに書かない。
  */
 function buildPalette_() {
-  const cfgPairs = readSettingPairs();
-  const clerkSym = readSettingText_(cfgPairs, 'gSym');
-  const base = [SYM.EARLY, SYM.MID, SYM.LATE];
-  const symbols = base
-    .concat(clerkSym && base.indexOf(clerkSym) < 0 ? [clerkSym] : [])
-    .concat(SYM.OFF_ALL);
+  const patterns = readShiftPatterns();
 
-  return { symbols: symbols, doctorNames: readDoctorNames() };
+  const pick = function (kind) {
+    return patterns.filter(function (p) { return p.kind === kind; });
+  };
+  const label = function (p) {
+    // 時間帯があれば添える。「▲ 遅番 11:00-20:00」のように見せる
+    if (p.from && p.to) return `${p.sym} ${p.name} ${p.from}-${p.to}`;
+    if (p.name && p.name !== p.sym) return `${p.sym} ${p.name}`;
+    return p.sym;
+  };
+
+  const toItem = function (p) { return { value: p.sym, label: label(p) }; };
+
+  return {
+    work: pick(PATTERN_MASTER.KIND_WORK).map(toItem),
+    off: pick(PATTERN_MASTER.KIND_OFF).map(toItem),
+    note: pick(PATTERN_MASTER.KIND_NOTE).map(toItem),
+    doctorNames: readDoctorNames(),
+    // サーバ側の検証にも使う。マスタで足した記号を知らせるため
+    allSymbols: pick(PATTERN_MASTER.KIND_WORK).concat(pick(PATTERN_MASTER.KIND_OFF))
+      .map(function (p) { return p.sym; }),
+  };
 }
 
 /* ================================================================
@@ -272,10 +287,13 @@ function apiSaveCells(sheetName, edits) {
     if (!sheet) throw new Error(`シート「${sheetName}」がありません。`);
     const layout = resolveLayout(sheet);
     const doctorNames = readDoctorNames();
+    const symbols = readShiftPatterns()
+      .filter(function (p) { return p.kind !== PATTERN_MASTER.KIND_NOTE; })
+      .map(function (p) { return p.sym; });
 
     const rejected = [];
     const accepted = edits.filter(function (edit) {
-      const reason = stampRejectReason_(edit, layout, doctorNames);
+      const reason = stampRejectReason_(edit, layout, doctorNames, symbols);
       if (reason) {
         rejected.push({ row: edit.row, col: edit.col, reason: reason });
         return false;
@@ -365,9 +383,10 @@ function classifyEditRegion_(row, layout) {
  * @param {{row:number, col:number, value:string}} edit 編集
  * @param {Object} layout resolveLayout の戻り値
  * @param {string[]} doctorNames 医師名の候補
+ * @param {string[]=} symbols シフトパターンのマスタにある記号（既定に足す）
  * @return {string}
  */
-function stampRejectReason_(edit, layout, doctorNames) {
+function stampRejectReason_(edit, layout, doctorNames, symbols) {
   const row = Number(edit.row);
   const col = Number(edit.col);
   if (!(col >= layout.firstCol && col <= layout.lastCol)) return '日付の列の外です';
@@ -383,7 +402,7 @@ function stampRejectReason_(edit, layout, doctorNames) {
   if (region === EDIT_REGION.GRID) {
     return isDoctor ? '医師名はシフト入力欄には入れられません' : '';
   }
-  if (isShiftSymbol(value)) {
+  if (isShiftSymbol(value, symbols)) {
     return 'シフト記号はシフト入力欄にだけ入れられます（医師数や出勤数が狂います）';
   }
   if (region === EDIT_REGION.DOCTOR && !isDoctor) {

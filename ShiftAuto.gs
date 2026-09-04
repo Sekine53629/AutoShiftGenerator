@@ -486,9 +486,110 @@ function readMemberNames() {
 }
 
 /**
- * 医師名の候補（§6.4）。自動作成設定 N 列を正とする。
- * VBA 版はパレット行に持っていたが、その置き場が無くなったので設定シートへ移した。
+ * 医師名の候補（§6.4）。**医師マスタが正**。
+ *
+ * 以前は 自動作成設定 の N 列に間借りしていた。既存ブックとの互換のため、
+ * 医師マスタが空のときだけ N 列も見る。実名はコードに書かない。
+ *
+ * @return {string[]} 表示順に並べた医師名
  */
 function readDoctorNames() {
-  return readConfigColumn(CFG_SETTING.COL_DOCTOR, CFG_SETTING.ROW + 1, true);
+  try {
+    const sheet = getSheetOrNull(CONFIG.SHEET_DOCTOR);
+    if (sheet) {
+      const last = sheet.getLastRow();
+      const rows = last - DOCTOR_MASTER.FIRST_ROW + 1;
+      if (rows > 0) {
+        const values = sheet.getRange(DOCTOR_MASTER.FIRST_ROW, 1, rows,
+          DOCTOR_MASTER.HEADS.length).getValues();
+        const list = sortByOrder_(values
+          .map(function (row) {
+            return {
+              name: String(row[DOCTOR_MASTER.COL_NAME - 1] || '').trim(),
+              order: row[DOCTOR_MASTER.COL_ORDER - 1],
+            };
+          })
+          .filter(function (d) { return d.name !== ''; }))
+          .map(function (d) { return d.name; });
+        if (list.length > 0) return list;
+      }
+    }
+    // 医師マスタが無い・空のとき。旧い置き場を見る
+    return readConfigColumn(CFG_SETTING.COL_DOCTOR, CFG_SETTING.ROW + 1, true);
+  } catch (error) {
+    logError(MODULE_SHIFTAUTO, 'readDoctorNames', error, '');
+    return [];
+  }
+}
+
+/**
+ * シフトパターンのマスタを読む。
+ *
+ * マスタが無い・空のときは Config の既定から組み立てる。
+ * **備考スタンプ（銀行など）は Config に無い**ので、マスタが無ければ出てこない。
+ * 「不足シートを生成」を実行すると初期値が入る。
+ *
+ * @return {Array<{sym:string, name:string, from:string, to:string, kind:string}>}
+ */
+function readShiftPatterns() {
+  try {
+    const sheet = getSheetOrNull(CONFIG.SHEET_PATTERN);
+    if (sheet) {
+      const last = sheet.getLastRow();
+      const rows = last - PATTERN_MASTER.FIRST_ROW + 1;
+      if (rows > 0) {
+        const values = sheet.getRange(PATTERN_MASTER.FIRST_ROW, 1, rows,
+          PATTERN_MASTER.HEADS.length).getValues();
+        const list = sortByOrder_(values
+          .map(function (row) {
+            return {
+              sym: String(row[PATTERN_MASTER.COL_SYM - 1] || '').trim(),
+              name: String(row[PATTERN_MASTER.COL_NAME - 1] || '').trim(),
+              from: String(row[PATTERN_MASTER.COL_FROM - 1] || '').trim(),
+              to: String(row[PATTERN_MASTER.COL_TO - 1] || '').trim(),
+              kind: String(row[PATTERN_MASTER.COL_KIND - 1] || '').trim(),
+              order: row[PATTERN_MASTER.COL_ORDER - 1],
+            };
+          })
+          .filter(function (p) { return p.sym !== ''; }));
+        if (list.length > 0) return list;
+      }
+    }
+    return defaultShiftPatterns_();
+  } catch (error) {
+    logError(MODULE_SHIFTAUTO, 'readShiftPatterns', error, '');
+    return defaultShiftPatterns_();
+  }
+}
+
+/**
+ * マスタが無いときのシフトパターン。Config の記号から組み立てる。
+ * 備考スタンプはここには無い（マスタにしか無い）。
+ */
+function defaultShiftPatterns_() {
+  const out = [];
+  [SYM.EARLY, SYM.MID, SYM.LATE].forEach(function (sym) {
+    out.push({ sym: sym, name: sym, from: '', to: '', kind: PATTERN_MASTER.KIND_WORK });
+  });
+  SYM.OFF_ALL.forEach(function (sym) {
+    out.push({ sym: sym, name: sym, from: '', to: '', kind: PATTERN_MASTER.KIND_OFF });
+  });
+  return out;
+}
+
+/**
+ * 表示順で並べる。空欄は最後。同じ順のときは元の並びを保つ。
+ * SpreadsheetApp を呼ばない純粋関数。
+ */
+function sortByOrder_(list) {
+  return list
+    .map(function (item, i) {
+      const n = Number(item.order);
+      return { item: item, i: i, order: isNaN(n) || item.order === '' ? Infinity : n };
+    })
+    .sort(function (a, b) {
+      if (a.order !== b.order) return a.order - b.order;
+      return a.i - b.i;
+    })
+    .map(function (x) { return x.item; });
 }

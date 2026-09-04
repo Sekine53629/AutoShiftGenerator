@@ -63,7 +63,7 @@ Object.assign(sandbox, vm.runInContext(
   + ' SETTING_DEFAULT, HOLIDAY_SHEET, CHANGELOG_SHEET, ENGINE_LIMIT, DOC_BUSY_N,'
   + ' NON_NAME_LABELS, MASK_NAMES, SHEET_BUILD, SETUP_KNOWN_HEADS,'
   + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH, EDIT_REGION, STAMP_KIND, STAMP_REGION_RULES,'
-  + ' SCHEMA, FORMAT_PROFILE, FORMAT_DEFAULT,'
+  + ' SCHEMA, FORMAT_PROFILE, FORMAT_DEFAULT, DOCTOR_MASTER, PATTERN_MASTER,'
   + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF })', sandbox));
 
 // ---- テストランナー ----------------------------------------------------
@@ -1451,6 +1451,71 @@ test('シート名に使えない文字を落とす', function () {
 
   const long = sandbox.sanitizeSheetName_('控_' + 'あ'.repeat(200) + '_20261004-093015');
   assert.strictEqual(long.length, 100, '長すぎる名前は詰める');
+});
+
+// ---- マスタ -----------------------------------------------------------
+
+test('表示順で並び、空欄は最後、同順は元の並びを保つ', function () {
+  const sorted = sandbox.sortByOrder_([
+    { name: 'C', order: 3 },
+    { name: 'A', order: 1 },
+    { name: 'Z', order: '' },      // 空欄は最後
+    { name: 'B', order: 1 },       // A と同順 → 元の並びのまま A の次
+    { name: 'Y', order: 'あ' },    // 数値でない → 最後
+  ]);
+  assert.deepStrictEqual(sorted.map(function (x) { return x.name; }),
+    ['A', 'B', 'C', 'Z', 'Y']);
+});
+
+test('シフトパターンの初期値が種別ごとに揃っている', function () {
+  const seed = Array.from(sandbox.PATTERN_MASTER.SEED);
+  const kinds = {};
+  seed.forEach(function (row) {
+    const kind = row[sandbox.PATTERN_MASTER.COL_KIND - 1];
+    kinds[kind] = (kinds[kind] || 0) + 1;
+  });
+
+  assert.strictEqual(kinds[sandbox.PATTERN_MASTER.KIND_WORK], 3, '出勤は ○ ● ▲ の3つ');
+  assert.strictEqual(kinds[sandbox.PATTERN_MASTER.KIND_OFF], 5, '休みは5つ');
+  assert.ok(kinds[sandbox.PATTERN_MASTER.KIND_NOTE] >= 1,
+    '★備考スタンプ（銀行）が初期値に入っている');
+
+  // 初期値の記号が Config の定義と食い違っていないか
+  const workSyms = seed
+    .filter(function (r) { return r[4] === sandbox.PATTERN_MASTER.KIND_WORK; })
+    .map(function (r) { return r[0]; });
+  assert.deepStrictEqual(workSyms, ['○', '●', '▲']);
+
+  const offSyms = seed
+    .filter(function (r) { return r[4] === sandbox.PATTERN_MASTER.KIND_OFF; })
+    .map(function (r) { return r[0]; });
+  assert.deepStrictEqual(offSyms, Array.from(sandbox.SYM.OFF_ALL),
+    '休み記号は Config の SYM.OFF_ALL と一致する');
+});
+
+test('マスタで足した記号もシフト記号として扱う', function () {
+  // 利用者が「シフトパターン」に独自の記号を足した場合
+  assert.strictEqual(sandbox.isShiftSymbol('研修'), false, '既定では知らない');
+  assert.strictEqual(sandbox.isShiftSymbol('研修', ['研修']), true, 'マスタにあれば記号');
+
+  // 医師名欄に押させないための判定なので、ここが効かないと表が壊れる
+  const L = layoutFor(16);
+  const reject = sandbox.stampRejectReason_(
+    { row: L.doctorTop, col: L.firstCol, value: '研修' }, L, [], ['研修']);
+  assert.ok(reject !== '', 'マスタの記号も医師名欄には入れさせない');
+});
+
+test('備考スタンプは備考行に入り、入力欄には入らない', function () {
+  const L = layoutFor(16);
+  const symbols = ['○', '公休'];   // 銀行は記号ではない
+
+  const toNote = sandbox.stampRejectReason_(
+    { row: L.noteRow, col: L.firstCol, value: '銀行' }, L, [], symbols);
+  assert.strictEqual(toNote, '', '備考行には入る');
+
+  const toGrid = sandbox.stampRejectReason_(
+    { row: L.gridTop, col: L.firstCol, value: '銀行' }, L, [], symbols);
+  assert.strictEqual(toGrid, '', '入力欄も自由記入なので通る（医師名以外なら可）');
 });
 
 // ---- 結果 -------------------------------------------------------------

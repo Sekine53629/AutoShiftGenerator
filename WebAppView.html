@@ -162,18 +162,37 @@
     const bar = $('paletteBar');
     bar.innerHTML = '';
 
-    addPaletteGroup(bar, 'シフト記号',
-      data.palette.symbols.map(function (s) { return { kind: 'symbol', value: s, label: s }; }));
+    const asKind = function (kind) {
+      return function (p) { return { kind: kind, value: p.value, label: p.label }; };
+    };
+
+    addPaletteGroup(bar, '出勤', data.palette.work.map(asKind('symbol')));
+    addPaletteGroup(bar, '休み', data.palette.off.map(asKind('symbol')));
+
+    // 備考スタンプ（銀行など）。シフトパターンのマスタに種別「備考」で入っている
+    if (data.palette.note.length) {
+      addPaletteGroup(bar, '備考', data.palette.note.map(asKind('text')));
+    }
 
     if (data.palette.doctorNames.length) {
       addPaletteGroup(bar, '医師名',
         data.palette.doctorNames.map(function (n) {
           return { kind: 'doctor', value: n, label: n };
         }));
+    } else {
+      addPaletteHint_(bar, '医師名は「医師マスタ」に登録すると出ます');
     }
 
     addPaletteGroup(bar, '', [{ kind: 'erase', value: '', label: '消去' }]);
     bar.appendChild(Object.assign(document.createElement('span'), { className: 'grow' }));
+  }
+
+  /** 候補が無い理由を出す。ボタンが消えているように見えるのを防ぐ */
+  function addPaletteHint_(bar, text) {
+    const span = document.createElement('span');
+    span.className = 'tag';
+    span.textContent = text;
+    bar.appendChild(span);
   }
 
   function addPaletteGroup(bar, title, items) {

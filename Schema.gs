@@ -26,6 +26,8 @@ function buildMissingSheets() {
   try {
     const report = [
       buildConfigSheet(),
+      buildDoctorMaster(),
+      buildPatternMaster(),
       buildHolidaySheet(),
       buildChangeLogSheet(),
     ];
@@ -44,9 +46,11 @@ function buildMissingSheets() {
       '',
     ].concat(lines).concat([
       '',
-      '次は「自動作成設定」にメンバーを登録してください。',
-      'A列=氏名（シフト表と完全一致）/ B列=区分（薬剤師 か 事務員）が要ります。',
-      '祝日は「初期設定 → 祝日マスタを取り込む」で入ります。',
+      '次にやること:',
+      '・「自動作成設定」にメンバーを登録（A列=氏名 / B列=区分）',
+      '・「医師マスタ」に医師名を登録（Web アプリの医師名スタンプになります）',
+      '・「シフトパターン」を確認（記号・時間帯・備考スタンプ）',
+      '・「初期設定 → 祝日マスタを取り込む」で祝日を入れる',
     ]).join('\n'));
 
     return report;
@@ -113,6 +117,81 @@ function buildConfigSheet() {
     return { name: CONFIG.SHEET_CFG, created: got.created };
   } catch (error) {
     logError(MODULE_SCHEMA, 'buildConfigSheet', error, '');
+    throw error;
+  }
+}
+
+/**
+ * 医師マスタを作る。
+ *
+ * これまで医師名は 自動作成設定 の N 列に1列だけ間借りしていて、
+ * 略称も表示順も持てなかった。別シートに切り出す。
+ * 中身は空で作る。**実名はコードに書かない**（Tier 3）。
+ *
+ * @return {{name:string, created:boolean}}
+ */
+function buildDoctorMaster() {
+  try {
+    const got = getOrAddSheet_(CONFIG.SHEET_DOCTOR);
+    const sheet = got.sheet;
+    const heads = DOCTOR_MASTER.HEADS;
+
+    setIfBlank_(sheet.getRange(DOCTOR_MASTER.HDR_ROW, 1, 1, heads.length), [heads]);
+    styleHeaderRange_(sheet.getRange(DOCTOR_MASTER.HDR_ROW, 1, 1, heads.length));
+
+    if (got.created) {
+      sheet.setColumnWidth(DOCTOR_MASTER.COL_NAME, 140);
+      sheet.setColumnWidth(DOCTOR_MASTER.COL_MEMO, 240);
+      sheet.setFrozenRows(DOCTOR_MASTER.HDR_ROW);
+    }
+
+    logSuccess(MODULE_SCHEMA, 'buildDoctorMaster',
+      `sheet=${CONFIG.SHEET_DOCTOR}; created=${got.created}`);
+    return { name: CONFIG.SHEET_DOCTOR, created: got.created };
+  } catch (error) {
+    logError(MODULE_SCHEMA, 'buildDoctorMaster', error, '');
+    throw error;
+  }
+}
+
+/**
+ * シフトパターンのマスタを作る。記号・名称・時間帯・種別・表示順。
+ *
+ * これまで記号は Config に埋め込みで、時間帯も備考スタンプ（銀行）も
+ * 置き場が無かった。ここに集める。
+ *
+ * 初期値は実物の凡例に合わせて入れるが、**空欄のセルにしか書かない**ので、
+ * あとから自由に足したり直したりできる。
+ *
+ * @return {{name:string, created:boolean}}
+ */
+function buildPatternMaster() {
+  try {
+    const got = getOrAddSheet_(CONFIG.SHEET_PATTERN);
+    const sheet = got.sheet;
+    const heads = PATTERN_MASTER.HEADS;
+
+    setIfBlank_(sheet.getRange(PATTERN_MASTER.HDR_ROW, 1, 1, heads.length), [heads]);
+    styleHeaderRange_(sheet.getRange(PATTERN_MASTER.HDR_ROW, 1, 1, heads.length));
+
+    const seed = PATTERN_MASTER.SEED;
+    setIfBlank_(sheet.getRange(PATTERN_MASTER.FIRST_ROW, 1, seed.length, heads.length),
+      seed.map(function (row) { return row.slice(); }));
+
+    addColumnValidationFrom_(sheet, PATTERN_MASTER.COL_KIND, PATTERN_MASTER.FIRST_ROW,
+      [PATTERN_MASTER.KIND_WORK, PATTERN_MASTER.KIND_OFF, PATTERN_MASTER.KIND_NOTE]);
+
+    if (got.created) {
+      sheet.setColumnWidth(PATTERN_MASTER.COL_SYM, 70);
+      sheet.setColumnWidth(PATTERN_MASTER.COL_NAME, 140);
+      sheet.setFrozenRows(PATTERN_MASTER.HDR_ROW);
+    }
+
+    logSuccess(MODULE_SCHEMA, 'buildPatternMaster',
+      `sheet=${CONFIG.SHEET_PATTERN}; created=${got.created}; seed=${seed.length}`);
+    return { name: CONFIG.SHEET_PATTERN, created: got.created };
+  } catch (error) {
+    logError(MODULE_SCHEMA, 'buildPatternMaster', error, '');
     throw error;
   }
 }
@@ -236,12 +315,17 @@ function styleHeaderRange_(range) {
  * @param {string[]} choices 選択肢
  */
 function addColumnValidation_(sheet, colNo, choices) {
-  const rows = sheet.getMaxRows() - CFG_MEMBER.FIRST_ROW + 1;
+  addColumnValidationFrom_(sheet, colNo, CFG_MEMBER.FIRST_ROW, choices);
+}
+
+/** 開始行を指定できる版。マスタごとに見出し行の位置が違うため。 */
+function addColumnValidationFrom_(sheet, colNo, firstRow, choices) {
+  const rows = sheet.getMaxRows() - firstRow + 1;
   if (rows <= 0) return;
   const rule = SpreadsheetApp.newDataValidation()
     .requireValueInList(choices, true)
     .setAllowInvalid(true)
     .setHelpText(`候補: ${choices.join(' / ')}`)
     .build();
-  sheet.getRange(CFG_MEMBER.FIRST_ROW, colNo, rows, 1).setDataValidation(rule);
+  sheet.getRange(firstRow, colNo, rows, 1).setDataValidation(rule);
 }
