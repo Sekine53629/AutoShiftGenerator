@@ -593,13 +593,34 @@ function readNoteStamps() {
       }
     }
     // 旧い置き場との互換。シフトパターンに種別「備考」で入っていたもの
-    return readShiftPatterns()
+    const legacy = readShiftPatterns()
       .filter(function (p) { return p.kind === PATTERN_MASTER.KIND_NOTE; })
       .map(function (p) { return { text: p.sym, desc: p.name }; });
+    if (legacy.length > 0) return legacy;
+
+    return defaultNoteStamps_();
   } catch (error) {
     logError(MODULE_SHIFTAUTO, 'readNoteStamps', error, '');
-    return [];
+    return defaultNoteStamps_();
   }
+}
+
+/**
+ * マスタが無いときの備考スタンプ。Config の初期値から組み立てる。
+ *
+ * シフトパターンには既定があるのに備考だけ無く、
+ * 「不足シートを生成」を実行するまで銀行が出なかった。既定を揃える。
+ *
+ * **医師名には既定を置かない。**実名をコードに書かないため（Tier 3）。
+ * 医師名は登録されるまで出ないのが正しく、画面がその理由を出す。
+ */
+function defaultNoteStamps_() {
+  return NOTE_MASTER.SEED.map(function (row) {
+    return {
+      text: String(row[NOTE_MASTER.COL_TEXT - 1] || ''),
+      desc: String(row[NOTE_MASTER.COL_DESC - 1] || ''),
+    };
+  });
 }
 
 /**

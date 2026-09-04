@@ -1503,6 +1503,26 @@ test('備考マスタが備考スタンプを持つ', function () {
   assert.strictEqual(sandbox.isShiftSymbol('銀行'), false);
 });
 
+test('備考スタンプはマスタが無くても既定が出る', function () {
+  // シフトパターンには既定があるのに備考だけ無く、
+  // 「不足シートを生成」を実行するまで銀行が出なかった
+  const list = Array.from(sandbox.defaultNoteStamps_());
+  assert.ok(list.length >= 1, 'マスタ無しでも候補がある');
+  assert.strictEqual(list[0].text, '銀行');
+  assert.ok(list[0].desc !== '', '説明も付く');
+});
+
+test('医師名には既定を置かない（実名をコードに書かないため）', function () {
+  // 備考と違い、医師名は登録されるまで出ないのが正しい。
+  // Config に実名の既定が紛れ込んでいないことを縛る
+  const configText = fs.readFileSync(path.join(ROOT, 'Config.gs'), 'utf8');
+  const start = configText.indexOf('const DOCTOR_MASTER');
+  assert.ok(start >= 0, 'DOCTOR_MASTER が定義されている');
+  // その定義ブロックだけを切り出して見る。後ろの別マスタの SEED を拾わないため
+  const block = configText.slice(start, configText.indexOf('});', start));
+  assert.strictEqual(block.indexOf('SEED'), -1, '医師マスタに初期値を持たせない');
+});
+
 test('マスタで足した記号もシフト記号として扱う', function () {
   // 利用者が「シフトパターン」に独自の記号を足した場合
   assert.strictEqual(sandbox.isShiftSymbol('研修'), false, '既定では知らない');
