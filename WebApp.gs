@@ -29,16 +29,23 @@ const MODULE_WEBAPP = 'WebApp';
  */
 function doGet(e) {
   try {
+    // ?probe=1 … テンプレートも JavaScript も使わない最小の応答。
+    // 「配信されているコードが新しいか」だけを1クリックで確かめるための入口。
+    // 画面が構文エラーで真っ白なときでも、ここは必ず出る
+    if (e && e.parameter && e.parameter.probe) {
+      return HtmlService.createHtmlOutput(
+        `<pre style="font:14px monospace">版 ${CONFIG.APP_VERSION}</pre>`);
+    }
+
     const template = HtmlService.createTemplateFromFile('WebAppView');
     // 生の文字列を <?= ?> で埋めると、シート名に含まれる文字で JS が壊れる。
     // 必ず JSON にしてから <?!= ?> で出すこと
-    template.initialSheetJson = JSON.stringify(
-      (e && e.parameter && e.parameter.sheet) || '');
-    // 動いているコードの版。デプロイが古いままかを画面で見分けるため。
-    // HTML へ直接埋める用（appVersion）と、JS から読む用（JSON）の両方を渡す。
-    // JS の最後で書いていると、その前で落ちたときに版すら出ない
+    // ★ 値は data- 属性で渡し、<script> の中にテンプレートを書かない。
+    //   スクリプトレットが JS の中にあると、置換のしかた次第で構文エラーになり、
+    //   そのとき画面は真っ白になって原因が分からない。
+    //   属性なら <?= ?> が HTML として正しくエスケープしてくれる
+    template.initialSheet = (e && e.parameter && e.parameter.sheet) || '';
     template.appVersion = CONFIG.APP_VERSION;
-    template.appVersionJson = JSON.stringify(CONFIG.APP_VERSION);
     return template.evaluate()
       .setTitle('シフト表')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
