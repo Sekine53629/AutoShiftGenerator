@@ -36,7 +36,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s002",
@@ -73,7 +75,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s003",
@@ -110,7 +114,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s004",
@@ -147,7 +153,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s005",
@@ -184,7 +192,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s006",
@@ -221,7 +231,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s007",
@@ -258,7 +270,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s008",
@@ -294,7 +308,9 @@
       "from": "",
       "to": "",
       "rule": "手動",
-      "memo": "調剤のみ。締め不可"
+      "memo": "調剤のみ。締め不可",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s009",
@@ -330,7 +346,9 @@
       "from": "",
       "to": "",
       "rule": "手動",
-      "memo": "調剤のみ。締め不可"
+      "memo": "調剤のみ。締め不可",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s010",
@@ -366,7 +384,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s011",
@@ -402,7 +422,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s012",
@@ -438,7 +460,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s013",
@@ -473,7 +497,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     }
   ],
   "leave": [

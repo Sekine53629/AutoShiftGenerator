@@ -17,7 +17,8 @@ function person(o) {
     name: '', kind: '薬剤師', employment: '社員',
     weekDays: 5, annualOff: '', maxCons: 5,
     patterns: ['○', '●', '▲'], availDow: ALL.slice(), fixedDow: [0, 0, 0, 0, 0, 0, 0],
-    canClose: true, from: '', to: '', rule: '自動', memo: ''
+    canClose: true, from: '', to: '', rule: '自動', memo: '',
+    storeId: '', hq: false   // 空欄＝全店
   }, o);
 }
 

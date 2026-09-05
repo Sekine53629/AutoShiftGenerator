@@ -263,6 +263,12 @@ tr.aggrow .nm { font-weight: 700; }
 .neg { color: var(--danger); font-weight: 700; }
 .zero { color: var(--ink-faint); }
 
+/* 見出しに添える店舗名。どの店舗の設定を見ているかを外さない */
+.ofstore {
+  margin-left: 8px; font-size: 11px; font-weight: 400;
+  color: var(--accent-ink); background: var(--accent);
+  padding: 2px 8px; border-radius: 10px; letter-spacing: .02em;
+}
 .legend {
   display: flex; flex-wrap: wrap; gap: 6px 14px;
   padding: 9px 18px 16px; font-size: 11px; color: var(--ink-soft);
@@ -454,18 +460,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 <!-- ══ 各マスタ ══════════════════════════════════════ -->
 <section class="panel" data-panel="store"><div class="sheet">
   <h2>店舗マスタ</h2>
-  <p class="lead">店舗ごとに営業日と必要人数を持ちます。表の行・営業日・特例日はここで選んだ店舗のものです。</p>
+  <p class="lead">
+    店舗ごとに営業日と必要人数を持ちます。<b>左端の「表示」で選んだ店舗</b>の
+    営業マスタと特例日が、この下に出ます。シフト表もその店舗のものになります。
+  </p>
   <div class="mtwrap"><table class="mt" id="mtStore"></table></div>
   <div class="mtfoot"><button data-add="store">行を追加</button></div>
 
-  <h2 style="margin-top:22px">店舗営業マスタ（曜日別）</h2>
+  <h2 style="margin-top:22px">店舗営業マスタ（曜日別）<span class="ofstore" id="hoursStore"></span></h2>
   <p class="lead">
     <b>営業日は暦ではなく店が決めます。</b>土日祝も開けるなら、その日はむしろ人手が要ります。
     ここの「薬剤師 下限」「事務 下限」が、表の下の過不足とルール違反の判定に使われます。
   </p>
   <div class="mtwrap"><table class="mt" id="mtHours"></table></div>
 
-  <h2 style="margin-top:22px">特例日</h2>
+  <h2 style="margin-top:22px">特例日<span class="ofstore" id="closureStore"></span></h2>
   <p class="lead">
     <b>この店だけ</b>の臨時休業・時短をここに入れます（棚卸・設備工事など）。
     曜日の決まりより優先します。<br>
@@ -508,7 +517,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     シフト表の行はここから作られます。在籍期間の外にある人はその月の表に出ません
     （退職者を消さずに済むので、過去の月を開いても表が壊れません）。<br>
     <b>月ごとに変わる値はここに置きません。</b>月の公休ノルマは暦から決まり全員共通です
-    （画面上部に出ています）。ここに置けるのは<b>年単位の契約値</b>だけです。
+    （画面上部に出ています）。ここに置けるのは<b>年単位の契約値</b>だけです。<br>
+    <b>所属店舗</b>が「全店」の人は、どの店舗の表にも出ます（本部の応援など）。
   </p>
   <div class="mtwrap"><table class="mt" id="mtStaff"></table></div>
   <div class="mtfoot">
@@ -610,7 +620,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       patterns: (pats || []).slice(),
       availDow: (avail || ALL).slice(),
       fixedDow: (fixed || NONE).slice(),
-      canClose: close, from: '', to: '', rule: rule, memo: ''
+      canClose: close, from: '', to: '', rule: rule, memo: '',
+      storeId: 'st1', hq: false
     });
     // 出られる曜日の既定は全 ON。出られない曜日は個人の事情であって、
     // 店の休みではない（店の営業日は店舗営業マスタが持つ）
@@ -731,6 +742,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       delete x.offAdjust;
       delete x.monthOff;
       if (x.annualOff === undefined) x.annualOff = '';   // 空欄は「暦どおり」
+      // 所属店舗が無い版のデータ。空欄＝全店にしておく（誰も表から消えない）
+      if (x.storeId === undefined) x.storeId = '';
+      if (x.hq === undefined) x.hq = false;
       x.availDow = normDow_(x.availDow, 1);
       x.fixedDow = normDow_(x.fixedDow, 0);
       x.patterns = Array.isArray(x.patterns) ? x.patterns.slice() : [];
@@ -912,6 +926,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /* ═══ 行の組み立て ═════════════════════════════════════
      縦順は帳票どおり。医師名5行 → 日付再掲 → 薬剤師 → 派遣 → 事務 → 備考 → 集計 */
   let ROWS = [];
+  /** その店舗の表に出す人か。空欄の所属は全店に出る（本部の人など） */
+  function belongsHere(s) {
+    return !s.storeId || s.storeId === activeStore;
+  }
+
   function inService(s, y, m) {
     const ym = y * 100 + m;
     const num = t => {
@@ -927,7 +946,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   function buildRows(y, m) {
     const rows = [];
     const push = r => { r.index = rows.length; rows.push(r); return r; };
-    const live = DB.staff.filter(s => inService(s, y, m));
+    const live = DB.staff.filter(s => inService(s, y, m) && belongsHere(s));
 
     push({ kind: 'band', label: '医師名' });
     for (let i = 0; i < DOC_ROWS; i++) {
@@ -1276,7 +1295,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   function staffTip(s) {
     const av = s.availDow.map((v, i) => v ? DOW[i] : '').filter(Boolean).join('');
-    return [s.kind + '／' + s.employment,
+    const where = s.hq ? '本部所属'
+      : s.storeId ? ((DB.stores.find(t => t.id === s.storeId) || {}).name || s.storeId)
+      : '全店';
+    return [s.kind + '／' + s.employment + '／' + where,
             '週' + s.weekDays + '日・今月の公休 ' + offQuotaFor() + ' 日（全員共通）',
             '連勤 ' + (s.maxCons || DB.rules.maxConsDefault) + ' 日まで'
               + (s.maxCons ? '' : '（既定値）'),
@@ -1735,6 +1757,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'name',       head: '氏名',        type: 'text',  w: 130, group: '本人' },
       { key: 'kind',       head: '区分',        type: 'select', opts: ['薬剤師', '事務員'], group: '本人' },
       { key: 'employment', head: '雇用',        type: 'select', opts: ['社員', '派遣', 'パート'], group: '本人' },
+      { key: 'storeId',    head: '所属店舗',    type: 'store', group: '所属' },
+      { key: 'hq',         head: '本部',        type: 'check', group: '所属' },
       { key: 'weekDays',   head: '週勤務日数',  type: 'num', min: 0, max: 7, group: '配置ルール（この人だけに効く）' },
       { key: 'annualOff',  head: '年間公休日数', type: 'num', min: 0, max: 200,
         ph: () => String(annualQuotaOf(Number($('yy').value) || new Date().getFullYear())),
@@ -1775,6 +1799,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'order', head: '表示順', type: 'num', min: 1, max: 99 }
     ],
     store: [
+      { key: '_pick', head: '表示', type: 'pick' },
       { key: 'name',  head: '店舗名', type: 'text', w: 150 },
       { key: 'short', head: '略称',   type: 'text', w: 70 },
       { key: 'memo',  head: '備考',   type: 'text', w: 240 }
@@ -1901,6 +1926,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       td.textContent = String(col.calc(rec));
       return td;
     }
+    // どの店舗の営業日を見ているかを、ここで選ぶ
+    if (col.type === 'pick') {
+      const rb = document.createElement('input');
+      rb.type = 'radio';
+      rb.name = 'storePick';
+      rb.checked = rec.id === activeStore;
+      rb.title = 'この店舗の営業マスタと特例日を表示する';
+      rb.addEventListener('change', () => {
+        if (!rb.checked) return;
+        activeStore = rec.id;
+        renderMaster('hours');
+        renderMaster('closure');
+        refreshAll();
+      });
+      td.appendChild(rb);
+      return td;
+    }
     if (col.type === 'dowName') {
       const i = Number(rec[col.key]);
       td.className = 'd' + i;
@@ -1962,13 +2004,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       td.appendChild(box);
       return td;
     }
-    if (col.type === 'select' || col.type === 'staff') {
+    if (col.type === 'select' || col.type === 'staff' || col.type === 'store') {
       const sel2 = document.createElement('select');
       const opts = col.type === 'staff'
         ? DB.staff.map(s => ({ v: s.id, t: s.name }))
+        : col.type === 'store'
+        // 空欄は「全店」。本部の人など、店舗に紐づかない人がいる
+        ? [{ v: '', t: '全店' }].concat(DB.stores.map(t => ({ v: t.id, t: t.name || '(名称未設定)' })))
         : col.opts.map(o => ({ v: o, t: o }));
       // 参照先が消えている場合。黙って空欄にすると別人の記録に見えるので明示する
-      if (col.type === 'staff' && rec[col.key]
+      if ((col.type === 'staff' || col.type === 'store') && rec[col.key]
           && !opts.some(o => o.v === rec[col.key])) {
         opts.unshift({ v: rec[col.key], t: '⚠ 参照先なし（' + rec[col.key] + '）' });
       }
@@ -2027,9 +2072,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       id: newId('s'), name: '', kind: '薬剤師', employment: '社員',
       weekDays: 5, annualOff: '', maxCons: 5, patterns: ['○', '●', '▲'],
       availDow: [1, 1, 1, 1, 1, 1, 1], fixedDow: [0, 0, 0, 0, 0, 0, 0],
-      canClose: false, from: '', to: '', rule: '自動', memo: ''
+      canClose: false, from: '', to: '', rule: '自動', memo: '',
+      storeId: activeStore, hq: false
     }),
     store:   () => ({ id: newId('st'), name: '', short: '', memo: '' }),
+    // 店舗だけ増えても営業日が無ければ表は組めない。7行を一緒に作る
     holiday: () => ({ id: newId('hd'), name: '', kind: '公休加算',
                       from: '', to: '', memo: '' }),
     closure: () => ({ id: newId('c'), storeId: activeStore, label: '', kind: '休業',
@@ -2052,6 +2099,18 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       if (name === 'staff') {
         DB.leave.push({ id: newId('l'), staffId: rec.id, grantDate: '', grantDays: 0, usedDays: 0 });
         renderMaster('leave');
+      }
+      // 店舗を足したら曜日7行も作り、その店舗を表示中にする。
+      // 作らないと、新しい店は営業日を1日も持たない
+      if (name === 'store') {
+        [0, 1, 2, 3, 4, 5, 6].forEach(d => DB.hours.push({
+          id: newId('h'), storeId: rec.id, dow: d, open: true,
+          from: '09:00', to: '19:00',
+          pharmMin: (d === 0 || d === 6) ? 2 : 3, clerkMin: 1
+        }));
+        activeStore = rec.id;
+        renderMaster('hours');
+        renderMaster('closure');
       }
       save(); renderMaster(name); refreshAll();
     });
@@ -2286,6 +2345,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     sel2.previousElementSibling.style.display = DB.stores.length > 1 ? '' : 'none';
   }
 
+  /** 見出しに、いま表示している店舗の名前を出す */
+  function renderStoreLabels() {
+    const t = DB.stores.find(x => x.id === activeStore);
+    const label = t ? (t.name || '(名称未設定)') : '(店舗なし)';
+    ['hoursStore', 'closureStore'].forEach(id => {
+      const el2 = $(id);
+      if (el2) el2.textContent = label;
+    });
+  }
+
   function renderDatalists() {
     const fill = (id, items) => {
       const dl = $(id);
@@ -2304,6 +2373,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   function refreshAll() {
     clearAnnualCache_();
     renderStoreSelect();
+    renderStoreLabels();
     renderPalette();
     renderDatalists();
     renderGrid();
@@ -2365,6 +2435,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   ['yy', 'mm'].forEach(id => $(id).addEventListener('change', renderGrid));
   $('storeSel').addEventListener('change', () => {
     activeStore = $('storeSel').value;
+    renderMaster('store');      // 「表示」の印を付け替える
     renderMaster('hours');
     renderMaster('closure');
     refreshAll();

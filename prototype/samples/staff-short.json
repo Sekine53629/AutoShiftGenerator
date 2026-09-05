@@ -36,7 +36,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s002",
@@ -73,7 +75,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s003",
@@ -110,7 +114,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s004",
@@ -147,7 +153,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s005",
@@ -183,7 +191,9 @@
       "from": "",
       "to": "",
       "rule": "手動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s006",
@@ -219,7 +229,9 @@
       "from": "",
       "to": "",
       "rule": "手動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s007",
@@ -255,7 +267,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     },
     {
       "id": "s008",
@@ -291,7 +305,9 @@
       "from": "",
       "to": "",
       "rule": "自動",
-      "memo": ""
+      "memo": "",
+      "storeId": "",
+      "hq": false
     }
   ],
   "leave": [
