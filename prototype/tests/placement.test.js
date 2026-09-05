@@ -23,7 +23,7 @@ const RULE_BLOCK = (() => {
 const FNS = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays',
   'offQuotaBase', 'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_',
-  'needOf_', 'shortage_', 'firstOverrun_', 'repairRuns_'];
+  'needOf_', 'clerkCapOf_', 'shortage_', 'firstOverrun_', 'repairRuns_'];
 
 const harness = `
   const DAY_COLS = 31;

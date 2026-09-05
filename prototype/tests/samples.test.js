@@ -19,7 +19,7 @@ const RULE_BLOCK = (() => {
 })();
 const FNS = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays', 'offQuotaBase',
-  'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_', 'needOf_', 'needOf_', 'shortage_',
+  'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_', 'needOf_', 'needOf_', 'clerkCapOf_', 'shortage_',
   'firstOverrun_', 'repairRuns_'];
 
 const make = new Function([

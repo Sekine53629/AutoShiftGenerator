@@ -451,13 +451,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     </p>
     <div class="rules" id="rulesForm"></div>
 
-    <h2 style="margin-top:22px">必要人数（医師数ごと）</h2>
+    <h2 style="margin-top:22px">必要人数（医師数ごと）— 仮の値</h2>
     <p class="lead">
-      医師1人あたり何人、という掛け算では表せません。<b>少なすぎると</b>調剤・鑑査・投薬が
-      固定化して疲弊し、<b>多すぎると</b>店舗からあふれます。だから帯で持ちます。<br>
-      店舗営業マスタの<b>曜日別下限とは併用</b>し、大きいほうを採ります
-      （来局の波は曜日にもあるため）。<b>目安</b>を狙って配置し、<b>上限</b>まで居る日には
-      それ以上足しません。<b>下限</b>を割ると警告に出ます。
+      実際の必要人数は <b>潜在患者数 → 予約数 → 医師数</b> という流れで決まり、
+      曜日・天候・祝日と土日のローリングなど複数の要素が絡みます。医師数はその
+      <b>結果として現れる指標</b>であって、掛け算で人数が出るものではありません。
+      ここは予測モデルができるまでの当て板です。<br>
+      店舗営業マスタの<b>曜日別下限とは併用</b>し、大きいほうを採ります。
+      <b>目安</b>を狙って配置し、<b>下限</b>を割ると警告に出ます。<br>
+      <b>上限はここにありません。</b>人数の上限は需要ではなく
+      <b>店舗の広さ</b>で先に決まるので、店舗マスタの「収容上限」が持ちます。
     </p>
     <div class="mtwrap" style="max-width:520px"><table class="mt" id="mtDemand"></table></div>
     <p class="hint">
@@ -478,7 +481,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <h2>店舗マスタ</h2>
   <p class="lead">
     店舗ごとに営業日と必要人数を持ちます。<b>左端の「表示」で選んだ店舗</b>の
-    営業マスタと特例日が、この下に出ます。シフト表もその店舗のものになります。
+    営業マスタと特例日が、この下に出ます。シフト表もその店舗のものになります。<br>
+    <b>収容上限</b>は「同時に何人まで店に入れるか」です。需要ではなく
+    <b>店舗の広さ・作業台の数</b>で決まるので、必要人数の表ではなくここに置きます。
   </p>
   <div class="mtwrap"><table class="mt" id="mtStore"></table></div>
   <div class="mtfoot"><button data-add="store">行を追加</button></div>
@@ -682,7 +687,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     staff.push(mk('事務 D', '事務員', '社員', 4, '', 4, ['○'], ALL, [], false, RULE_WEEKN));
 
     return {
-      stores: [{ id: 'st1', name: '本店', short: '本', memo: '' }],
+      // capPharm / capClerk は「同時に何人まで店に入れるか」。
+      // 需要ではなく店舗の広さ・作業台の数で決まるので、必要人数の表ではなく
+      // 店舗の属性として持つ
+      stores: [{ id: 'st1', name: '本店', short: '本',
+                 capPharm: 6, capClerk: 3, memo: '' }],
 
       /**
        * 店舗営業マスタ。曜日ごとの営業有無・開局時間・必要人数の下限。
@@ -742,23 +751,26 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       leave: staff.filter(s => s.employment === '社員')
         .map(s => ({ id: 'l' + s.id, staffId: s.id, grantDate: '', grantDays: 10, usedDays: 0 })),
       /**
-       * 必要人数。医師数ごとに 薬剤師の 下限・目安・上限 を持つ。
+       * 必要人数（下限・目安）。医師数を手がかりにした**仮の値**。
        *
-       * 医師1人あたり何人、という掛け算では表せない。
-       *   少なすぎる … 調剤・鑑査・投薬が固定化して疲弊する（だから下限が要る）
-       *   多すぎる   … 店舗からあふれる（だから上限が要る）
-       *   5診の日   … 厚くする
+       * 実際の必要人数は 潜在患者数 → 予約数 → 医師数 という流れで決まり、
+       * 曜日・天候・祝日と土日のローリングなど複数の要素が絡む。医師数は
+       * その結果として現れる指標にすぎず、掛け算で人数は出せない。
+       * ここはその予測モデルができるまでの当て板。
+       *
+       * 上限はここに置かない。**上限は店舗の広さ（収容上限）が先に来る**ので、
+       * 店舗マスタの capPharm / capClerk が持つ。
+       *
        * 曜日別下限（店舗営業マスタ）とは併用し、大きいほうを採る。
-       * 来局の波は曜日にもあるので、両方を見ないと合わない。
        */
       demand: [
-        { id: 'dm0', doctors: 0, min: 1, target: 2, max: 3 },
-        { id: 'dm1', doctors: 1, min: 2, target: 2, max: 3 },
-        { id: 'dm2', doctors: 2, min: 2, target: 3, max: 4 },
-        { id: 'dm3', doctors: 3, min: 3, target: 3, max: 4 },
-        { id: 'dm4', doctors: 4, min: 3, target: 4, max: 5 },
-        { id: 'dm5', doctors: 5, min: 4, target: 5, max: 6 },
-        { id: 'dm6', doctors: 6, min: 4, target: 6, max: 7 }
+        { id: 'dm0', doctors: 0, min: 1, target: 2 },
+        { id: 'dm1', doctors: 1, min: 2, target: 2 },
+        { id: 'dm2', doctors: 2, min: 2, target: 3 },
+        { id: 'dm3', doctors: 3, min: 3, target: 3 },
+        { id: 'dm4', doctors: 4, min: 3, target: 4 },
+        { id: 'dm5', doctors: 5, min: 4, target: 5 },
+        { id: 'dm6', doctors: 6, min: 4, target: 6 }
       ],
 
       rules: {
@@ -787,6 +799,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 丸ごと無いマスタは初期値で補う
     ['stores', 'hours', 'closures', 'holidays', 'demand'].forEach(k => {
       if (!Array.isArray(db[k]) || !db[k].length) db[k] = seed[k];
+    });
+    // 収容上限を持たない版の店舗マスタ
+    (db.stores || []).forEach(t => {
+      if (t.capPharm === undefined) t.capPharm = 6;
+      if (t.capClerk === undefined) t.capClerk = 3;
     });
 
     // シフトパターンの「公休枠を使う」。記号が同じものは初期値に合わせ、
@@ -1581,7 +1598,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人。下限 ' + nd.min
           + ' 人に足りません（医師 ' + docCount(c) + ' 人／曜日下限 ' + days[c].pharmMin + ' 人）');
       } else if (on > nd.max) {
-        msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人。上限 ' + nd.max + ' 人を超えています');
+        msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人。店舗の収容上限 '
+          + nd.max + ' 人を超えています');
       }
       let clerks = 0;
       ROWS.forEach(r2 => {
@@ -1590,6 +1608,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       if (clerks < days[c].clerkMin) {
         msgs.push(days[c].day + '日：事務 ' + clerks + ' 人（営業マスタの下限 '
           + days[c].clerkMin + ' 人）');
+      } else if (clerks > clerkCapOf_()) {
+        msgs.push(days[c].day + '日：事務 ' + clerks + ' 人。店舗の収容上限 '
+          + clerkCapOf_() + ' 人を超えています');
       }
       if (r.needCloser && closer === 0) msgs.push(days[c].day + '日：締め作業ができる人がいない');
     }
@@ -1858,13 +1879,22 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const n = docCount(c);
     const list = DB.demand || [];
     const row = list.find(r => Number(r.doctors) === n)
-      || list[list.length - 1] || { min: 0, target: 0, max: 99 };
+      || list[list.length - 1] || { min: 0, target: 0 };
     const floor = days[c].pharmMin;
+    // 上限は店舗の収容人数。需要ではなく広さで決まる
+    const store = DB.stores.find(t => t.id === activeStore) || {};
+    const cap = Number(store.capPharm) || 99;
     return {
       min: Math.max(floor, Number(row.min) || 0),
-      target: Math.max(floor, Number(row.target) || 0),
-      max: Math.max(floor, Number(row.max) || 99)
+      target: Math.min(cap, Math.max(floor, Number(row.target) || 0)),
+      max: cap
     };
+  }
+
+  /** その日に入れる事務の上限。こちらも店舗の広さで決まる */
+  function clerkCapOf_() {
+    const store = DB.stores.find(t => t.id === activeStore) || {};
+    return Number(store.capClerk) || 99;
   }
 
   /**
@@ -1880,6 +1910,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       ROWS.forEach(r => {
         if (r.kind === 'staff' && r.role === 'clerk' && isWork(get(r, c))) on++;
       });
+      if (on >= clerkCapOf_()) return -99;      // 店に入れる数を超えない
       return days[c].clerkMin - on;
     }
     ROWS.forEach(r => {
@@ -2017,14 +2048,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     demand: [
       { key: 'doctors', head: '医師数', type: 'calc', calc: r => r.doctors + ' 診' },
       { key: 'min',     head: '薬剤師 下限', type: 'num', min: 0, max: 20 },
-      { key: 'target',  head: '薬剤師 目安', type: 'num', min: 0, max: 20 },
-      { key: 'max',     head: '薬剤師 上限', type: 'num', min: 0, max: 20 }
+      { key: 'target',  head: '薬剤師 目安', type: 'num', min: 0, max: 20 }
     ],
     store: [
-      { key: '_pick', head: '表示', type: 'pick' },
-      { key: 'name',  head: '店舗名', type: 'text', w: 150 },
-      { key: 'short', head: '略称',   type: 'text', w: 70 },
-      { key: 'memo',  head: '備考',   type: 'text', w: 240 }
+      { key: '_pick',    head: '表示',   type: 'pick' },
+      { key: 'name',     head: '店舗名', type: 'text', w: 150 },
+      { key: 'short',    head: '略称',   type: 'text', w: 70 },
+      { key: 'capPharm', head: '薬剤師 収容上限', type: 'num', min: 0, max: 30 },
+      { key: 'capClerk', head: '事務 収容上限',   type: 'num', min: 0, max: 30 },
+      { key: 'memo',     head: '備考',   type: 'text', w: 200 }
     ],
     hours: [
       { key: 'dow',      head: '曜日',       type: 'dowName' },
@@ -2304,7 +2336,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       canClose: false, from: '', to: '', rule: RULE_NORMAL, memo: '',
       hq: false, stores: [activeStore]
     }),
-    store:   () => ({ id: newId('st'), name: '', short: '', memo: '' }),
+    store:   () => ({ id: newId('st'), name: '', short: '',
+                      capPharm: 6, capClerk: 3, memo: '' }),
     // 店舗だけ増えても営業日が無ければ表は組めない。7行を一緒に作る
     holiday: () => ({ id: newId('hd'), name: '', kind: '公休加算',
                       from: '', to: '', memo: '' }),
@@ -2553,7 +2586,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /** 店舗が消えた／増えたときに、選んでいる店舗を辻褄の合う値へ寄せる */
   function syncActiveStore() {
     if (!DB.stores.length) {
-      DB.stores = [{ id: 'st1', name: '本店', short: '本', memo: '' }];
+      DB.stores = [{ id: 'st1', name: '本店', short: '本',
+                     capPharm: 6, capClerk: 3, memo: '' }];
       save();
     }
     if (!DB.stores.some(t => t.id === activeStore)) activeStore = DB.stores[0].id;
