@@ -16,7 +16,7 @@ function person(o) {
     id: 's' + String(seq).padStart(3, '0'),
     name: '', kind: '薬剤師', employment: '社員',
     weekDays: 5, offAdjust: 0, maxCons: 5,
-    patterns: ['○', '●', '▲'], availDow: ALL, fixedDow: [0, 0, 0, 0, 0, 0, 0],
+    patterns: ['○', '●', '▲'], availDow: ALL.slice(), fixedDow: [0, 0, 0, 0, 0, 0, 0],
     canClose: true, from: '', to: '', rule: '自動', memo: ''
   }, o);
 }

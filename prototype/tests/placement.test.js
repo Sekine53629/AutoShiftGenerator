@@ -79,6 +79,23 @@ function check(ok, label, detail) {
   return ok;
 }
 
+// 配列の共有。1人を直すと全員が変わる不具合を二度と入れない
+(function () {
+  const r = run(2026, 10);
+  const list = r.DB.staff;
+  let shared = 0;
+  list.forEach((a, i) => list.forEach((b, j) => {
+    if (i >= j) return;
+    ['availDow', 'fixedDow', 'patterns'].forEach(k => {
+      if (a[k] === b[k]) { shared++; console.log('  NG  ' + k + ' を共有: ' + a.name + ' と ' + b.name); }
+    });
+  }));
+  if (shared) failures += shared;
+  console.log('配列の共有: ' + (shared ? '★' + shared + ' 組' : 'なし')
+    + ' ／ 出られる曜日の既定: '
+    + (list.every(s => s.availDow.every(v => v === 1)) ? '全ON' : '★全ONでない'));
+})();
+
 [[2026, 10], [2026, 11], [2027, 1], [2028, 2]].forEach(([y, m]) => {
   const r = run(y, m);
   const inMonth = [];

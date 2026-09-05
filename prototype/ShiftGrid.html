@@ -318,6 +318,8 @@ table.mt .dow label, table.mt .checks label {
   padding: 1px 3px; border-radius: 2px; cursor: pointer;
 }
 table.mt .dow label:hover, table.mt .checks label:hover { background: var(--accent-soft); }
+/* 外している曜日。ONが既定なので、落としてある所が目に入るようにする */
+table.mt .dow label.off { opacity: .45; text-decoration: line-through; }
 table.mt .dow label.d0 { color: var(--danger); }
 table.mt .dow label.d6 { color: var(--accent); }
 table.mt .del {
@@ -595,25 +597,31 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
      氏名はすべて架空の表記。本番は各マスタシートが正になる。 */
   function seedDb() {
     const staff = [];
+    // 配列は必ず複製する。共有すると1人を直しただけで全員が変わり、
+    // 画面では設定が効いていないように見える
     const mk = (name, kind, emp, week, off, cons, pats, avail, fixed, close, rule) => ({
       id: 's' + (staff.length + 1), name: name, kind: kind, employment: emp,
       weekDays: week, offAdjust: off, maxCons: cons,
-      patterns: pats, availDow: avail, fixedDow: fixed,
+      patterns: (pats || []).slice(),
+      availDow: (avail || ALL).slice(),
+      fixedDow: (fixed || NONE).slice(),
       canClose: close, from: '', to: '', rule: rule, memo: ''
     });
-    // 土日祝も営業する。出られない曜日は個人の事情であって、店の休みではない
+    // 出られる曜日の既定は全 ON。出られない曜日は個人の事情であって、
+    // 店の休みではない（店の営業日は店舗営業マスタが持つ）
     const ALL = [1, 1, 1, 1, 1, 1, 1];
+    const NONE = [0, 0, 0, 0, 0, 0, 0];
     // 連続出勤の上限は人ごとに違う。A は 3 日、B 以降は 5 日
     staff.push(mk('薬剤師 A', '薬剤師', '社員', 5, 0, 3, ['○', '●', '▲'], ALL, [], true, '自動'));
     ['B', 'C', 'D', 'E', 'F'].forEach(x =>
       staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, 0, 5, ['○', '●', '▲'], ALL, [], true, '自動')));
-    staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, 0, 4, ['○', '●'], [1, 1, 1, 0, 0, 1, 1], [], true, '自動'));
-    staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, 0, 3, ['●'], [0, 0, 1, 1, 0, 1, 1], [], false, '自動'));
+    staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, 0, 4, ['○', '●'], ALL, [], true, '自動'));
+    staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, 0, 3, ['●'], ALL, [], false, '自動'));
     ['1', '2', '3'].forEach(x =>
       staff.push(mk('派遣 ' + x, '薬剤師', '派遣', 0, 0, 6, ['▲', '●'], ALL, [], false, '手動')));
     ['A', 'B', 'C'].forEach(x =>
       staff.push(mk('事務 ' + x, '事務員', '社員', 5, 0, 5, ['○', '●'], ALL, [], true, '自動')));
-    staff.push(mk('事務 D', '事務員', '社員', 4, 0, 4, ['○'], [1, 1, 1, 1, 0, 1, 0], [], false, '自動'));
+    staff.push(mk('事務 D', '事務員', '社員', 4, 0, 4, ['○'], ALL, [], false, '自動'));
 
     return {
       stores: [{ id: 'st1', name: '本店', short: '本', memo: '' }],
@@ -1790,14 +1798,22 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
     if (col.type === 'dow') {
       const box = el('div', 'dow');
-      if (!Array.isArray(rec[col.key])) rec[col.key] = [0, 0, 0, 0, 0, 0, 0];
+      // この行だけの配列にしてから触る。ほかの行と同じ配列を掴んでいると、
+      // 1人を直したつもりで全員が変わる
+      const src = Array.isArray(rec[col.key]) ? rec[col.key] : [];
+      rec[col.key] = DOW.map((d, i) => (src[i] ? 1 : 0));
       DOW.forEach((d, i) => {
         const lb = el('label', 'd' + i);
         lb.appendChild(el('span', '', d));
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.checked = !!rec[col.key][i];
-        cb.addEventListener('change', () => { rec[col.key][i] = cb.checked ? 1 : 0; commit(); });
+        cb.addEventListener('change', () => {
+          rec[col.key][i] = cb.checked ? 1 : 0;
+          lb.classList.toggle('off', !cb.checked);
+          commit();
+        });
+        lb.classList.toggle('off', !rec[col.key][i]);
         lb.appendChild(cb);
         box.appendChild(lb);
       });
@@ -1806,7 +1822,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
     if (col.type === 'checks') {
       const box = el('div', 'checks');
-      if (!Array.isArray(rec[col.key])) rec[col.key] = [];
+      rec[col.key] = (Array.isArray(rec[col.key]) ? rec[col.key] : []).slice();
       DB[col.from].filter(p => p.kind === '出勤').forEach(p => {
         const lb = el('label');
         lb.appendChild(el('span', '', p.sym));
@@ -1890,7 +1906,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     staff: () => ({
       id: newId('s'), name: '', kind: '薬剤師', employment: '社員',
       weekDays: 5, offAdjust: 0, maxCons: 5, patterns: ['○', '●', '▲'],
-      availDow: [0, 1, 1, 1, 1, 1, 1], fixedDow: [0, 0, 0, 0, 0, 0, 0],
+      availDow: [1, 1, 1, 1, 1, 1, 1], fixedDow: [0, 0, 0, 0, 0, 0, 0],
       canClose: false, from: '', to: '', rule: '自動', memo: ''
     }),
     store:   () => ({ id: newId('st'), name: '', short: '', memo: '' }),
