@@ -15,6 +15,11 @@ function grab(name) {
 }
 const line = t => src.split(/\r?\n/).find(l => l.includes(t));
 
+const RULE_BLOCK = (() => {
+  const a = src.indexOf('const RULE_NORMAL');
+  const b = src.indexOf('const usesQuota');
+  return src.slice(a, src.indexOf(';', b) + 1);
+})();
 const FNS = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays',
   'offQuotaBase', 'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_',
@@ -23,6 +28,7 @@ const FNS = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeI
 const harness = `
   const DAY_COLS = 31;
   const DOW = ['日','月','火','水','木','金','土'];
+  ${RULE_BLOCK}
   ${line('const DAYS_IN_MONTH')}
   ${line('const vernalDay')}
   ${line('const autumnalDay')}
@@ -103,7 +109,7 @@ function check(ok, label, detail) {
 
   console.log('');
   console.log('══ ' + y + '年' + m + '月  (' + inMonth.length + '日 / 公休ノルマ ' + r.quotaBase + '日)');
-  console.log('  氏名        公休 ノルマ 空欄 出勤 週別出勤        最長連勤/上限 最長連休');
+  console.log('  氏名       ルール    公休 ノルマ 空欄 出勤 週別出勤        最長連勤/上限 最長連休');
 
   r.ROWS.forEach(row => {
     const s = row.staff;
@@ -117,16 +123,16 @@ function check(ok, label, detail) {
     const runW = longestRun(c => r.isWork(r.get(row, c)), inMonth);
     const runO = longestRun(c => !r.isWork(r.get(row, c)), inMonth);
     const weekLimit = r.weeks.map(w => Math.min(s.weekDays || 0, w.cols.length));
-    const overWeek = perWeek.some((n, i) => n > weekLimit[i]);
+    const overWeek = s.rule !== '固定曜日' && perWeek.some((n, i) => n > weekLimit[i]);
 
-    console.log('  ' + s.name.padEnd(10)
+    console.log('  ' + s.name.padEnd(9) + s.rule.padEnd(8)
       + String(off).padStart(3) + String(quota).padStart(6)
       + String(blank).padStart(5) + String(work).padStart(5) + '  [' + perWeek.join(' ') + ']'
       + ('  週上限[' + weekLimit.join(' ') + ']').padEnd(20)
       + String(runW).padStart(4) + '/' + cap
       + String(runO).padStart(8));
 
-    check(off === quota, s.name + ' の公休がノルマとビタビタでない', '公休' + off + ' ノルマ' + quota);
+    if (s.rule === '通常') check(off === quota, s.name + ' の公休がノルマとビタビタでない', '公休' + off + ' ノルマ' + quota);
     check(runW <= cap, s.name + ' が連勤上限を超えた', runW + ' > ' + cap);
     check(!overWeek, s.name + ' の週出勤が上限を超えた', perWeek.join(',') + ' 上限' + weekLimit.join(','));
   });

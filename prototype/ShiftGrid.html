@@ -520,6 +520,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     （退職者を消さずに済むので、過去の月を開いても表が壊れません）。<br>
     <b>月ごとに変わる値はここに置きません。</b>月の公休ノルマは暦から決まり全員共通です
     （画面上部に出ています）。ここに置けるのは<b>年単位の契約値</b>だけです。<br>
+    <b>勤務ルール</b>で組み方が変わります。<b>公休ノルマを当てるのは「通常」だけ</b>です
+    ——「固定曜日」と「週N日」は出勤日が先に決まっているので、ノルマを当てると
+    必ず矛盾します。「手動」は自動生成が触りません（派遣など）。<br>
     <b>本部所属</b>と<b>担当店舗</b>は別物です。本部に籍を置きながら店舗や
     エリアを見る人がいるので、両方を設定できます。担当店舗は<b>複数選べます</b>
     （エリア管理）。1つも選ばなければ全店の表に出ます。
@@ -597,6 +600,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   'use strict';
 
   const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+
+  /**
+   * 勤務ルール。VBA 版と同じ4種。
+   *   通常     … 公休ノルマちょうどで組む
+   *   固定曜日 … 決まった曜日に出る。出ない日は全部公休。ノルマは見ない
+   *   週N日   … 週に N 日出る。出ない日は全部公休。ノルマは見ない
+   *   手動     … 触らない（派遣など）
+   * 公休ノルマを当てるのは 通常 だけ。固定曜日と週N日は出勤日が
+   * 先に決まっているので、ノルマを当てると必ず矛盾する。
+   */
+  const RULE_NORMAL = '通常';
+  const RULE_FIXED = '固定曜日';
+  const RULE_WEEKN = '週N日';
+  const RULE_MANUAL = '手動';
+  const RULE_OPTS = [RULE_NORMAL, RULE_FIXED, RULE_WEEKN, RULE_MANUAL];
+  /** 公休ノルマを守らせる相手か */
+  const usesQuota = s => s.rule === RULE_NORMAL;
   const DAY_COLS = 31;              // B〜AF 固定（LAYOUT.COL_FIRST〜COL_LAST）
   const DOC_ROWS = 5;               // 医師名欄の行数（LAYOUT.DOC_BLOCK_ROWS）
   const DOC_BUSY_N = 5;             // 「5診出勤」とみなす医師数
@@ -632,16 +652,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const ALL = [1, 1, 1, 1, 1, 1, 1];
     const NONE = [0, 0, 0, 0, 0, 0, 0];
     // 連続出勤の上限は人ごとに違う。A は 3 日、B 以降は 5 日
-    staff.push(mk('薬剤師 A', '薬剤師', '社員', 5, '', 3, ['○', '●', '▲'], ALL, [], true, '自動'));
+    staff.push(mk('薬剤師 A', '薬剤師', '社員', 5, '', 3, ['○', '●', '▲'], ALL, [], true, RULE_NORMAL));
     ['B', 'C', 'D', 'E', 'F'].forEach(x =>
-      staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, '', 5, ['○', '●', '▲'], ALL, [], true, '自動')));
-    staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, '', 4, ['○', '●'], ALL, [], true, '自動'));
-    staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, '', 3, ['●'], ALL, [], false, '自動'));
+      staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, '', 5, ['○', '●', '▲'], ALL, [], true, RULE_NORMAL)));
+    staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, '', 4, ['○', '●'], ALL, [], true, RULE_WEEKN));
+    staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, '', 3, ['●'], ALL,
+                  [0, 1, 0, 1, 0, 1, 0], false, RULE_FIXED));   // 月水金
     ['1', '2', '3'].forEach(x =>
       staff.push(mk('派遣 ' + x, '薬剤師', '派遣', 0, '', 6, ['▲', '●'], ALL, [], false, '手動')));
     ['A', 'B', 'C'].forEach(x =>
-      staff.push(mk('事務 ' + x, '事務員', '社員', 5, '', 5, ['○', '●'], ALL, [], true, '自動')));
-    staff.push(mk('事務 D', '事務員', '社員', 4, '', 4, ['○'], ALL, [], false, '自動'));
+      staff.push(mk('事務 ' + x, '事務員', '社員', 5, '', 5, ['○', '●'], ALL, [], true, RULE_NORMAL)));
+    staff.push(mk('事務 D', '事務員', '社員', 4, '', 4, ['○'], ALL, [], false, RULE_WEEKN));
 
     return {
       stores: [{ id: 'st1', name: '本店', short: '本', memo: '' }],
@@ -752,6 +773,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       }
       delete x.storeId;
       if (x.hq === undefined) x.hq = false;
+      // 自動 / 手動 の2種に潰していたのを、VBA 版と同じ4種に戻した
+      if (x.rule === '自動') x.rule = RULE_NORMAL;
+      if (RULE_OPTS.indexOf(x.rule) < 0) x.rule = RULE_NORMAL;
       x.availDow = normDow_(x.availDow, 1);
       x.fixedDow = normDow_(x.fixedDow, 0);
       x.patterns = Array.isArray(x.patterns) ? x.patterns.slice() : [];
@@ -1453,7 +1477,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     ROWS.forEach(row => {
       if (row.kind !== 'staff' || !row.staff) return;
       const s = row.staff;
-      if (s.rule === '手動') return;
+      if (s.rule === RULE_MANUAL) return;
 
       let run = 0, worst = 0;
       for (let c = 0; c < DAY_COLS; c++) {
@@ -1472,8 +1496,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         else if (!v) blank++;
       }
       const quota = offQuotaFor();
-      // 公休はノルマちょうど。多くても少なくても労基上の管理が狂う
-      if (off !== quota) {
+      // 公休ノルマを見るのは 通常 だけ。固定曜日・週N日は出勤日が先に
+      // 決まっているので、ノルマと合わないのが当たり前
+      if (usesQuota(s) && off !== quota) {
         msgs.push(s.name + '：公休（公休＋希望休）が ' + off + ' 日。ノルマは '
           + quota + ' 日です');
       }
@@ -1481,7 +1506,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         msgs.push(s.name + '：記号が入っていない日が ' + blank
           + ' 日あります。有休・夏休を割り当ててください');
       }
-      // 週ごとの出勤日数。週をまたぐ配分が崩れていないか見る
+      // 週ごとの出勤日数。固定曜日は曜日で決まるので見ない
+      if (s.rule === RULE_FIXED) return;
       buildWeeks().forEach((w, i) => {
         const on = w.cols.filter(c => isWork(get(row, c))).length;
         const limit = Math.min(Number(s.weekDays) || 0, w.cols.length);
@@ -1609,7 +1635,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     ROWS.forEach(row => {
       if (row.kind !== 'staff' || !row.staff) return;
-      if (row.staff.rule === '手動') return;      // 派遣など。手で置く
+      if (row.staff.rule === RULE_MANUAL) return;   // 派遣など。手で置く
       placeOneStaff_(row, row.staff, weeks, offSym);
       paintRow(row);
     });
@@ -1641,15 +1667,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       if (!days[c].open || !s.availDow[days[c].dow]) forced.add(c);
     });
 
-    // 3. 公休はノルマちょうどに置く。希望休は既に枠を使っているので差し引く
+    // 3. 出勤日数の目標を決める。ルールによって決め方が違う
     const free = inMonth.filter(c => !keep.has(c) && !forced.has(c));
     const quota = offQuotaFor();
-    const room = quota - keepPub.size;               // まだ置ける公休の数
-    if (room < 0) {
+    // 公休ノルマを当てるのは 通常 だけ。固定曜日・週N日は出勤日が先に
+    // 決まっているので、ノルマを当てると必ず矛盾する
+    const room = usesQuota(s) ? quota - keepPub.size : Infinity;
+    if (usesQuota(s) && room < 0) {
       note_(s.name + '：希望休が ' + keepPub.size + ' 日で、公休ノルマ '
         + quota + ' 日を超えています');
     }
-    const extraOff = Math.max(0, room - forced.size);
+    const extraOff = usesQuota(s) ? Math.max(0, room - forced.size) : 0;
 
     // 4. 週ごとの出勤日数。上限は週勤務日数
     const freeSet = new Set(free);
@@ -1660,15 +1688,29 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 週勤務日数は超えない。公休ノルマは「最低これだけ休む」という下限として扱う。
     // 週3の人は31日の月に13日ほどしか働けないので、公休はノルマを必ず超える。
     // ノルマに合わせて無理に出勤させると、週勤務日数の約束を破ることになる。
-    const capSum = wk.reduce((a, w) => a + w.cap, 0);
-    const workTarget = Math.min(Math.max(0, free.length - extraOff), capSum);
+    // 固定曜日は、その曜日にだけ出る。週の上限や公休ノルマは関係ない
+    if (s.rule === RULE_FIXED) {
+      wk.forEach(w => {
+        w.picked = w.cols.filter(c => s.fixedDow[days[c].dow]);
+        w.n = w.picked.length;
+      });
+      if (!wk.some(w => w.n)) {
+        note_(s.name + '：固定曜日が1つも選ばれていないので、出勤日がありません');
+      }
+    }
 
-    wk.forEach(w => { w.n = w.cap; });
-    let sum = capSum;
+    const capSum = wk.reduce((a, w) => a + w.cap, 0);
+    // 通常だけ公休ノルマに合わせる。週N日は週の上限まで出す
+    const workTarget = usesQuota(s)
+      ? Math.min(Math.max(0, free.length - extraOff), capSum)
+      : capSum;
+
+    if (s.rule !== RULE_FIXED) wk.forEach(w => { w.n = w.cap; });
+    let sum = wk.reduce((a, w) => a + w.n, 0);
     // 埋まり具合の高い週から1日ずつ減らす。週をまたいで均し、
     // 特定の週だけ薄くなるのを避ける
     let guard = 0;
-    while (sum > workTarget && guard++ < 400) {
+    while (s.rule !== RULE_FIXED && sum > workTarget && guard++ < 400) {
       const t = pickWeek_(wk, w => w.n > 0, -1);
       if (!t) break;
       t.n--; sum--;
@@ -1676,8 +1718,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     // 公休枠に収まらない休みは、こちらで記号を決めない。
     // 有休を勝手に消費させるわけにはいかないので、空欄のまま残して申し送る。
+    // 固定曜日・週N日はノルマを見ないので、この溢れは起きない
     const offNeeded = free.length - sum + forced.size;   // 公休にしたい日数
-    const overflow = Math.max(0, offNeeded - Math.max(0, room));
+    const overflow = usesQuota(s) ? Math.max(0, offNeeded - Math.max(0, room)) : 0;
     if (overflow > 0) {
       note_(s.name + '：公休枠を ' + overflow + ' 日ぶん超える休みがあります。'
         + '有休・夏休を割り当ててください（その日は空欄にしてあります）');
@@ -1687,19 +1730,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     inMonth.forEach(c => { if (!keep.has(c)) setV(row, c, ''); });
     const workDays = new Set();
     wk.forEach(w => {
-      const order = w.cols.slice().sort((a, b) =>
-        (shortage_(b) - shortage_(a)) || (a - b));
-      order.slice(0, w.n).forEach(c => { setV(row, c, workSym); workDays.add(c); });
+      const pick = w.picked ? w.picked : w.cols.slice().sort((a, b) =>
+        (shortage_(b) - shortage_(a)) || (a - b)).slice(0, w.n);
+      pick.forEach(c => { setV(row, c, workSym); workDays.add(c); });
     });
 
-    // 6. 残りに公休をノルマちょうどまで置く。休業日から先に埋める
-    //    （店が閉まっている日は必ず公休。出られない曜日より優先する）
+    // 6. 残りを公休にする。通常はノルマちょうどまで、それ以外は全部。
+    //    休業日から先に埋める（店が閉まっている日は必ず公休）
     const rest = inMonth.filter(c => !keep.has(c) && !workDays.has(c));
     rest.sort((a, b) => (days[a].open ? 1 : 0) - (days[b].open ? 1 : 0) || a - b);
-    rest.slice(0, Math.max(0, room)).forEach(c => setV(row, c, offSym));
+    const cap2 = usesQuota(s) ? Math.max(0, room) : rest.length;
+    rest.slice(0, cap2).forEach(c => setV(row, c, offSym));
 
-    // 8. 連勤上限を、週ごとの出勤日数を変えずに直す
-    repairRuns_(row, s, wk, cap, workSym, offSym);
+    // 8. 連勤上限を、週ごとの出勤日数を変えずに直す。
+    //    固定曜日は出る曜日そのものが約束なので動かさない
+    if (s.rule !== RULE_FIXED) repairRuns_(row, s, wk, cap, workSym, offSym);
   }
 
   /** 埋まり具合がいちばん高い(dir<0)／低い(dir>0)週を返す */
@@ -1807,7 +1852,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'canClose',   head: '締め作業',    type: 'check', group: '資格' },
       { key: 'from',       head: '在籍 開始',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM, group: '在籍' },
       { key: 'to',         head: '在籍 終了',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM, group: '在籍' },
-      { key: 'rule',       head: 'ルール',      type: 'select', opts: ['自動', '手動'], group: '在籍' },
+      { key: 'rule',       head: '勤務ルール',  type: 'select', opts: RULE_OPTS, group: '在籍' },
       { key: 'memo',       head: '備考',        type: 'text', w: 140, group: '在籍' }
     ],
     doctor: [
@@ -2112,7 +2157,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       id: newId('s'), name: '', kind: '薬剤師', employment: '社員',
       weekDays: 5, annualOff: '', maxCons: 5, patterns: ['○', '●', '▲'],
       availDow: [1, 1, 1, 1, 1, 1, 1], fixedDow: [0, 0, 0, 0, 0, 0, 0],
-      canClose: false, from: '', to: '', rule: '自動', memo: '',
+      canClose: false, from: '', to: '', rule: RULE_NORMAL, memo: '',
       hq: false, stores: [activeStore]
     }),
     store:   () => ({ id: newId('st'), name: '', short: '', memo: '' }),

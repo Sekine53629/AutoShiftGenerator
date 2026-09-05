@@ -17,7 +17,7 @@ function person(o) {
     name: '', kind: '薬剤師', employment: '社員',
     weekDays: 5, annualOff: '', maxCons: 5,
     patterns: ['○', '●', '▲'], availDow: ALL.slice(), fixedDow: [0, 0, 0, 0, 0, 0, 0],
-    canClose: true, from: '', to: '', rule: '自動', memo: '',
+    canClose: true, from: '', to: '', rule: '通常', memo: '',
     hq: false, stores: []   // 担当店舗が空＝全店
   }, o);
 }
@@ -41,13 +41,13 @@ PATTERNS['staff-standard'] = {
   aim: '常勤中心。全員が土日祝も出られる。まずここが素直に組めるか',
   staff: [
     ...'ABCDEF'.split('').map(x => person({ name: '薬剤師 ' + x })),
-    person({ name: '薬剤師 G', weekDays: 4, maxCons: 4, availDow: dow(0, 1, 2, 5, 6) }),
+    person({ name: '薬剤師 G', weekDays: 4, maxCons: 4, rule: '週N日', availDow: dow(0, 1, 2, 5, 6) }),
     person({ name: '派遣 1', employment: '派遣', rule: '手動', weekDays: 0, maxCons: 6,
              patterns: ['▲', '●'], canClose: false, memo: '調剤のみ。締め不可' }),
     person({ name: '派遣 2', employment: '派遣', rule: '手動', weekDays: 0, maxCons: 6,
              patterns: ['▲', '●'], canClose: false, memo: '調剤のみ。締め不可' }),
     ...'ABC'.split('').map(x => person({ name: '事務 ' + x, kind: '事務員', patterns: ['○', '●'] })),
-    person({ name: '事務 D', kind: '事務員', weekDays: 4, maxCons: 4,
+    person({ name: '事務 D', kind: '事務員', weekDays: 4, maxCons: 4, rule: '週N日',
              patterns: ['○'], availDow: dow(1, 2, 3, 5), canClose: false })
   ]
 };
@@ -83,12 +83,13 @@ PATTERNS['staff-parttime'] = {
   aim: '週3〜4が多い。公休枠を超える休みが空欄で出て、有休・夏休の判断が要る形になるか',
   staff: [
     ...'AB'.split('').map(x => person({ name: '薬剤師 ' + x })),
-    person({ name: '薬剤師 C', weekDays: 4, maxCons: 4, availDow: dow(0, 1, 2, 4, 6) }),
-    person({ name: '薬剤師 D', weekDays: 4, maxCons: 4, availDow: dow(1, 3, 4, 5, 6) }),
-    person({ name: '薬剤師 E', weekDays: 3, maxCons: 3, availDow: dow(2, 3, 5, 6),
-             patterns: ['●'], canClose: false }),
-    person({ name: '薬剤師 F', weekDays: 3, maxCons: 3, availDow: dow(0, 1, 4, 5),
-             patterns: ['○'], canClose: false }),
+    person({ name: '薬剤師 C', weekDays: 4, maxCons: 4, rule: '週N日', availDow: dow(0, 1, 2, 4, 6) }),
+    person({ name: '薬剤師 D', weekDays: 4, maxCons: 4, rule: '週N日', availDow: dow(1, 3, 4, 5, 6) }),
+    person({ name: '薬剤師 E', weekDays: 3, maxCons: 3, rule: '固定曜日',
+             fixedDow: dow(2, 3, 5), availDow: dow(2, 3, 5, 6),
+             patterns: ['●'], canClose: false, memo: '火水金 固定' }),
+    person({ name: '薬剤師 F', weekDays: 3, maxCons: 3, rule: '週N日',
+             availDow: dow(0, 1, 4, 5), patterns: ['○'], canClose: false }),
     person({ name: '派遣 1', employment: '派遣', rule: '手動', weekDays: 0, maxCons: 6,
              patterns: ['▲', '●'], canClose: false }),
     ...'AB'.split('').map(x => person({ name: '事務 ' + x, kind: '事務員',
@@ -123,7 +124,7 @@ PATTERNS['setup-onsite'] = {
     ...[1, 2, 3, 4, 5].map(i => person({ name: '薬剤師 ' + i, maxCons: 3 })),
     person({ name: '薬剤師 6', maxCons: 3, availDow: dow(1, 2, 5, 6), canClose: false,
              memo: '日・水・木は出られない。締め作業不可' }),
-    person({ name: '薬剤師 7', weekDays: 4, maxCons: 4, memo: '週4' }),
+    person({ name: '薬剤師 7', weekDays: 4, maxCons: 4, rule: '週N日', memo: '週4' }),
     person({ name: '派遣 1', employment: '派遣', rule: '手動', weekDays: 0, maxCons: 6,
              patterns: ['▲'], canClose: false, memo: '遅番のみ' }),
     person({ name: '派遣 2', employment: '派遣', rule: '手動', weekDays: 0, maxCons: 6,

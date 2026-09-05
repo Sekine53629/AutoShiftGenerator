@@ -35,7 +35,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -74,7 +74,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -113,7 +113,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -152,7 +152,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -191,7 +191,7 @@
       "canClose": true,
       "from": "",
       "to": "2026-10",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "2026年10月末で退職",
       "hq": false,
       "stores": []
@@ -230,7 +230,7 @@
       "canClose": true,
       "from": "2026-11",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "2026年11月入職",
       "hq": false,
       "stores": []
@@ -306,7 +306,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -344,7 +344,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []

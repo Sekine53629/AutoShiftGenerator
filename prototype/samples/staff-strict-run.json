@@ -35,7 +35,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -74,7 +74,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -113,7 +113,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -152,7 +152,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -191,7 +191,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -230,7 +230,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -269,7 +269,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -308,7 +308,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -346,7 +346,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -384,7 +384,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -422,7 +422,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []

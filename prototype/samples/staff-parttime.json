@@ -35,7 +35,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -74,7 +74,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -113,7 +113,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "週N日",
       "memo": "",
       "hq": false,
       "stores": []
@@ -152,7 +152,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "週N日",
       "memo": "",
       "hq": false,
       "stores": []
@@ -180,17 +180,17 @@
       "fixedDow": [
         0,
         0,
+        1,
+        1,
         0,
-        0,
-        0,
-        0,
+        1,
         0
       ],
       "canClose": false,
       "from": "",
       "to": "",
-      "rule": "自動",
-      "memo": "",
+      "rule": "固定曜日",
+      "memo": "火水金 固定",
       "hq": false,
       "stores": []
     },
@@ -226,7 +226,7 @@
       "canClose": false,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "週N日",
       "memo": "",
       "hq": false,
       "stores": []
@@ -302,7 +302,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -340,7 +340,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []

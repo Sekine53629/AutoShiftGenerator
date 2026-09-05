@@ -12,13 +12,18 @@ function grab(n) {
   }
 }
 const L = t => src.split(/\r?\n/).find(l => l.includes(t));
+const RULE_BLOCK = (() => {
+  const a = src.indexOf('const RULE_NORMAL');
+  const b = src.indexOf('const usesQuota');
+  return src.slice(a, src.indexOf(';', b) + 1);
+})();
 const FNS = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays', 'offQuotaBase',
   'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_', 'shortage_',
   'firstOverrun_', 'repairRuns_'];
 
 const make = new Function([
-  'const DAY_COLS=31;',
+  'const DAY_COLS=31;', RULE_BLOCK,
   L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
   FNS.map(grab).join('\n'),
   'const DB=seedDb(); const activeStore="st1";',
@@ -84,9 +89,9 @@ staffFiles.forEach(f => {
       const cap = s.maxCons || r.DB.rules.maxConsDefault;
       const run = longest(c => r.isWork(r.get(row, c)), im);
       blanks += im.filter(c => !r.get(row, c)).length;
-      if (pub !== q) { ok = false; console.log('    NG 公休 ' + s.name + ' ' + pub + '≠' + q); bad++; }
+      if (s.rule === '通常' && pub !== q) { ok = false; console.log('    NG 公休 ' + s.name + ' ' + pub + '≠' + q); bad++; }
       if (run > cap) { ok = false; console.log('    NG 連勤 ' + s.name + ' ' + run + '>' + cap); bad++; }
-      r.weeks.forEach((w, i) => {
+      if (s.rule !== '固定曜日') r.weeks.forEach((w, i) => {
         const on = w.cols.filter(c => r.isWork(r.get(row, c))).length;
         const lim = Math.min(Number(s.weekDays) || 0, w.cols.length);
         if (on > lim) { ok = false; console.log('    NG 週 ' + s.name + ' 第' + (i + 1) + '週 ' + on + '>' + lim); bad++; }

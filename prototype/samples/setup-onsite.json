@@ -35,7 +35,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -74,7 +74,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -113,7 +113,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -152,7 +152,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -191,7 +191,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -230,7 +230,7 @@
       "canClose": false,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "日・水・木は出られない。締め作業不可",
       "hq": false,
       "stores": []
@@ -269,7 +269,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "週N日",
       "memo": "週4",
       "hq": false,
       "stores": []
@@ -382,7 +382,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
@@ -420,7 +420,7 @@
       "canClose": true,
       "from": "",
       "to": "",
-      "rule": "自動",
+      "rule": "通常",
       "memo": "",
       "hq": false,
       "stores": []
