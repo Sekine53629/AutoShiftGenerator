@@ -423,6 +423,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <div class="mtwrap"><table class="mt" id="mtLeave"></table></div>
   <div class="mtfoot">
     <button data-add="leave">行を追加</button>
+    <span class="note" id="leaveWarn"></span>
     <span class="note">付与日から2年で時効になるぶんは、まだ見ていません。</span>
   </div>
 </div></section>
@@ -1169,13 +1170,34 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       del.title = 'この行を削除（二度押し）';
       arm(del, '削除?', () => {
         list.splice(i, 1);
-        save(); renderMaster(name); refreshAll();
+        save(); renderMaster(name);
+        if (name === 'staff') renderMaster('leave');   // 参照先が消えたことを出す
+        refreshAll();
       });
       dc.appendChild(del);
       tr.appendChild(dc);
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
+    if (name === 'leave') showLeaveIntegrity();
+  }
+
+  /**
+   * 有休管理と社員マスタの繋がりを検査する。
+   * 繋ぎ目は氏名ではなく id なので、氏名を変えても切れない。
+   * 切れるのは社員を削除したときで、そのときは黙って通さない。
+   */
+  function showLeaveIntegrity() {
+    const box = $('leaveWarn');
+    if (!box) return;
+    const ids = new Set(DB.staff.map(s => s.id));
+    const orphan = DB.leave.filter(r => !ids.has(r.staffId)).length;
+    const missing = DB.staff.filter(s => !DB.leave.some(r => r.staffId === s.id)).length;
+    const msgs = [];
+    if (orphan) msgs.push('参照先が消えた行 ' + orphan + ' 件');
+    if (missing) msgs.push('有休行が無い社員 ' + missing + ' 名');
+    box.textContent = msgs.length ? '⚠ ' + msgs.join(' / ') : '社員マスタとの対応に問題はありません。';
+    box.style.color = msgs.length ? 'var(--danger)' : 'var(--ink-faint)';
   }
 
   function fieldCell(col, rec, master) {
@@ -1238,6 +1260,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const opts = col.type === 'staff'
         ? DB.staff.map(s => ({ v: s.id, t: s.name }))
         : col.opts.map(o => ({ v: o, t: o }));
+      // 参照先が消えている場合。黙って空欄にすると別人の記録に見えるので明示する
+      if (col.type === 'staff' && rec[col.key]
+          && !opts.some(o => o.v === rec[col.key])) {
+        opts.unshift({ v: rec[col.key], t: '⚠ 参照先なし（' + rec[col.key] + '）' });
+      }
       opts.forEach(o => {
         const op = document.createElement('option');
         op.value = o.v; op.textContent = o.t;
@@ -1264,25 +1291,45 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     return td;
   }
 
+  /**
+   * どのマスタとも重ならない id を作る。
+   * 同じミリ秒に2行足すと Date.now() だけでは衝突するので、既存を見て避ける。
+   * この id が有休管理・シフト表のセル・書き出し JSON の繋ぎ目になる。
+   */
+  function newId(prefix) {
+    const used = new Set();
+    Object.keys(LIST_OF).forEach(k =>
+      (DB[LIST_OF[k]] || []).forEach(r => { if (r.id) used.add(r.id); }));
+    let n = Date.now(), id;
+    do { id = prefix + n.toString(36); n++; } while (used.has(id));
+    return id;
+  }
+
   const BLANK = {
     staff: () => ({
-      id: 's' + Date.now(), name: '', kind: '薬剤師', employment: '社員',
+      id: newId('s'), name: '', kind: '薬剤師', employment: '社員',
       weekDays: 5, monthOff: 9, maxCons: 5, patterns: ['○', '●', '▲'],
       availDow: [0, 1, 1, 1, 1, 1, 1], fixedDow: [0, 0, 0, 0, 0, 0, 0],
       canClose: false, from: '', to: '', rule: '自動', memo: ''
     }),
-    doctor:  () => ({ id: 'd' + Date.now(), name: '', short: '', order: DB.doctors.length + 1, memo: '' }),
-    pattern: () => ({ id: 'p' + Date.now(), sym: '', label: '', kind: '出勤',
+    doctor:  () => ({ id: newId('d'), name: '', short: '', order: DB.doctors.length + 1, memo: '' }),
+    pattern: () => ({ id: newId('p'), sym: '', label: '', kind: '出勤',
                       start: '', end: '', work: true, order: DB.patterns.length + 1 }),
-    note:    () => ({ id: 'n' + Date.now(), text: '', desc: '', order: DB.notes.length + 1 }),
-    leave:   () => ({ id: 'l' + Date.now(), staffId: (DB.staff[0] || {}).id || '',
+    note:    () => ({ id: newId('n'), text: '', desc: '', order: DB.notes.length + 1 }),
+    leave:   () => ({ id: newId('l'), staffId: (DB.staff[0] || {}).id || '',
                       grantDate: '', grantDays: 10, usedDays: 0 })
   };
 
   document.querySelectorAll('[data-add]').forEach(btn => {
     btn.addEventListener('click', () => {
       const name = btn.dataset.add;
-      DB[LIST_OF[name]].push(BLANK[name]());
+      const rec = BLANK[name]();
+      DB[LIST_OF[name]].push(rec);
+      // 社員を足したら有休の行も一緒に用意する。片方だけ増えると突き合わせができない
+      if (name === 'staff') {
+        DB.leave.push({ id: newId('l'), staffId: rec.id, grantDate: '', grantDays: 0, usedDays: 0 });
+        renderMaster('leave');
+      }
       save(); renderMaster(name); refreshAll();
     });
   });
