@@ -15,7 +15,7 @@ const RULE = src.slice(src.indexOf('const RULE_NORMAL'),
   src.indexOf(';', src.indexOf('const usesQuota')) + 1);
 const FN = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays', 'offQuotaBase',
-  'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_', 'shortage_',
+  'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_', 'needOf_', 'needOf_', 'shortage_',
   'firstOverrun_', 'repairRuns_', 'normDow_', 'migrateDb_'];
 
 const run = new Function('staff', 'y', 'm', [

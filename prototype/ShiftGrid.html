@@ -450,6 +450,20 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       出られる曜日・使えるシフトパターン）は社員マスタ側にあります。
     </p>
     <div class="rules" id="rulesForm"></div>
+
+    <h2 style="margin-top:22px">必要人数（医師数ごと）</h2>
+    <p class="lead">
+      医師1人あたり何人、という掛け算では表せません。<b>少なすぎると</b>調剤・鑑査・投薬が
+      固定化して疲弊し、<b>多すぎると</b>店舗からあふれます。だから帯で持ちます。<br>
+      店舗営業マスタの<b>曜日別下限とは併用</b>し、大きいほうを採ります
+      （来局の波は曜日にもあるため）。<b>目安</b>を狙って配置し、<b>上限</b>まで居る日には
+      それ以上足しません。<b>下限</b>を割ると警告に出ます。
+    </p>
+    <div class="mtwrap" style="max-width:520px"><table class="mt" id="mtDemand"></table></div>
+    <p class="hint">
+      これは予測モデルができるまでの仮の数理モデルです。処方箋枚数から必要人数を
+      出せるようになれば、この表はその出力に置き換わります。
+    </p>
     <p class="hint">
       自動生成は<b>週（日曜始まり）ごとに出勤日数を決めてから配ります</b>。
       公休ノルマは労基上の管理項目なので動かさず、連続出勤の上限は
@@ -727,9 +741,28 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       ],
       leave: staff.filter(s => s.employment === '社員')
         .map(s => ({ id: 'l' + s.id, staffId: s.id, grantDate: '', grantDays: 10, usedDays: 0 })),
+      /**
+       * 必要人数。医師数ごとに 薬剤師の 下限・目安・上限 を持つ。
+       *
+       * 医師1人あたり何人、という掛け算では表せない。
+       *   少なすぎる … 調剤・鑑査・投薬が固定化して疲弊する（だから下限が要る）
+       *   多すぎる   … 店舗からあふれる（だから上限が要る）
+       *   5診の日   … 厚くする
+       * 曜日別下限（店舗営業マスタ）とは併用し、大きいほうを採る。
+       * 来局の波は曜日にもあるので、両方を見ないと合わない。
+       */
+      demand: [
+        { id: 'dm0', doctors: 0, min: 1, target: 2, max: 3 },
+        { id: 'dm1', doctors: 1, min: 2, target: 2, max: 3 },
+        { id: 'dm2', doctors: 2, min: 2, target: 3, max: 4 },
+        { id: 'dm3', doctors: 3, min: 3, target: 3, max: 4 },
+        { id: 'dm4', doctors: 4, min: 3, target: 4, max: 5 },
+        { id: 'dm5', doctors: 5, min: 4, target: 5, max: 6 },
+        { id: 'dm6', doctors: 6, min: 4, target: 6, max: 7 }
+      ],
+
       rules: {
         // 曜日別の必要人数と休業日は 店舗営業マスタ が正。ここには置かない
-        reqPlus: 1,
         earlyN: 1, lateN: 1, midN: 0, clerkEarlyN: 1,
         countNationalOff: true,   // 国民の祝日を公休ノルマに数えるか
         maxConsDefault: 5, maxOffRun: 3,
@@ -752,7 +785,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const seed = seedDb();
 
     // 丸ごと無いマスタは初期値で補う
-    ['stores', 'hours', 'closures', 'holidays'].forEach(k => {
+    ['stores', 'hours', 'closures', 'holidays', 'demand'].forEach(k => {
       if (!Array.isArray(db[k]) || !db[k].length) db[k] = seed[k];
     });
 
@@ -1424,7 +1457,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   }
 
   function recalc() {
-    const reqPlus = Number(DB.rules.reqPlus) || 0;
     const doc = [];
     for (let c = 0; c < DAY_COLS; c++) doc.push(days[c].inMonth ? docCount(c) : 0);
 
@@ -1441,7 +1473,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       if (calc === 'doc') n = doc[c];
       else if (calc === 'pharm') n = countIf(r => r.role !== 'clerk');
       else if (calc === 'clerk') n = countIf(r => r.role === 'clerk');
-      else if (calc === 'short') n = countIf(r => r.role !== 'clerk') - (doc[c] + reqPlus);
+      // 過不足は「目安」に対しての差。医師数に一定数を足す計算はやめた
+      else if (calc === 'short') n = countIf(r => r.role !== 'clerk') - needOf_(c).target;
 
       cell.textContent = String(n);
       cell.classList.toggle('neg', calc === 'short' && n < 0);
@@ -1543,8 +1576,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         on++;
         if (row.staff && row.staff.canClose) closer++;
       });
-      const need = days[c].pharmMin;
-      if (on < need) msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人（営業マスタの下限 ' + need + ' 人）');
+      const nd = needOf_(c);
+      if (on < nd.min) {
+        msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人。下限 ' + nd.min
+          + ' 人に足りません（医師 ' + docCount(c) + ' 人／曜日下限 ' + days[c].pharmMin + ' 人）');
+      } else if (on > nd.max) {
+        msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人。上限 ' + nd.max + ' 人を超えています');
+      }
       let clerks = 0;
       ROWS.forEach(r2 => {
         if (r2.kind === 'staff' && r2.role === 'clerk' && isWork(get(r2, c))) clerks++;
@@ -1813,6 +1851,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   /** その日の人手の不足ぶん。大きいほど出勤させたい */
   /**
+   * その日に要る薬剤師の 下限・目安・上限。
+   * 医師数から引いた値と、曜日別下限の大きいほうを採る。
+   */
+  function needOf_(c) {
+    const n = docCount(c);
+    const list = DB.demand || [];
+    const row = list.find(r => Number(r.doctors) === n)
+      || list[list.length - 1] || { min: 0, target: 0, max: 99 };
+    const floor = days[c].pharmMin;
+    return {
+      min: Math.max(floor, Number(row.min) || 0),
+      target: Math.max(floor, Number(row.target) || 0),
+      max: Math.max(floor, Number(row.max) || 99)
+    };
+  }
+
+  /**
    * その日の人手の不足ぶん。大きいほど出勤させたい。
    *
    * 置こうとしている人の区分で見る。以前は薬剤師しか数えていなかったので、
@@ -1830,8 +1885,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     ROWS.forEach(r => {
       if (r.kind === 'staff' && r.role !== 'clerk' && isWork(get(r, c))) on++;
     });
-    const need = Math.max(days[c].pharmMin, docCount(c) + (Number(DB.rules.reqPlus) || 0));
-    return need - on;
+    const need = needOf_(c);
+    // 上限まで居る日にこれ以上足さない。足すと店舗からあふれる
+    if (on >= need.max) return -99;
+    return need.target - on;
   }
 
   /** 上限を超えた最初の出勤日。無ければ -1 */
@@ -1957,6 +2014,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'desc',  head: '説明',   type: 'text', w: 240 },
       { key: 'order', head: '表示順', type: 'num', min: 1, max: 99 }
     ],
+    demand: [
+      { key: 'doctors', head: '医師数', type: 'calc', calc: r => r.doctors + ' 診' },
+      { key: 'min',     head: '薬剤師 下限', type: 'num', min: 0, max: 20 },
+      { key: 'target',  head: '薬剤師 目安', type: 'num', min: 0, max: 20 },
+      { key: 'max',     head: '薬剤師 上限', type: 'num', min: 0, max: 20 }
+    ],
     store: [
       { key: '_pick', head: '表示', type: 'pick' },
       { key: 'name',  head: '店舗名', type: 'text', w: 150 },
@@ -1997,7 +2060,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     ]
   };
   const LIST_OF = { store: 'stores', hours: 'hours', closure: 'closures',
-                    holiday: 'holidays',
+                    holiday: 'holidays', demand: 'demand',
                     staff: 'staff', doctor: 'doctors', pattern: 'patterns',
                     note: 'notes', leave: 'leave' };
 
@@ -2038,7 +2101,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const tr = el('tr');
       cols.forEach(col => tr.appendChild(fieldCell(col, rec, name)));
       const dc = el('td');
-      if (name !== 'hours') {                          // 曜日の行は7本で固定
+      if (name !== 'hours' && name !== 'demand') {      // 行数が決まっている表
         const del = el('button', 'del', '×');
         del.title = 'この行を削除（二度押し）';
         arm(del, '削除?', () => {
@@ -2285,8 +2348,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /* ═══ ルール画面 ═══════════════════════════════════════ */
   const RULE_FORM = [
     { title: '必要な人数', items: [
-      { key: 'reqPlus', label: '必要数 ＝ 医師数 ＋', type: 'num', unit: '人', min: 0, max: 6 },
-      { note: '曜日別の下限は 店舗営業マスタ で設定します。' },
+      { note: '必要人数は下の表（医師数ごと）と、店舗営業マスタの曜日別下限で決まります。'
+             + '医師数に一定数を足すだけの計算はやめました。' },
       { key: 'earlyN', label: '○早番', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'lateN',  label: '▲遅番', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'midN',   label: '●遅半', type: 'num', unit: '人/日', min: 0, max: 6 },
@@ -2672,7 +2735,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const master = parsed && (parsed.master || parsed);
     // 一部だけ貼れるようにする（医師マスタだけ入れ替える、など）。
     // 全部を要求すると、試したいものだけ差し替えることができない
-    const KEYS = ['stores', 'hours', 'closures', 'holidays',
+    const KEYS = ['stores', 'hours', 'closures', 'holidays', 'demand',
                   'staff', 'doctors', 'patterns', 'notes', 'leave', 'rules'];
     const present = master ? KEYS.filter(k => master[k] !== undefined) : [];
     if (!present.length && !parsed.shift) {
