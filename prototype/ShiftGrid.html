@@ -135,37 +135,27 @@ button.on, button.primary { background: var(--accent); color: var(--accent-ink);
 button.primary:hover { filter: brightness(1.12); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-#palette { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; }
-.pgroup { display: flex; align-items: center; }
-/* 群の見出し。押すと横に開く */
-.ptoggle {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 8px; font-size: 11px; white-space: nowrap;
-  border-radius: 3px 3px 3px 3px;
+/* 見出しもスタンプと同じ部品にして、高さと余白を必ず揃える */
+#palette { display: flex; flex-wrap: wrap; align-items: stretch; gap: 5px 8px; }
+.pgroup { display: flex; align-items: stretch; }
+.ptoggle { min-width: 0; }
+.ptoggle .pcur {
+  display: block;
+  font-family: "Roboto Mono", "Noto Sans JP", monospace; font-weight: 700;
 }
+.ptoggle .caret { font-style: normal; margin-left: 3px; }
 .pgroup.open .ptoggle {
   background: var(--accent-soft); border-color: var(--accent);
-  border-radius: 3px 0 0 3px;
+  border-right-color: transparent; border-radius: 3px 0 0 3px;
 }
-.ptoggle .plabel {
-  font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--ink-soft);
-}
-.pgroup.open .ptoggle .plabel { color: var(--accent); }
-/* いま選んでいる記号を畳んだままでも見せる */
-.ptoggle .pcur {
-  font-family: "Roboto Mono", "Noto Sans JP", monospace; font-weight: 700;
-  min-width: 14px; text-align: center;
-}
-.ptoggle .caret { font-style: normal; font-size: 9px; color: var(--ink-faint); }
+.pgroup.open .ptoggle .pcur { color: var(--accent); }
 .pitems {
   display: flex; align-items: center; gap: 4px;
-  max-width: 0; opacity: 0; overflow: hidden;
+  max-width: 0; opacity: 0; overflow: hidden; padding: 0;
   transition: max-width .22s ease, opacity .16s ease, padding .22s ease;
-  padding: 0;
 }
 .pgroup.open .pitems {
-  max-width: 900px; opacity: 1;
-  padding: 0 6px 0 6px;
+  max-width: 900px; opacity: 1; padding: 0 5px;
   border: 1px solid var(--accent); border-left: 0; border-radius: 0 3px 3px 0;
   background: var(--surface);
 }
@@ -2043,10 +2033,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const box = el('span', 'pgroup');
       box.dataset.kind = g.kind;
 
-      const tog = el('button', 'ptoggle');
-      tog.appendChild(el('span', 'plabel', g.label));
-      tog.appendChild(el('span', 'pcur', ''));
-      tog.appendChild(el('i', 'caret', '▸'));
+      // スタンプと同じ .stamp を着せる。作りが同じなら大きさも必ず揃う
+      const tog = el('button', 'stamp ptoggle');
+      tog.appendChild(el('span', 'pcur', '·'));
+      const capt = el('small', '', g.label);
+      capt.appendChild(el('i', 'caret', '▸'));
+      tog.appendChild(capt);
       tog.addEventListener('click', () => {
         openGroup = (openGroup === g.kind) ? null : g.kind;
         syncPaletteOpen();
@@ -2116,7 +2108,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    */
   function updatePaletteState() {
     const row = sel ? ROWS[sel.r] : null;
-    document.querySelectorAll('#palette .stamp').forEach(b => {
+    // 見出しは data-value を持たないので、ここでは拾わない
+    document.querySelectorAll('#palette .stamp[data-value]').forEach(b => {
       const st = { kind: b.dataset.kind, value: b.dataset.value };
       b.classList.toggle('on', st.kind === stamp.kind && st.value === stamp.value);
       const why = row ? stampRejectReason(row, st) : '';
@@ -2127,9 +2120,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     document.querySelectorAll('#palette .pgroup').forEach(box => {
       const cur = box.querySelector('.pcur');
       if (!cur) return;
-      const on = box.querySelector('.stamp.on');
+      const on = box.querySelector('.pitems .stamp.on');
       cur.textContent = on ? on.firstChild.nodeValue : '·';
-      cur.style.color = on ? 'var(--accent)' : 'var(--ink-faint)';
+      cur.style.color = on ? '' : 'var(--ink-faint)';
     });
   }
 
