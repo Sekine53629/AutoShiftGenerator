@@ -694,6 +694,49 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     };
   }
 
+  /**
+   * 古い版で保存されたデータを、いまの形に引き上げる。
+   *
+   * あとから足した項目が入っていないと、その機能が丸ごと死ぬ。
+   * 実際、パターンに「公休枠を使う」が無いデータでは公休が1日も
+   * 数えられず、集計列が 0、ノルマ判定は全員 NG になっていた。
+   * 読み込みと取り込みの両方でここを通す。
+   */
+  function migrateDb_(db) {
+    const seed = seedDb();
+
+    // 丸ごと無いマスタは初期値で補う
+    ['stores', 'hours', 'closures', 'holidays'].forEach(k => {
+      if (!Array.isArray(db[k]) || !db[k].length) db[k] = seed[k];
+    });
+
+    // シフトパターンの「公休枠を使う」。記号が同じものは初期値に合わせ、
+    // 見覚えのない休み記号は枠外（有休や夏休と同じ扱い）にしておく
+    (db.patterns || []).forEach(p => {
+      if (p.pubOff !== undefined) return;
+      const known = seed.patterns.find(q => q.sym === p.sym);
+      p.pubOff = known ? !!known.pubOff : false;
+    });
+
+    // 社員の配列は行ごとに独立させる。共有していると1人直すと全員変わる
+    (db.staff || []).forEach(x => {
+      if (x.offAdjust === undefined) x.offAdjust = 0;   // 月間休日数は暦から算出に変わった
+      x.availDow = normDow_(x.availDow, 1);
+      x.fixedDow = normDow_(x.fixedDow, 0);
+      x.patterns = Array.isArray(x.patterns) ? x.patterns.slice() : [];
+    });
+
+    // 参照先の無い有休行は捨てない。画面で「参照先なし」と出して人に判断させる
+    return db;
+  }
+
+  /** 曜日7個の配列にそろえる。無ければ既定値で埋める */
+  function normDow_(v, fallback) {
+    const src = Array.isArray(v) ? v : [];
+    return [0, 1, 2, 3, 4, 5, 6].map(i =>
+      (src.length ? (src[i] ? 1 : 0) : fallback));
+  }
+
   let DB = load();
   /** いま表示している店舗。営業マスタ・特例日・社員の絞り込みに使う */
   let activeStore = (DB.stores && DB.stores[0]) ? DB.stores[0].id : 'st1';
@@ -702,14 +745,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const raw = localStorage.getItem(STORE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && parsed.staff && parsed.rules) {
-          // 店舗・営業マスタを足す前に保存されたものを引き上げる
-          const seed = seedDb();
-          ['stores', 'hours', 'closures', 'holidays'].forEach(k => {
-            if (!Array.isArray(parsed[k]) || !parsed[k].length) parsed[k] = seed[k];
-          });
-          return parsed;
-        }
+        if (parsed && parsed.staff && parsed.rules) return migrateDb_(parsed);
       }
     } catch (e) { /* 読めなければ初期値で開く */ }
     return seedDb();
@@ -2309,6 +2345,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       return;
     }
     present.forEach(k => { DB[k] = master[k]; });
+    migrateDb_(DB);        // 古い版の書き出しを貼られても動くようにする
     save();
     // 社員が入れ替わるとセルのキー（社員ID）が合わなくなるので入力を捨てる。
     // それ以外は、貼られた行だけを入れ替える（下の shift の処理で行ごとに消す）
