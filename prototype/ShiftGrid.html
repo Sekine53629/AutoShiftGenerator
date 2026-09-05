@@ -2338,7 +2338,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const master = parsed && (parsed.master || parsed);
     // 一部だけ貼れるようにする（医師マスタだけ入れ替える、など）。
     // 全部を要求すると、試したいものだけ差し替えることができない
-    const KEYS = ['staff', 'doctors', 'patterns', 'notes', 'leave', 'rules'];
+    const KEYS = ['stores', 'hours', 'closures', 'holidays',
+                  'staff', 'doctors', 'patterns', 'notes', 'leave', 'rules'];
     const present = master ? KEYS.filter(k => master[k] !== undefined) : [];
     if (!present.length && !parsed.shift) {
       dataStat('中身が見つかりません。' + KEYS.join(' / ') + ' か shift を含めてください。');
@@ -2346,6 +2347,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
     present.forEach(k => { DB[k] = master[k]; });
     migrateDb_(DB);        // 古い版の書き出しを貼られても動くようにする
+    if (present.indexOf('stores') >= 0) syncActiveStore();
     save();
     // 社員が入れ替わるとセルのキー（社員ID）が合わなくなるので入力を捨てる。
     // それ以外は、貼られた行だけを入れ替える（下の shift の処理で行ごとに消す）

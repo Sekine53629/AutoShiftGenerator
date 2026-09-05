@@ -109,15 +109,52 @@ PATTERNS['staff-turnover'] = {
   ]
 };
 
+seq = 0;
+PATTERNS['setup-onsite'] = {
+  title: '現場の構成に近い形',
+  aim: '実際に使われている構成と曜日別下限を写したもの。氏名は伏せてある。'
+     + '薬剤師7名（うち1名は日水木が出られず締め不可、1名は週4）＋派遣2名＋事務2名。'
+     + '連続出勤の上限は全員3日',
+  // 曜日別の薬剤師 下限（日 月 火 水 木 金 土）
+  pharmMin: [2, 6, 5, 3, 5, 6, 3],
+  rules: { maxConsDefault: 3, maxOffRun: 14, reqPlus: 1, lateN: 3 },
+  staff: [
+    ...[1, 2, 3, 4, 5].map(i => person({ name: '薬剤師 ' + i, maxCons: 3 })),
+    person({ name: '薬剤師 6', maxCons: 3, availDow: dow(1, 2, 5, 6), canClose: false,
+             memo: '日・水・木は出られない。締め作業不可' }),
+    person({ name: '薬剤師 7', weekDays: 4, maxCons: 4, memo: '週4' }),
+    person({ name: '派遣 1', employment: '派遣', rule: '手動', weekDays: 0, maxCons: 6,
+             patterns: ['▲'], canClose: false, memo: '遅番のみ' }),
+    person({ name: '派遣 2', employment: '派遣', rule: '手動', weekDays: 0, maxCons: 6,
+             patterns: ['▲', '●'], canClose: false, memo: '中長期' }),
+    ...[1, 2].map(i => person({ name: '事務 ' + i, kind: '事務員', maxCons: 3,
+             patterns: ['○', '▲'] }))
+  ]
+};
+
 Object.keys(PATTERNS).forEach(key => {
   const p = PATTERNS[key];
   const body = {
     _comment: '社員マスタの見本【' + p.title + '】' + p.aim
       + ' / 実在の職員ではありません。データ書き出しタブに貼って「貼り付けた内容を取り込む」。'
-      + ' staff と leave だけを差し替えます。',
+      + (p.pharmMin ? ' staff / leave / hours / rules を差し替えます。'
+                    : ' staff と leave だけを差し替えます。'),
     staff: p.staff,
     leave: leaveFor(p.staff)
   };
+  // 曜日別の下限は店舗営業マスタが持つので、指定があれば一緒に入れる
+  if (p.pharmMin) {
+    body.hours = [0, 1, 2, 3, 4, 5, 6].map(d => ({
+      id: 'h' + d, storeId: 'st1', dow: d, open: true,
+      from: '10:00', to: '20:00',
+      pharmMin: p.pharmMin[d], clerkMin: 1
+    }));
+    body.rules = Object.assign({
+      reqPlus: 1, earlyN: 1, lateN: 1, midN: 0, clerkEarlyN: 1,
+      countNationalOff: true, maxConsDefault: 5, maxOffRun: 3,
+      needCloser: true, wishMax: 3, carryOver: true
+    }, p.rules || {});
+  }
   fs.writeFileSync(path.join(OUT, key + '.json'), JSON.stringify(body, null, 2) + '\n', 'utf8');
 });
 
@@ -223,9 +260,10 @@ console.log('■ 社員マスタ');
 Object.keys(PATTERNS).forEach(k => {
   const p = PATTERNS[k];
   const auto = p.staff.filter(s => s.rule === '自動').length;
-  console.log('  ' + (k + '.json').padEnd(26) + p.title.padEnd(12)
+  console.log('  ' + (k + '.json').padEnd(26) + p.title.padEnd(14)
     + ' 計' + String(p.staff.length).padStart(2) + '名（自動' + auto
-    + '／手動' + (p.staff.length - auto) + '）');
+    + '／手動' + (p.staff.length - auto) + '）'
+    + (p.pharmMin ? '  曜日下限 ' + p.pharmMin.join(' ') : ''));
 });
 console.log('');
 console.log('■ 医師の出勤表');

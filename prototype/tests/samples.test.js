@@ -38,8 +38,12 @@ const make = new Function([
   'function inService(s,y,m){ const ym=y*100+m;',
   '  const num=t=>{const p=String(t||"").split(/[-\\/]/); return p.length>=2?Number(p[0])*100+Number(p[1]):0;};',
   '  const f=num(s.from), t=num(s.to); if(f&&ym<f) return false; if(t&&ym>t) return false; return true; }',
-  'return function(staffList, y, m, doc){',
+  'return function(staffList, y, m, doc, hours, rules){',
   '  DB.staff = staffList; docShift = doc;',
+  '  // 指定が無いパターンは初期値へ戻す。前のパターンの設定が残ると数字が狂う',
+  '  const base = seedDb();',
+  '  DB.hours = hours ? hours : base.hours;',
+  '  DB.rules = Object.assign(base.rules, rules || {});',
   '  days = buildDays(y,m); values.clear(); autoNotes=[];',
   '  const live = staffList.filter(s=>inService(s,y,m));',
   '  ROWS = live.map((s,i)=>({kind:"staff",index:i,key:s.id,label:s.name,staff:s,',
@@ -58,14 +62,15 @@ const longest = (pred, cols) => {
   return b;
 };
 
-const staffFiles = fs.readdirSync('prototype/samples').filter(f => f.startsWith('staff-'));
+const staffFiles = fs.readdirSync('prototype/samples')
+  .filter(f => (f.startsWith('staff-') || f.startsWith('setup-')) && f.endsWith('.json'));
 const doc = JSON.parse(fs.readFileSync('prototype/samples/doctor-shift-2026-10.json', 'utf8')).shift;
 
 let bad = 0;
 staffFiles.forEach(f => {
   const j = JSON.parse(fs.readFileSync('prototype/samples/' + f, 'utf8'));
   [[2026, 10], [2026, 11]].forEach(([y, m]) => {
-    const r = make(j.staff, y, m, m === 10 ? doc : null);
+    const r = make(j.staff, y, m, m === 10 ? doc : null, j.hours, j.rules);
     const im = [];
     for (let c = 0; c < 31; c++) if (r.days[c].inMonth) im.push(c);
 
