@@ -1479,6 +1479,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const s = row.staff;
       if (s.rule === RULE_MANUAL) return;
 
+      // 固定曜日ルールなのに曜日が決まっていない
+      if (s.rule === RULE_FIXED && !s.fixedDow.some(v => v)) {
+        msgs.push(s.name + '：勤務ルールが「固定曜日」ですが「固定で出る曜日」が'
+          + '未設定です。いまは「出られる曜日」（' + dowNames_(s.availDow) + '）で組んでいます');
+      }
+
       let run = 0, worst = 0;
       for (let c = 0; c < DAY_COLS; c++) {
         if (!days[c].inMonth) continue;
@@ -1688,14 +1694,24 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 週勤務日数は超えない。公休ノルマは「最低これだけ休む」という下限として扱う。
     // 週3の人は31日の月に13日ほどしか働けないので、公休はノルマを必ず超える。
     // ノルマに合わせて無理に出勤させると、週勤務日数の約束を破ることになる。
-    // 固定曜日は、その曜日にだけ出る。週の上限や公休ノルマは関係ない
+    // 固定曜日は、その曜日にだけ出る。週の上限や公休ノルマは関係ない。
+    // 「固定で出る曜日」が未設定なら「出られる曜日」を使う。
+    // 出られる曜日だけを設定して固定曜日ルールにする使い方が自然で、
+    // 空のまま扱うと1か月まるごと公休になってしまう
     if (s.rule === RULE_FIXED) {
+      const hasFixed = s.fixedDow.some(v => v);
+      const dows = hasFixed ? s.fixedDow : s.availDow;
+      if (!hasFixed) {
+        note_(s.name + '：「固定で出る曜日」が未設定なので、'
+          + '「出られる曜日」（' + dowNames_(s.availDow) + '）に出る扱いにしました');
+      }
       wk.forEach(w => {
-        w.picked = w.cols.filter(c => s.fixedDow[days[c].dow]);
+        w.picked = w.cols.filter(c => dows[days[c].dow]);
         w.n = w.picked.length;
       });
       if (!wk.some(w => w.n)) {
-        note_(s.name + '：固定曜日が1つも選ばれていないので、出勤日がありません');
+        note_(s.name + '：出る曜日が1つも無いので、出勤日がありません。'
+          + '「固定で出る曜日」か「出られる曜日」を設定してください');
       }
     }
 
@@ -1746,6 +1762,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     //    固定曜日は出る曜日そのものが約束なので動かさない
     if (s.rule !== RULE_FIXED) repairRuns_(row, s, wk, cap, workSym, offSym);
   }
+
+  /** 曜日の配列を「月火金土」のような文字にする */
+  const dowNames_ = arr =>
+    (Array.isArray(arr) ? arr : []).map((v, i) => (v ? DOW[i] : '')).join('') || 'なし';
 
   /** 埋まり具合がいちばん高い(dir<0)／低い(dir>0)週を返す */
   function pickWeek_(wk, ok, dir) {
