@@ -33,6 +33,8 @@ const harness = `
   const isClosed = info => !info.inMonth || !info.open;
   const workSyms = () => DB.patterns.filter(p => p.work).map(p => p.sym);
   const isWork = v => v === '◯' || workSyms().indexOf(v) >= 0;
+  const pubOffSyms = () => DB.patterns.filter(p => !p.work && p.pubOff).map(p => p.sym);
+  const isPubOff = v => !!v && pubOffSyms().indexOf(v) >= 0;
 
   const values = new Map();
   const get = (row, c) => values.get(row.key + '|' + c) || '';
@@ -58,7 +60,7 @@ const harness = `
       if (row.staff.rule === '手動') return;
       placeOneStaff_(row, row.staff, weeks, offSym);
     });
-    return { days, weeks, ROWS, DB, get, offSym,
+    return { days, weeks, ROWS, DB, get, offSym, isPubOff,
              quotaBase: offQuotaBase(), offQuotaFor, notes: autoNotes, isWork };
   }
   return run;
@@ -84,12 +86,13 @@ function check(ok, label, detail) {
 
   console.log('');
   console.log('══ ' + y + '年' + m + '月  (' + inMonth.length + '日 / 公休ノルマ ' + r.quotaBase + '日)');
-  console.log('  氏名        公休 ノルマ  出勤 週別出勤        最長連勤/上限  最長連休');
+  console.log('  氏名        公休 ノルマ 空欄 出勤 週別出勤        最長連勤/上限 最長連休');
 
   r.ROWS.forEach(row => {
     const s = row.staff;
     if (s.rule === '手動') return;
-    const off = inMonth.filter(c => r.get(row, c) === r.offSym).length;
+    const off = inMonth.filter(c => r.isPubOff(r.get(row, c))).length;
+    const blank = inMonth.filter(c => !r.get(row, c)).length;
     const work = inMonth.filter(c => r.isWork(r.get(row, c))).length;
     const quota = r.offQuotaFor(s);
     const perWeek = r.weeks.map(w => w.cols.filter(c => r.isWork(r.get(row, c))).length);
@@ -101,14 +104,12 @@ function check(ok, label, detail) {
 
     console.log('  ' + s.name.padEnd(10)
       + String(off).padStart(3) + String(quota).padStart(6)
-      + String(work).padStart(6) + '  [' + perWeek.join(' ') + ']'
+      + String(blank).padStart(5) + String(work).padStart(5) + '  [' + perWeek.join(' ') + ']'
       + ('  週上限[' + weekLimit.join(' ') + ']').padEnd(20)
       + String(runW).padStart(4) + '/' + cap
       + String(runO).padStart(8));
 
-    check(off >= quota, s.name + ' の公休がノルマを下回った', '公休' + off + ' ノルマ' + quota);
-    check(off + work === inMonth.length - inMonth.filter(c => { const v = r.get(row, c); return v && !r.isWork(v) && v !== r.offSym; }).length,
-      s.name + ' の出勤+公休が月の日数と合わない', '出勤' + work + ' 公休' + off);
+    check(off === quota, s.name + ' の公休がノルマとビタビタでない', '公休' + off + ' ノルマ' + quota);
     check(runW <= cap, s.name + ' が連勤上限を超えた', runW + ' > ' + cap);
     check(!overWeek, s.name + ' の週出勤が上限を超えた', perWeek.join(',') + ' 上限' + weekLimit.join(','));
   });
