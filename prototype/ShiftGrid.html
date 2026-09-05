@@ -520,6 +520,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     （退職者を消さずに済むので、過去の月を開いても表が壊れません）。<br>
     <b>月ごとに変わる値はここに置きません。</b>月の公休ノルマは暦から決まり全員共通です
     （画面上部に出ています）。ここに置けるのは<b>年単位の契約値</b>だけです。<br>
+    <b>必ず出る曜日</b>は、どのルールでも「その曜日は絶対に出勤」という約束です
+    （空欄なら指定なし）。<b>勤務ルール</b>が「固定曜日」のときだけ意味が違い、
+    <b>その曜日にしか出ません</b>（未設定なら「出られる曜日」を使います）。<br>
     <b>勤務ルール</b>で組み方が変わります。<b>公休ノルマを当てるのは「通常」だけ</b>です
     ——「固定曜日」と「週N日」は出勤日が先に決まっているので、ノルマを当てると
     必ず矛盾します。「手動」は自動生成が触りません（派遣など）。<br>
@@ -1481,7 +1484,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
       // 固定曜日ルールなのに曜日が決まっていない
       if (s.rule === RULE_FIXED && !s.fixedDow.some(v => v)) {
-        msgs.push(s.name + '：勤務ルールが「固定曜日」ですが「固定で出る曜日」が'
+        msgs.push(s.name + '：勤務ルールが「固定曜日」ですが「必ず出る曜日」が'
           + '未設定です。いまは「出られる曜日」（' + dowNames_(s.availDow) + '）で組んでいます');
       }
 
@@ -1685,24 +1688,38 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
     const extraOff = usesQuota(s) ? Math.max(0, room - forced.size) : 0;
 
-    // 4. 週ごとの出勤日数。上限は週勤務日数
+    // 4. 「必ず出る曜日」は、どのルールでも出勤で確定させる。
+    //    「この曜日だけは絶対に出る」という約束なので、公休で潰さない
+    const mustWork = new Set(free.filter(c => s.fixedDow[days[c].dow]));
+    s.fixedDow.forEach((v, i) => {
+      if (v && !s.availDow[i]) {
+        note_(s.name + '：' + DOW[i] + '曜が「必ず出る曜日」なのに'
+          + '「出られる曜日」から外れています');
+      }
+    });
+
+    // 5. 週ごとの出勤日数。上限は週勤務日数
     const freeSet = new Set(free);
     const wk = weeks.map(w => {
       const cols = w.cols.filter(c => freeSet.has(c));
-      return { cols: cols, cap: Math.min(Number(s.weekDays) || 0, cols.length), n: 0, over: false };
+      const floor = cols.filter(c => mustWork.has(c)).length;   // 必ず出る日は減らせない
+      return {
+        cols: cols, floor: floor, n: 0, over: false,
+        cap: Math.max(floor, Math.min(Number(s.weekDays) || 0, cols.length))
+      };
     });
     // 週勤務日数は超えない。公休ノルマは「最低これだけ休む」という下限として扱う。
     // 週3の人は31日の月に13日ほどしか働けないので、公休はノルマを必ず超える。
     // ノルマに合わせて無理に出勤させると、週勤務日数の約束を破ることになる。
     // 固定曜日は、その曜日にだけ出る。週の上限や公休ノルマは関係ない。
-    // 「固定で出る曜日」が未設定なら「出られる曜日」を使う。
+    // 「必ず出る曜日」が未設定なら「出られる曜日」を使う。
     // 出られる曜日だけを設定して固定曜日ルールにする使い方が自然で、
     // 空のまま扱うと1か月まるごと公休になってしまう
     if (s.rule === RULE_FIXED) {
       const hasFixed = s.fixedDow.some(v => v);
       const dows = hasFixed ? s.fixedDow : s.availDow;
       if (!hasFixed) {
-        note_(s.name + '：「固定で出る曜日」が未設定なので、'
+        note_(s.name + '：勤務ルールが「固定曜日」ですが「必ず出る曜日」が未設定なので、'
           + '「出られる曜日」（' + dowNames_(s.availDow) + '）に出る扱いにしました');
       }
       wk.forEach(w => {
@@ -1711,7 +1728,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       });
       if (!wk.some(w => w.n)) {
         note_(s.name + '：出る曜日が1つも無いので、出勤日がありません。'
-          + '「固定で出る曜日」か「出られる曜日」を設定してください');
+          + '「必ず出る曜日」か「出られる曜日」を設定してください');
       }
     }
 
@@ -1727,9 +1744,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 特定の週だけ薄くなるのを避ける
     let guard = 0;
     while (s.rule !== RULE_FIXED && sum > workTarget && guard++ < 400) {
-      const t = pickWeek_(wk, w => w.n > 0, -1);
-      if (!t) break;
+      const t = pickWeek_(wk, w => w.n > w.floor, -1);
+      if (!t) break;                       // これ以上は減らせない
       t.n--; sum--;
+    }
+    if (usesQuota(s) && sum > workTarget) {
+      note_(s.name + '：「必ず出る曜日」が多く、公休ノルマ ' + quota
+        + ' 日に届きません（出勤 ' + sum + ' 日）');
     }
 
     // 公休枠に収まらない休みは、こちらで記号を決めない。
@@ -1746,8 +1767,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     inMonth.forEach(c => { if (!keep.has(c)) setV(row, c, ''); });
     const workDays = new Set();
     wk.forEach(w => {
-      const pick = w.picked ? w.picked : w.cols.slice().sort((a, b) =>
-        (shortage_(b) - shortage_(a)) || (a - b)).slice(0, w.n);
+      // 必ず出る日を先に取り、残りを人手の足りない日から埋める
+      const must = w.cols.filter(c => mustWork.has(c));
+      const rest = w.cols.filter(c => !mustWork.has(c))
+        .sort((a, b) => (shortage_(b) - shortage_(a)) || (a - b));
+      const pick = w.picked ? w.picked
+        : must.concat(rest.slice(0, Math.max(0, w.n - must.length)));
       pick.forEach(c => { setV(row, c, workSym); workDays.add(c); });
     });
 
@@ -1760,7 +1785,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     // 8. 連勤上限を、週ごとの出勤日数を変えずに直す。
     //    固定曜日は出る曜日そのものが約束なので動かさない
-    if (s.rule !== RULE_FIXED) repairRuns_(row, s, wk, cap, workSym, offSym);
+    if (s.rule !== RULE_FIXED) repairRuns_(row, s, wk, cap, workSym, offSym, mustWork);
   }
 
   /** 曜日の配列を「月火金土」のような文字にする */
@@ -1806,15 +1831,30 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    * 休みを足すのではなく、同じ週の中で出勤日と休みを入れ替える。
    * 足すやり方だと出勤日数が減り、公休ノルマが狂う。
    */
-  function repairRuns_(row, s, wk, cap, workSym, offSym) {
+  function repairRuns_(row, s, wk, cap, workSym, offSym, mustWork) {
+    const must = mustWork || new Set();
     for (let pass = 0; pass < 40; pass++) {
-      const bad = firstOverrun_(row, cap);
+      let bad = firstOverrun_(row, cap);
       if (bad < 0) return;
+      // 必ず出る日は落とせない。同じ連勤の中から落とせる日を探す
+      if (must.has(bad)) {
+        let alt = -1;
+        for (let c = bad; c >= 0 && isWork(get(row, c)); c--) {
+          if (!must.has(c)) { alt = c; break; }
+        }
+        if (alt < 0) {
+          note_(s.name + '：「必ず出る曜日」が続いていて、連続出勤 ' + cap
+            + ' 日を超えます');
+          return;
+        }
+        bad = alt;
+      }
       const w = wk.find(x => x.cols.indexOf(bad) >= 0);
       if (!w) { setV(row, bad, ''); continue; }
 
       let swapped = false;
-      const offs = w.cols.filter(c => c !== bad && get(row, c) === offSym);
+      const offs = w.cols.filter(c =>
+        c !== bad && !must.has(c) && get(row, c) === offSym);
       for (let i = 0; i < offs.length; i++) {
         setV(row, bad, offSym);
         setV(row, offs[i], workSym);
@@ -1868,7 +1908,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
           .map(x => ({ value: x.sym, face: x.sym, title: x.label })),
         group: '配置ルール（この人だけに効く）' },
       { key: 'availDow',   head: '出られる曜日', type: 'dow', group: '配置ルール（この人だけに効く）' },
-      { key: 'fixedDow',   head: '固定で出る曜日', type: 'dow', group: '配置ルール（この人だけに効く）' },
+      { key: 'fixedDow',   head: '必ず出る曜日', type: 'dow', group: '配置ルール（この人だけに効く）' },
       { key: 'canClose',   head: '締め作業',    type: 'check', group: '資格' },
       { key: 'from',       head: '在籍 開始',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM, group: '在籍' },
       { key: 'to',         head: '在籍 終了',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM, group: '在籍' },
