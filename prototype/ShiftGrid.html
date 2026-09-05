@@ -264,6 +264,8 @@ tr.aggrow .nm { font-weight: 700; }
 .zero { color: var(--ink-faint); }
 
 /* 見出しに添える店舗名。どの店舗の設定を見ているかを外さない */
+/* 何も選んでいないチェック欄の意味 */
+.emptymeans { font-size: 10px; color: var(--ink-faint); margin-left: 4px; align-self: center; }
 .ofstore {
   margin-left: 8px; font-size: 11px; font-weight: 400;
   color: var(--accent-ink); background: var(--accent);
@@ -518,7 +520,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     （退職者を消さずに済むので、過去の月を開いても表が壊れません）。<br>
     <b>月ごとに変わる値はここに置きません。</b>月の公休ノルマは暦から決まり全員共通です
     （画面上部に出ています）。ここに置けるのは<b>年単位の契約値</b>だけです。<br>
-    <b>所属店舗</b>が「全店」の人は、どの店舗の表にも出ます（本部の応援など）。
+    <b>本部所属</b>と<b>担当店舗</b>は別物です。本部に籍を置きながら店舗や
+    エリアを見る人がいるので、両方を設定できます。担当店舗は<b>複数選べます</b>
+    （エリア管理）。1つも選ばなければ全店の表に出ます。
   </p>
   <div class="mtwrap"><table class="mt" id="mtStaff"></table></div>
   <div class="mtfoot">
@@ -621,7 +625,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       availDow: (avail || ALL).slice(),
       fixedDow: (fixed || NONE).slice(),
       canClose: close, from: '', to: '', rule: rule, memo: '',
-      storeId: 'st1', hq: false
+      hq: false, stores: ['st1']
     });
     // 出られる曜日の既定は全 ON。出られない曜日は個人の事情であって、
     // 店の休みではない（店の営業日は店舗営業マスタが持つ）
@@ -742,8 +746,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       delete x.offAdjust;
       delete x.monthOff;
       if (x.annualOff === undefined) x.annualOff = '';   // 空欄は「暦どおり」
-      // 所属店舗が無い版のデータ。空欄＝全店にしておく（誰も表から消えない）
-      if (x.storeId === undefined) x.storeId = '';
+      // 担当店舗は複数持てる形に変えた。単一だった頃の値を移す
+      if (!Array.isArray(x.stores)) {
+        x.stores = x.storeId ? [x.storeId] : [];   // 空欄＝全店。誰も表から消えない
+      }
+      delete x.storeId;
       if (x.hq === undefined) x.hq = false;
       x.availDow = normDow_(x.availDow, 1);
       x.fixedDow = normDow_(x.fixedDow, 0);
@@ -926,9 +933,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /* ═══ 行の組み立て ═════════════════════════════════════
      縦順は帳票どおり。医師名5行 → 日付再掲 → 薬剤師 → 派遣 → 事務 → 備考 → 集計 */
   let ROWS = [];
-  /** その店舗の表に出す人か。空欄の所属は全店に出る（本部の人など） */
+  /**
+   * その店舗の表に出す人か。
+   * 担当店舗は複数持てる（エリア管理は複数店を見る）。
+   * 1つも選んでいなければ全店に出る。
+   * 本部所属かどうかは組織上の属性で、どの店の表に出るかとは別。
+   * 本部に居ながら特定の店舗を担当する人がいるため、2つを分けてある。
+   */
   function belongsHere(s) {
-    return !s.storeId || s.storeId === activeStore;
+    const list = Array.isArray(s.stores) ? s.stores : [];
+    return !list.length || list.indexOf(activeStore) >= 0;
   }
 
   function inService(s, y, m) {
@@ -1295,10 +1309,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   function staffTip(s) {
     const av = s.availDow.map((v, i) => v ? DOW[i] : '').filter(Boolean).join('');
-    const where = s.hq ? '本部所属'
-      : s.storeId ? ((DB.stores.find(t => t.id === s.storeId) || {}).name || s.storeId)
-      : '全店';
-    return [s.kind + '／' + s.employment + '／' + where,
+    const list = Array.isArray(s.stores) ? s.stores : [];
+    const names = list.map(id => (DB.stores.find(t => t.id === id) || {}).name || id);
+    const where = (s.hq ? '本部所属' : '') + (s.hq && names.length ? '／' : '')
+      + (names.length ? names.join('・') : (s.hq ? '' : '全店'));
+    return [s.kind + '／' + s.employment + '／' + (where || '全店'),
             '週' + s.weekDays + '日・今月の公休 ' + offQuotaFor() + ' 日（全員共通）',
             '連勤 ' + (s.maxCons || DB.rules.maxConsDefault) + ' 日まで'
               + (s.maxCons ? '' : '（既定値）'),
@@ -1757,8 +1772,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'name',       head: '氏名',        type: 'text',  w: 130, group: '本人' },
       { key: 'kind',       head: '区分',        type: 'select', opts: ['薬剤師', '事務員'], group: '本人' },
       { key: 'employment', head: '雇用',        type: 'select', opts: ['社員', '派遣', 'パート'], group: '本人' },
-      { key: 'storeId',    head: '所属店舗',    type: 'store', group: '所属' },
-      { key: 'hq',         head: '本部',        type: 'check', group: '所属' },
+      { key: 'hq',         head: '本部所属',    type: 'check', group: '所属' },
+      { key: 'stores',     head: '担当店舗',    type: 'checks',
+        items: () => DB.stores.map(t => ({
+          value: t.id, face: t.short || (t.name || '?').slice(0, 2), title: t.name })),
+        emptyMeans: '全店',
+        group: '所属' },
       { key: 'weekDays',   head: '週勤務日数',  type: 'num', min: 0, max: 7, group: '配置ルール（この人だけに効く）' },
       { key: 'annualOff',  head: '年間公休日数', type: 'num', min: 0, max: 200,
         ph: () => String(annualQuotaOf(Number($('yy').value) || new Date().getFullYear())),
@@ -1768,7 +1787,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         group: '契約' },
       { key: 'maxCons',    head: '連続出勤上限', type: 'num', min: 0, max: 14,
         ph: () => String(DB.rules.maxConsDefault), group: '配置ルール（この人だけに効く）' },
-      { key: 'patterns',   head: '使える記号',   type: 'checks', from: 'patterns', group: '配置ルール（この人だけに効く）' },
+      { key: 'patterns',   head: '使える記号',   type: 'checks',
+        items: () => DB.patterns.filter(x => x.kind === '出勤')
+          .map(x => ({ value: x.sym, face: x.sym, title: x.label })),
+        group: '配置ルール（この人だけに効く）' },
       { key: 'availDow',   head: '出られる曜日', type: 'dow', group: '配置ルール（この人だけに効く）' },
       { key: 'fixedDow',   head: '固定で出る曜日', type: 'dow', group: '配置ルール（この人だけに効く）' },
       { key: 'canClose',   head: '締め作業',    type: 'check', group: '資格' },
@@ -1985,22 +2007,29 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (col.type === 'checks') {
       const box = el('div', 'checks');
       rec[col.key] = (Array.isArray(rec[col.key]) ? rec[col.key] : []).slice();
-      DB[col.from].filter(p => p.kind === '出勤').forEach(p => {
+      const items = col.items();
+      if (!items.length) box.appendChild(el('span', '', '—'));
+      items.forEach(it => {
         const lb = el('label');
-        lb.appendChild(el('span', '', p.sym));
-        lb.title = p.label;
+        lb.appendChild(el('span', '', it.face));
+        lb.title = it.title || it.face;
         const cb = document.createElement('input');
         cb.type = 'checkbox';
-        cb.checked = rec[col.key].indexOf(p.sym) >= 0;
+        cb.checked = rec[col.key].indexOf(it.value) >= 0;
         cb.addEventListener('change', () => {
-          const at = rec[col.key].indexOf(p.sym);
-          if (cb.checked && at < 0) rec[col.key].push(p.sym);
+          const at = rec[col.key].indexOf(it.value);
+          if (cb.checked && at < 0) rec[col.key].push(it.value);
           if (!cb.checked && at >= 0) rec[col.key].splice(at, 1);
           commit();
         });
         lb.appendChild(cb);
         box.appendChild(lb);
       });
+      // 何も選んでいない状態の意味を、その場に書いておく
+      if (col.emptyMeans) {
+        const note = el('span', 'emptymeans', rec[col.key].length ? '' : col.emptyMeans);
+        box.appendChild(note);
+      }
       td.appendChild(box);
       return td;
     }
@@ -2073,7 +2102,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       weekDays: 5, annualOff: '', maxCons: 5, patterns: ['○', '●', '▲'],
       availDow: [1, 1, 1, 1, 1, 1, 1], fixedDow: [0, 0, 0, 0, 0, 0, 0],
       canClose: false, from: '', to: '', rule: '自動', memo: '',
-      storeId: activeStore, hq: false
+      hq: false, stores: [activeStore]
     }),
     store:   () => ({ id: newId('st'), name: '', short: '', memo: '' }),
     // 店舗だけ増えても営業日が無ければ表は組めない。7行を一緒に作る

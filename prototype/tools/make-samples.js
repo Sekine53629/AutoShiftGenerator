@@ -18,7 +18,7 @@ function person(o) {
     weekDays: 5, annualOff: '', maxCons: 5,
     patterns: ['○', '●', '▲'], availDow: ALL.slice(), fixedDow: [0, 0, 0, 0, 0, 0, 0],
     canClose: true, from: '', to: '', rule: '自動', memo: '',
-    storeId: '', hq: false   // 空欄＝全店
+    hq: false, stores: []   // 担当店舗が空＝全店
   }, o);
 }
 
