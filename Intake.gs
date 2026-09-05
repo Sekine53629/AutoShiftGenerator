@@ -25,6 +25,10 @@
  *
  * 【名前で持たない】診療報酬は改定で名称・区分が変わる。加算名をキーにすると
  * 改定のたびに系列が切れるので、キーは「何の作業か」で持つ。
+ *
+ * 【患者の個票】次回来局日の予測は患者単位でしか作れない（残日数を追うため）。
+ * ただし受け取るのは**仮名化された識別子と処方日数だけ**。氏名・生年月日・
+ * 保険証番号が入っていたら、その行は取り込まない（patientRowError_）。
  */
 
 const MODULE_INTAKE = 'Intake';
@@ -52,11 +56,40 @@ const INTAKE_SCHEMA = Object.freeze({
     homeVisit:         { label: '在宅患者訪問薬剤管理指導料', unit: '算定回数', work: '別枠' },
     internalDrugUnits: { label: '内服薬の剤数', unit: '剤', work: '比例する' },
   }),
-  /** 処方日数 → 件数。N日後の再来を積み上げるために使う */
+  /**
+   * 処方日数 → 件数。患者台帳（patients）が取れないときの代替。
+   * 集計値なので**残日数を追えない**ぶん、精度は落ちる。
+   */
   dispenseDays: { label: '処方日数の分布', unit: '件' },
+
+  /**
+   * 患者ごとの1行。**次回来局日の予測はここからしか作れない。**
+   *
+   *   次回来局予定 = 今回の来局日 + 今回の処方最大日数 + 前回の残日数
+   *   前回の残日数 = 前回(来局日 + 処方日数) − 今回の来局日   （負なら 0）
+   *
+   * 集計値（dispenseDays）では残日数が追えないので、早めに来た患者の
+   * 手持ちが次回にずれ込むぶんを表せない。
+   *
+   * 【個人情報】患者を特定できる項目は受け取らない。
+   * patientKey は**仮名化済みの識別子**（レセコンの患者番号のハッシュなど）。
+   * 氏名・生年月日・保険証番号・住所が入っていたら、その行は取り込まない。
+   */
+  patients: { label: '患者ごとの来局と処方日数', unit: '行' },
+
   /** 医師コード → 枚数 */
   byDoctor: { label: '医師ごとの処方箋枚数', unit: '枚' },
 });
+
+/**
+ * 患者の行に入っていてはいけないキー。
+ * 仮名化されていない情報を受け取らないための歯止め。
+ */
+const INTAKE_FORBIDDEN_KEYS = Object.freeze([
+  'name', 'kana', 'birth', 'birthday', 'birthDate', 'address', 'tel', 'phone',
+  'insuranceNo', 'insuranceNumber', 'myNumber', 'email',
+  '氏名', '生年月日', '住所', '電話', '保険証番号',
+]);
 
 /** 取り込みの経路 */
 const INTAKE_SOURCE = Object.freeze({
@@ -114,7 +147,79 @@ function intakeRowError_(rec) {
       if (!/^\d+$/.test(dd[i])) return '処方日数が整数ではありません: ' + dd[i];
     }
   }
+  if (rec.patients) {
+    if (!Array.isArray(rec.patients)) return 'patients が配列ではありません';
+    for (let i = 0; i < rec.patients.length; i++) {
+      const reason = patientRowError_(rec.patients[i]);
+      if (reason) return 'patients[' + i + ']: ' + reason;
+    }
+  }
   return '';
+}
+
+/**
+ * 患者の1行を見る。
+ * **患者を特定できる項目が入っていたら受け取らない。** 黙って捨てると、
+ * 送る側は送り続けてしまう。行ごと弾いて理由を返し、送信元を直してもらう。
+ */
+function patientRowError_(row) {
+  if (!row || typeof row !== 'object') return '行がオブジェクトではありません';
+
+  const keys = Object.keys(row);
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    for (let j = 0; j < INTAKE_FORBIDDEN_KEYS.length; j++) {
+      if (k.toLowerCase() === String(INTAKE_FORBIDDEN_KEYS[j]).toLowerCase()) {
+        return '患者を特定できる項目は受け取れません: ' + k;
+      }
+    }
+  }
+  if (!row.patientKey) return 'patientKey がありません';
+  if (String(row.patientKey).length < 8) {
+    return 'patientKey が短すぎます（仮名化されていない可能性）: ' + row.patientKey;
+  }
+  const d = row.days;
+  if (d === null || d === undefined || d === '') return 'days がありません';
+  if (typeof d !== 'number' || !isFinite(d) || d <= 0 || d > 400) {
+    return 'days が 1〜400 の数ではありません: ' + d;
+  }
+  return '';
+}
+
+/**
+ * 次回来局予定日を出す。
+ *
+ *   残日数 = 前回(来局日 + 処方日数) − 今回の来局日     （負なら 0）
+ *   次回   = 今回の来局日 + 今回の処方日数 + 残日数
+ *
+ * 早めに来た患者は手持ちが残るので、そのぶん次回が後ろへずれる。
+ * ここを見ないと、来局の山が実際より前に出る。
+ *
+ * @param {string} visitDate 今回の来局日 yyyy-mm-dd
+ * @param {number} days 今回の処方最大日数
+ * @param {{visitDate: string, days: number}=} prev 前回の来局
+ * @return {{next: string, carryOver: number}}
+ */
+function nextVisitOf_(visitDate, days, prev) {
+  const toDate = v => {
+    const p = String(v).split('-').map(Number);
+    return new Date(p[0], p[1] - 1, p[2]);
+  };
+  const fmt = d => d.getFullYear() + '-'
+    + String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0');
+
+  const cur = toDate(visitDate);
+  let carry = 0;
+  if (prev && prev.visitDate && prev.days) {
+    const prevEnd = toDate(prev.visitDate);
+    prevEnd.setDate(prevEnd.getDate() + Number(prev.days));
+    const diff = Math.round((prevEnd - cur) / 86400000);
+    carry = Math.max(0, diff);
+  }
+  const next = new Date(cur);
+  next.setDate(next.getDate() + Number(days) + carry);
+  return { next: fmt(next), carryOver: carry };
 }
 
 /** yyyy-mm-dd か。実在する日付かまで見る（2026-02-30 を弾く） */
@@ -154,6 +259,7 @@ function normalizeRecord_(rec, meta) {
   });
 
   out.dispenseDays = rec.dispenseDays || null;
+  out.patients = rec.patients || null;
   out.byDoctor = rec.byDoctor || null;
 
   // 契約に無いキー
