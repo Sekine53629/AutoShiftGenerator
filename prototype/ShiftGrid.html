@@ -417,7 +417,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     </div>
     <div class="group">
       <button id="autoRun" class="primary">自動生成</button>
+      <button id="histNow" title="いまの状態を控えます">控えを取る</button>
+      <button id="undoBtn" title="ひとつ前の控えに戻ります。押すごとに1つずつ遡ります">戻す</button>
       <button id="clearAll" title="開いている月の入力だけを消します">今月の入力を消す</button>
+      <span class="note" id="undoStat"></span>
     </div>
     <div class="group">
       <span class="lbl">表示</span>
@@ -599,12 +602,14 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <h2>編集履歴</h2>
   <p class="lead">
     <b>取り返しのつかない操作の直前に、自動で控えます。</b>
-    自動生成・取り込み・消去の前と、手で「いま保存」を押したときです。
+    自動生成・取り込み・消去の前と、手で「控えを取る」を押したときです。
     医師名欄・スタッフ欄・備考行のすべてが対象で、開いている月のぶんを控えます。<br>
     復元するときも、その直前の状態を控えます。戻しすぎても戻れます。
   </p>
   <div class="mtfoot" style="margin:0 0 10px">
-    <button id="histSave" class="primary">いま保存</button>
+    <span class="note">
+      「控えを取る」と「戻す」はシフト表の上にあります。ここでは一覧から選んで戻せます。
+    </span>
     <span class="note" id="histStat"></span>
   </div>
   <div class="mtwrap"><table class="mt" id="mtHistory"></table></div>
@@ -1254,6 +1259,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   function renderGrid() {
     const y = Number($('yy').value), m = Number($('mm').value);
+    if (curYm !== y + '-' + String(m).padStart(2, '0')) markEdited_();  // 月が変わったら遡りを忘れる
     curYm = y + '-' + String(m).padStart(2, '0');
     days = buildDays(y, m);
     ROWS = buildRows(y, m);
@@ -1389,7 +1395,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
           inp.type = 'text';
           inp.value = get(row, c);
           inp.setAttribute('list', row.kind === 'doctor' ? 'dlDoctor' : 'dlNote');
-          inp.addEventListener('input', () => { setV(row, c, inp.value.trim()); recalc(); });
+          inp.addEventListener('input', () => {
+            markEdited_();
+            setV(row, c, inp.value.trim());
+            recalc();
+          });
           inp.addEventListener('focus', () => select(row.index, c, false));
           cell.appendChild(inp);
           tr.appendChild(cell);
@@ -1463,6 +1473,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   function applyStamp(r, c, st) {
     const row = ROWS[r];
     if (!canStamp(row, st)) return false;
+    markEdited_();
     setV(row, c, st.value);
     paintCell(row, c);
     recalc();
@@ -2715,12 +2726,24 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   arm($('autoRun'), 'もう一度押すと生成', () => {
     snapshot_('自動生成の直前');
+    markEdited_();
     autoGenerate();
     renderHistory();
+    undoStat_('自動生成の直前を控えました。「戻す」で元に戻せます');
   });
+
+  // 控えを取るのも戻すのも、失うものが無いので一度押しでよい。
+  // 戻す前にいまの状態を控えるので、押しすぎても失われない
+  $('histNow').addEventListener('click', () => {
+    const done = snapshot_('手で保存');
+    renderHistory();
+    undoStat_(done ? 'いまの状態を控えました' : '前回の控えから変わっていません');
+  });
+  $('undoBtn').addEventListener('click', undoOnce_);
   // 全部の月を消すと取り返しがつかない。開いている月だけにする
   arm($('clearAll'), 'もう一度押すと消去', () => {
     snapshot_('消去の直前');
+    markEdited_();
     Array.from(values.keys()).forEach(k => {
       if (k.split('|')[1] === curYm) values.delete(k);
     });
@@ -2742,6 +2765,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   const HISTORY_KEY = 'shiftgrid.history.v1';
   const HISTORY_KEEP = 20;     // 月ごとの保持数
+  /** どこまで遡ったか。-1 は遡っていない状態。表を触ると -1 に戻る */
+  let undoPos = -1;
 
   function loadHistory_() {
     try {
@@ -2825,14 +2850,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     return true;
   }
 
-  /** 控えへ戻す。戻す前に、いまの状態も控える */
-  function restoreSnapshot_(index) {
-    const before = loadHistory_()[curYm] || [];
-    const snap = before[index];
-    if (!snap) return;
-    snapshot_('復元の直前');
-
-    // その月の入力を消してから入れ直す
+  /** 控えの中身を表に当てる。控えは取らない（呼ぶ側の責任） */
+  function applySnapshot_(snap) {
     Array.from(values.keys()).forEach(k => {
       if (k.split('|')[1] === curYm) values.delete(k);
     });
@@ -2843,9 +2862,56 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       });
     });
     renderGrid();
-    renderHistory();
-    histStat_(fmtWhen_(snap.at) + ' の状態に戻しました');
   }
+
+  /** 履歴の一覧から戻す。戻す前に、いまの状態も控える */
+  function restoreSnapshot_(index) {
+    const before = loadHistory_()[curYm] || [];
+    const snap = before[index];
+    if (!snap) return;
+    snapshot_('復元の直前');
+    applySnapshot_(snap);
+    undoPos = index + 1;          // 続けて「戻す」を押したら、さらに遡る
+    renderHistory();
+    const msg = fmtWhen_(snap.at) + ' の状態に戻しました';
+    histStat_(msg);
+    undoStat_(msg);
+  }
+
+  /**
+   * ひとつ前の控えへ。押すごとに1つずつ遡る。
+   *
+   * 単純に「最新の控えに戻す」だけだと、2回目に押したときに
+   * 戻る前の状態へ行ってしまい、行ったり来たりになる。
+   * どこまで遡ったかを覚えておき、編集したら忘れる。
+   */
+  function undoOnce_() {
+    let list = loadHistory_()[curYm] || [];
+    if (!list.length) { undoStat_('この月の控えがまだありません'); return; }
+
+    if (undoPos < 0) {
+      // 遡り始め。いまの状態を控えてから、ひとつ前へ
+      snapshot_('戻す直前');
+      list = loadHistory_()[curYm] || [];
+      undoPos = 1;
+    } else {
+      undoPos++;
+    }
+    if (undoPos >= list.length) {
+      undoPos = list.length - 1;
+      undoStat_('これ以上は遡れません（控え ' + list.length + ' 件）');
+      return;
+    }
+    const snap = list[undoPos];
+    applySnapshot_(snap);
+    renderHistory();
+    undoStat_(fmtWhen_(snap.at) + ' の状態（' + snap.label + '）へ戻しました');
+  }
+
+  function undoStat_(t) { const el2 = $('undoStat'); if (el2) el2.textContent = t; }
+
+  /** 表を触ったら、遡りの位置を忘れる */
+  function markEdited_() { undoPos = -1; }
 
   function fmtWhen_(iso) {
     const d = new Date(iso);
@@ -2980,6 +3046,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 表の中身は行が出来てからでないと入れられない
     if (parsed.shift) {
       snapshot_('取り込みの直前');
+      markEdited_();
       // 新しい形は 年月 -> 行 -> 日。月を持たない古い形は対象月のものとして扱う
       const isByMonth = Object.keys(parsed.shift).some(k => /^\d{4}-\d{1,2}$/.test(k));
       const src2 = isByMonth ? parsed.shift
@@ -3024,12 +3091,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     refreshAll();
     autoGenerate();
     dataStat('初期値に戻しました。');
-  });
-
-  arm($('histSave'), 'もう一度押すと保存', () => {
-    const done = snapshot_('手で保存');
-    renderHistory();
-    if (!done) histStat_('前回の控えから変わっていないので、積みませんでした');
   });
 
   $('tabs').addEventListener('click', ev => {

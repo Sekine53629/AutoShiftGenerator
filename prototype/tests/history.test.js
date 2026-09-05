@@ -118,5 +118,47 @@ console.log('■ 月ごとに分かれる');
 }
 
 console.log('');
+console.log('■ 「戻す」を連打すると一段ずつ遡る');
+{
+  const src2 = fs.readFileSync('prototype/ShiftGrid.html', 'utf8');
+  const g = n => {
+    const at = src2.indexOf('function ' + n + '(');
+    let d = 0;
+    for (let j = src2.indexOf('{', at); j < src2.length; j++) {
+      if (src2[j] === '{') d++; else if (src2[j] === '}') { d--; if (!d) return src2.slice(at, j + 1); }
+    }
+  };
+  const L = t => src2.split(/\r?\n/).find(l => l.includes(t));
+  const u = new Function('localStorage', [
+    L('const HISTORY_KEY'), L('const HISTORY_KEEP'), L('  let undoPos'),
+    g('loadHistory_'), g('saveHistory_'), g('dropOldestSnapshot_'), g('diffCount_'),
+    'let cellsNow = {}; let curYm = "2026-10"; let last = "";',
+    'function currentCells_() { return JSON.parse(JSON.stringify(cellsNow)); }',
+    'function applySnapshot_(s) { cellsNow = JSON.parse(JSON.stringify(s.cells)); }',
+    'function renderGrid() {} function renderHistory() {}',
+    'function fmtWhen_() { return ""; } function histStat_() {}',
+    'function undoStat_(t) { last = t; }',
+    g('snapshot_'), g('undoOnce_'), g('markEdited_'),
+    'return { snapshot_, undoOnce_, markEdited_, set: c => { cellsNow = c; },',
+    '  now: () => cellsNow, msg: () => last, pos: () => undoPos };'
+  ].join('\n'))(makeStore(5000000));
+
+  const V = v => ({ s1: { 1: v } });
+  ['A', 'B', 'C'].forEach(v => { u.set(V(v)); u.snapshot_('手で保存 ' + v); u.markEdited_(); });
+  u.set(V('D')); u.markEdited_();
+
+  const seen = [];
+  for (let i = 0; i < 5; i++) { u.undoOnce_(); seen.push(u.now().s1['1']); }
+  console.log('  D（未保存）から連打 → ' + seen.join(' → '));
+  check(seen.join(',') === 'C,B,A,A,A', '一段ずつ遡って止まる', seen.join(','));
+
+  u.set(V('E')); u.markEdited_();
+  check(u.pos() === -1, '編集で遡りが切れる', String(u.pos()));
+  u.undoOnce_();
+  console.log('  E に編集してから戻す → ' + u.now().s1['1']);
+  check(u.now().s1['1'] === 'D', '編集後の1回目はその直前へ', u.now().s1['1']);
+}
+
+console.log('');
 console.log(ng ? ('★ NG ' + ng + ' 件') : '編集履歴: すべて意図どおり');
 process.exit(ng ? 1 : 0);
