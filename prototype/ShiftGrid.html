@@ -416,7 +416,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     </div>
     <div class="group">
       <button id="autoRun" class="primary">自動生成</button>
-      <button id="clearAll">入力をすべて消す</button>
+      <button id="clearAll" title="開いている月の入力だけを消します">今月の入力を消す</button>
     </div>
     <div class="group">
       <span class="lbl">表示</span>
@@ -991,8 +991,18 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const isInput = r => r.kind === 'doctor' || r.kind === 'staff' || r.kind === 'note';
 
   /* ═══ 状態 ═════════════════════════════════════════════ */
-  const values = new Map();   // '<row.key>|日' -> 文字列。row.key は社員ID / doc1..5 / note
-  const cellKey = (row, c) => row.key + '|' + c;
+  /**
+   * 入力した記号。キーは '<row.key>|yyyy-mm|日'。
+   * row.key は社員ID / doc1..doc5 / note。
+   *
+   * 以前は列番号だけを持っていたため、10月に入れた内容が11月にも
+   * そのまま出ていた（列番号は月が変わっても 0..30 のままなので）。
+   * 年月と、列番号ではなく実際の日を持たせる。
+   */
+  const values = new Map();
+  let curYm = '';
+  const cellKey = (row, c) =>
+    row.key + '|' + curYm + '|' + (days[c] ? days[c].day : c + 1);
   const get = (row, c) => values.get(cellKey(row, c)) || '';
   const setV = (row, c, v) => {
     if (v) values.set(cellKey(row, c), v); else values.delete(cellKey(row, c));
@@ -1147,6 +1157,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   function renderGrid() {
     const y = Number($('yy').value), m = Number($('mm').value);
+    curYm = y + '-' + String(m).padStart(2, '0');
     days = buildDays(y, m);
     ROWS = buildRows(y, m);
     $('ymLabel').textContent = y + '年' + m + '月';
@@ -2460,7 +2471,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   });
 
   arm($('autoRun'), 'もう一度押すと生成', autoGenerate);
-  arm($('clearAll'), 'もう一度押すと消去', () => { values.clear(); renderGrid(); });
+  // 全部の月を消すと取り返しがつかない。開いている月だけにする
+  arm($('clearAll'), 'もう一度押すと消去', () => {
+    Array.from(values.keys()).forEach(k => {
+      if (k.split('|')[1] === curYm) values.delete(k);
+    });
+    renderGrid();
+  });
   ['yy', 'mm'].forEach(id => $(id).addEventListener('change', renderGrid));
   $('storeSel').addEventListener('change', () => {
     activeStore = $('storeSel').value;
@@ -2472,24 +2489,30 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   /* ═══ 書き出しと取り込み ═══════════════════════════════
      枠の中では download が効かないので、貼り付けでやり取りする。 */
+  /**
+   * 書き出し。マスタは DB をそのまま出すので、あとから足したマスタも
+   * 勝手に入る。シフトは開いている月だけでなく、入力のある月すべて。
+   */
   function dumpText() {
     const y = Number($('yy').value), m = Number($('mm').value);
-    const cells = {};
-    ROWS.forEach(row => {
-      if (!isInput(row)) return;
-      const line = {};
-      for (let c = 0; c < DAY_COLS; c++) {
-        if (days[c].inMonth && get(row, c)) line[days[c].day] = get(row, c);
-      }
-      if (Object.keys(line).length) {
-        cells[row.key] = line;
-      }
+
+    // '<row.key>|yyyy-mm|日' を 年月 -> 行 -> 日 に組み直す
+    const byMonth = {};
+    values.forEach((v, k) => {
+      const p = k.split('|');
+      if (p.length !== 3 || !v) return;
+      const ym = p[1];
+      (byMonth[ym] = byMonth[ym] || {});
+      (byMonth[ym][p[0]] = byMonth[ym][p[0]] || {})[p[2]] = v;
     });
+
     return JSON.stringify({
       exportedAt: new Date().toISOString(),
       targetMonth: y + '-' + String(m).padStart(2, '0'),
+      masters: Object.keys(DB),          // 何が入っているか一目で分かるように
+      months: Object.keys(byMonth).sort(),
       master: DB,
-      shift: cells
+      shift: byMonth
     }, null, 2);
   }
 
@@ -2547,26 +2570,36 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     // 表の中身は行が出来てからでないと入れられない
     if (parsed.shift) {
-      let n = 0, rows = 0, unknown = [];
-      Object.keys(parsed.shift).forEach(k => {
-        if (!ROWS.some(row => isInput(row) && row.key === k)) unknown.push(k);
-      });
-      ROWS.forEach(row => {
-        if (!isInput(row)) return;
-        const line = parsed.shift[row.key];
-        if (!line) return;                       // 貼られていない行は触らない
-        rows++;
-        for (let c = 0; c < DAY_COLS; c++) setV(row, c, '');   // その行だけ入れ替える
-        for (let c = 0; c < DAY_COLS; c++) {
-          const v = line[days[c].day];
-          if (days[c].inMonth && v) { setV(row, c, v); n++; }
-        }
+      // 新しい形は 年月 -> 行 -> 日。月を持たない古い形は対象月のものとして扱う
+      const isByMonth = Object.keys(parsed.shift).some(k => /^\d{4}-\d{1,2}$/.test(k));
+      const src2 = isByMonth ? parsed.shift
+        : { [parsed.targetMonth || curYm]: parsed.shift };
+
+      let n = 0, rows = 0;
+      const unknown = new Set();
+      Object.keys(src2).forEach(ym => {
+        const p = String(ym).split('-');
+        const key = p[0] + '-' + String(Number(p[1])).padStart(2, '0');
+        Object.keys(src2[ym]).forEach(rk => {
+          const line = src2[ym][rk];
+          if (!line || typeof line !== 'object') return;
+          rows++;
+          // その行のその月だけを入れ替える
+          values.forEach((v, k) => {
+            if (k.indexOf(rk + '|' + key + '|') === 0) values.delete(k);
+          });
+          Object.keys(line).forEach(d => {
+            if (!line[d]) return;
+            values.set(rk + '|' + key + '|' + d, line[d]);
+            n++;
+          });
+        });
       });
       renderGrid();
+      ROWS.forEach(r2 => { if (isInput(r2) && r2.key) unknown.delete(r2.key); });
       const parts = present.length ? [present.join(' / ')] : [];
-      parts.push(rows + ' 行 / ' + n + ' セル');
-      dataStat('取り込みました（' + parts.join(' と ') + '）。'
-        + (unknown.length ? ' 該当する行が無いキー: ' + unknown.join(', ') : ''));
+      parts.push(Object.keys(src2).length + ' か月 / ' + rows + ' 行 / ' + n + ' セル');
+      dataStat('取り込みました（' + parts.join(' と ') + '）。');
     } else {
       dataStat('取り込みました（' + present.join(' / ') + '）。');
     }
