@@ -395,6 +395,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <button data-tab="pattern">シフトパターン</button>
   <button data-tab="note">備考マスタ</button>
   <button data-tab="leave">有休管理</button>
+  <button data-tab="history">編集履歴</button>
   <button data-tab="data">データ書き出し</button>
 </nav>
 
@@ -592,6 +593,25 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <span class="note" id="leaveWarn"></span>
     <span class="note">付与日から2年で時効になるぶんは、まだ見ていません。</span>
   </div>
+</div></section>
+
+<section class="panel" data-panel="history"><div class="sheet">
+  <h2>編集履歴</h2>
+  <p class="lead">
+    <b>取り返しのつかない操作の直前に、自動で控えます。</b>
+    自動生成・取り込み・消去の前と、手で「いま保存」を押したときです。
+    医師名欄・スタッフ欄・備考行のすべてが対象で、開いている月のぶんを控えます。<br>
+    復元するときも、その直前の状態を控えます。戻しすぎても戻れます。
+  </p>
+  <div class="mtfoot" style="margin:0 0 10px">
+    <button id="histSave" class="primary">いま保存</button>
+    <span class="note" id="histStat"></span>
+  </div>
+  <div class="mtwrap"><table class="mt" id="mtHistory"></table></div>
+  <p class="hint">
+    控えはこのブラウザの中だけに残ります。月ごとに新しい順で 20 件まで。
+    別の端末や別のブラウザからは見えません。
+  </p>
 </div></section>
 
 <section class="panel" data-panel="data"><div class="sheet">
@@ -2693,13 +2713,19 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     ev.preventDefault();
   });
 
-  arm($('autoRun'), 'もう一度押すと生成', autoGenerate);
+  arm($('autoRun'), 'もう一度押すと生成', () => {
+    snapshot_('自動生成の直前');
+    autoGenerate();
+    renderHistory();
+  });
   // 全部の月を消すと取り返しがつかない。開いている月だけにする
   arm($('clearAll'), 'もう一度押すと消去', () => {
+    snapshot_('消去の直前');
     Array.from(values.keys()).forEach(k => {
       if (k.split('|')[1] === curYm) values.delete(k);
     });
     renderGrid();
+    renderHistory();
   });
   ['yy', 'mm'].forEach(id => $(id).addEventListener('change', renderGrid));
   $('storeSel').addEventListener('change', () => {
@@ -2709,6 +2735,166 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     renderMaster('closure');
     refreshAll();
   });
+
+  /* ═══ 編集履歴 ═════════════════════════════════════════
+     取り返しのつかない操作の直前に控える。シート側の Backup.gs と
+     同じ考え方（直前に控える／復元の前にも控える）。 */
+
+  const HISTORY_KEY = 'shiftgrid.history.v1';
+  const HISTORY_KEEP = 20;     // 月ごとの保持数
+
+  function loadHistory_() {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return (parsed && typeof parsed === 'object') ? parsed : {};
+    } catch (e) { return {}; }
+  }
+
+  /**
+   * 控えを書く。入りきらないときは古いものから捨てて入れ直す。
+   * 「保存できませんでした」で終わらせると、直前の状態が失われる
+   */
+  function saveHistory_(h) {
+    for (let i = 0; i < 6; i++) {
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(h));
+        return true;
+      } catch (e) {
+        if (!dropOldestSnapshot_(h)) return false;
+      }
+    }
+    return false;
+  }
+
+  /** いちばん古い控えを1つ捨てる。捨てるものが無ければ false */
+  function dropOldestSnapshot_(h) {
+    let oldest = null, oldestYm = '';
+    Object.keys(h).forEach(ym => {
+      const list = h[ym] || [];
+      if (!list.length) return;
+      const last = list[list.length - 1];
+      if (!oldest || last.at < oldest.at) { oldest = last; oldestYm = ym; }
+    });
+    if (!oldest) return false;
+    h[oldestYm].pop();
+    if (!h[oldestYm].length) delete h[oldestYm];
+    return true;
+  }
+
+  /** 開いている月の入力を取り出す。'<行キー>' -> {日: 記号} */
+  function currentCells_() {
+    const cells = {};
+    ROWS.forEach(row => {
+      if (!isInput(row)) return;
+      const line = {};
+      for (let c = 0; c < DAY_COLS; c++) {
+        if (days[c].inMonth && get(row, c)) line[days[c].day] = get(row, c);
+      }
+      if (Object.keys(line).length) cells[row.key] = line;
+    });
+    return cells;
+  }
+
+  /** 2つの控えの間で、いくつのセルが変わったか */
+  function diffCount_(a, b) {
+    const keys = new Set(Object.keys(a || {}).concat(Object.keys(b || {})));
+    let n = 0;
+    keys.forEach(k => {
+      const x = (a && a[k]) || {}, y = (b && b[k]) || {};
+      const days2 = new Set(Object.keys(x).concat(Object.keys(y)));
+      days2.forEach(d => { if (x[d] !== y[d]) n++; });
+    });
+    return n;
+  }
+
+  /**
+   * いまの状態を控える。
+   * 直前の控えと中身が同じなら積まない（同じものが並ぶと探しにくい）。
+   * @return {boolean} 積んだか
+   */
+  function snapshot_(label) {
+    if (!curYm) return false;
+    const h = loadHistory_();
+    const list = h[curYm] = h[curYm] || [];
+    const cells = currentCells_();
+    if (list.length && diffCount_(list[0].cells, cells) === 0) return false;
+    list.unshift({ at: new Date().toISOString(), label: label || '保存', cells: cells });
+    if (list.length > HISTORY_KEEP) list.length = HISTORY_KEEP;
+    saveHistory_(h);
+    return true;
+  }
+
+  /** 控えへ戻す。戻す前に、いまの状態も控える */
+  function restoreSnapshot_(index) {
+    const before = loadHistory_()[curYm] || [];
+    const snap = before[index];
+    if (!snap) return;
+    snapshot_('復元の直前');
+
+    // その月の入力を消してから入れ直す
+    Array.from(values.keys()).forEach(k => {
+      if (k.split('|')[1] === curYm) values.delete(k);
+    });
+    Object.keys(snap.cells).forEach(rowKey => {
+      const line = snap.cells[rowKey];
+      Object.keys(line).forEach(d => {
+        values.set(rowKey + '|' + curYm + '|' + d, line[d]);
+      });
+    });
+    renderGrid();
+    renderHistory();
+    histStat_(fmtWhen_(snap.at) + ' の状態に戻しました');
+  }
+
+  function fmtWhen_(iso) {
+    const d = new Date(iso);
+    const p = n => String(n).padStart(2, '0');
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' '
+      + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  function histStat_(t) { const el2 = $('histStat'); if (el2) el2.textContent = t; }
+
+  function renderHistory() {
+    const table = $('mtHistory');
+    if (!table) return;
+    table.textContent = '';
+    const list = loadHistory_()[curYm] || [];
+
+    const thead = el('thead');
+    const hr = el('tr');
+    ['保存した時刻', 'きっかけ', '入っているセル', 'ひとつ後との差', ''].forEach(t =>
+      hr.appendChild(el('th', '', t)));
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = el('tbody');
+    if (!list.length) {
+      const tr = el('tr');
+      const td2 = el('td', '', 'この月の控えはまだありません');
+      td2.colSpan = 5;
+      tr.appendChild(td2);
+      tbody.appendChild(tr);
+    }
+    list.forEach((snap, i) => {
+      const tr = el('tr');
+      const filled = Object.keys(snap.cells).reduce(
+        (a, k) => a + Object.keys(snap.cells[k]).length, 0);
+      const diff = (i + 1 < list.length) ? diffCount_(snap.cells, list[i + 1].cells) : null;
+      tr.appendChild(el('td', '', fmtWhen_(snap.at)));
+      tr.appendChild(el('td', '', snap.label));
+      tr.appendChild(el('td', 'num', String(filled)));
+      tr.appendChild(el('td', 'num', diff === null ? '—' : String(diff)));
+      const dc = el('td');
+      const b = el('button', '', 'この状態に戻す');
+      arm(b, 'もう一度押すと復元', () => restoreSnapshot_(i));
+      dc.appendChild(b);
+      tr.appendChild(dc);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    histStat_(list.length ? ('控え ' + list.length + ' 件（最大 ' + HISTORY_KEEP + ' 件）') : '');
+  }
 
   /* ═══ 書き出しと取り込み ═══════════════════════════════
      枠の中では download が効かないので、貼り付けでやり取りする。 */
@@ -2793,6 +2979,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     // 表の中身は行が出来てからでないと入れられない
     if (parsed.shift) {
+      snapshot_('取り込みの直前');
       // 新しい形は 年月 -> 行 -> 日。月を持たない古い形は対象月のものとして扱う
       const isByMonth = Object.keys(parsed.shift).some(k => /^\d{4}-\d{1,2}$/.test(k));
       const src2 = isByMonth ? parsed.shift
@@ -2839,6 +3026,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     dataStat('初期値に戻しました。');
   });
 
+  arm($('histSave'), 'もう一度押すと保存', () => {
+    const done = snapshot_('手で保存');
+    renderHistory();
+    if (!done) histStat_('前回の控えから変わっていないので、積みませんでした');
+  });
+
   $('tabs').addEventListener('click', ev => {
     const btn = ev.target.closest('button[data-tab]');
     if (!btn) return;
@@ -2848,6 +3041,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       p.classList.toggle('on', p.dataset.panel === btn.dataset.tab));
     // 貼り付け途中の内容を消さないよう、空のときだけ入れ直す
     if (btn.dataset.tab === 'data' && !$('dataBox').value) fillDataBox(false);
+    if (btn.dataset.tab === 'history') renderHistory();
   });
 
   /* ═══ 起動 ═════════════════════════════════════════════ */
