@@ -374,7 +374,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 <header class="page-head">
   <h1>シフト表</h1>
   <span class="ym" id="ymLabel">—</span>
-  <span class="note">マスタを直すとシフト表の行がすぐ入れ替わります</span>
+  <span class="note" id="quotaNote"></span>
 </header>
 
 <nav class="tabs" id="tabs">
@@ -503,7 +503,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <h2>社員マスタ</h2>
   <p class="lead">
     シフト表の行はここから作られます。在籍期間の外にある人はその月の表に出ません
-    （退職者を消さずに済むので、過去の月を開いても表が壊れません）。
+    （退職者を消さずに済むので、過去の月を開いても表が壊れません）。<br>
+    <b>月ごとに変わる値はここに置きません。</b>月の公休ノルマは暦から決まり全員共通です
+    （画面上部に出ています）。ここに置けるのは<b>年単位の契約値</b>だけです。
   </p>
   <div class="mtwrap"><table class="mt" id="mtStaff"></table></div>
   <div class="mtfoot">
@@ -601,7 +603,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 画面では設定が効いていないように見える
     const mk = (name, kind, emp, week, off, cons, pats, avail, fixed, close, rule) => ({
       id: 's' + (staff.length + 1), name: name, kind: kind, employment: emp,
-      weekDays: week, offAdjust: off, maxCons: cons,
+      weekDays: week, annualOff: off, maxCons: cons,
       patterns: (pats || []).slice(),
       availDow: (avail || ALL).slice(),
       fixedDow: (fixed || NONE).slice(),
@@ -612,16 +614,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const ALL = [1, 1, 1, 1, 1, 1, 1];
     const NONE = [0, 0, 0, 0, 0, 0, 0];
     // 連続出勤の上限は人ごとに違う。A は 3 日、B 以降は 5 日
-    staff.push(mk('薬剤師 A', '薬剤師', '社員', 5, 0, 3, ['○', '●', '▲'], ALL, [], true, '自動'));
+    staff.push(mk('薬剤師 A', '薬剤師', '社員', 5, '', 3, ['○', '●', '▲'], ALL, [], true, '自動'));
     ['B', 'C', 'D', 'E', 'F'].forEach(x =>
-      staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, 0, 5, ['○', '●', '▲'], ALL, [], true, '自動')));
-    staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, 0, 4, ['○', '●'], ALL, [], true, '自動'));
-    staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, 0, 3, ['●'], ALL, [], false, '自動'));
+      staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, '', 5, ['○', '●', '▲'], ALL, [], true, '自動')));
+    staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, '', 4, ['○', '●'], ALL, [], true, '自動'));
+    staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, '', 3, ['●'], ALL, [], false, '自動'));
     ['1', '2', '3'].forEach(x =>
-      staff.push(mk('派遣 ' + x, '薬剤師', '派遣', 0, 0, 6, ['▲', '●'], ALL, [], false, '手動')));
+      staff.push(mk('派遣 ' + x, '薬剤師', '派遣', 0, '', 6, ['▲', '●'], ALL, [], false, '手動')));
     ['A', 'B', 'C'].forEach(x =>
-      staff.push(mk('事務 ' + x, '事務員', '社員', 5, 0, 5, ['○', '●'], ALL, [], true, '自動')));
-    staff.push(mk('事務 D', '事務員', '社員', 4, 0, 4, ['○'], ALL, [], false, '自動'));
+      staff.push(mk('事務 ' + x, '事務員', '社員', 5, '', 5, ['○', '●'], ALL, [], true, '自動')));
+    staff.push(mk('事務 D', '事務員', '社員', 4, '', 4, ['○'], ALL, [], false, '自動'));
 
     return {
       stores: [{ id: 'st1', name: '本店', short: '本', memo: '' }],
@@ -720,7 +722,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     // 社員の配列は行ごとに独立させる。共有していると1人直すと全員変わる
     (db.staff || []).forEach(x => {
-      if (x.offAdjust === undefined) x.offAdjust = 0;   // 月間休日数は暦から算出に変わった
+      // 月ごとの値は台帳に置かない。残っていても使わないので消す
+      delete x.offAdjust;
+      delete x.monthOff;
+      if (x.annualOff === undefined) x.annualOff = '';   // 空欄は「暦どおり」
       x.availDow = normDow_(x.availDow, 1);
       x.fixedDow = normDow_(x.fixedDow, 0);
       x.patterns = Array.isArray(x.patterns) ? x.patterns.slice() : [];
@@ -1015,8 +1020,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         day: d, inMonth: true, dow: dow,
         holiday: hd ? hd.name : '',                 // 暦の事実
         holidayKind: hd ? hd.kind : '',
-        // 公休ノルマに数える日 = 土日 ＋ 公休加算の祝日 ＋ 社内休日
-        countsOff: dow === 0 || dow === 6 || (!!hd && hd.kind !== '対象外'),
+        // 公休ノルマに数える日
+        //   土日 ＋ 公休加算の祝日・社内休日 ＋ 店が閉まっている日
+        // 店が閉まれば全員休みなので、それも所定休日として数える。
+        // 数えないと、臨時休業のぶんだけ公休枠から溢れて空欄になる
+        countsOff: dow === 0 || dow === 6
+                || (!!hd && hd.kind !== '対象外')
+                || !(!!h.open && !closed),
         open: !!h.open && !closed,                  // 店として開けるか
         exception: ex ? ex.label : (hd && hd.kind === '休業' ? hd.name : ''),
         from: (ex && ex.kind === '短縮' && ex.from2) ? ex.from2 : h.from,
@@ -1043,9 +1053,33 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   function offQuotaBase() {
     return days.filter(d => d.inMonth && d.countsOff).length;
   }
-  /** 個人の公休ノルマ。基準に社員マスタの調整を足す */
-  function offQuotaFor(staff) {
-    return Math.max(0, offQuotaBase() + (Number(staff && staff.offAdjust) || 0));
+  /**
+   * その人の月の公休ノルマ。**全員共通で、暦から決まる。**
+   *
+   * 以前は社員マスタの「公休 調整」を足していたが、あれは誤りだった。
+   * 社員マスタは恒久的な台帳で、月ごとに変わる値を置く場所ではない。
+   * 10月ぶんのつもりで入れた調整が、11月以降にも黙って効いてしまう。
+   * 契約上の年間公休日数は annualOff（台帳に置いてよい年単位の値）。
+   */
+  function offQuotaFor() {
+    return offQuotaBase();
+  }
+
+  /** その年の公休ノルマの合計。契約の年間公休日数と突き合わせる */
+  const annualCache = {};
+  function annualQuotaOf(y) {
+    const key = y + '|' + activeStore;
+    if (annualCache[key] !== undefined) return annualCache[key];
+    let n = 0;
+    for (let m = 1; m <= 12; m++) {
+      n += buildDays(y, m).filter(d => d.inMonth && d.countsOff).length;
+    }
+    annualCache[key] = n;
+    return n;
+  }
+  /** マスタを直したら年間の集計は作り直す */
+  function clearAnnualCache_() {
+    Object.keys(annualCache).forEach(k => { delete annualCache[k]; });
   }
 
   /** 休業日は色ではなく網掛けで示す。祝日の色を潰さないため */
@@ -1065,6 +1099,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     days = buildDays(y, m);
     ROWS = buildRows(y, m);
     $('ymLabel').textContent = y + '年' + m + '月';
+    // 月の公休ノルマは全員共通。人ごとの設定ではないと分かるよう見出しに出す
+    $('quotaNote').textContent =
+      '今月の公休ノルマ ' + offQuotaBase() + ' 日（全員共通・暦から算出）／'
+      + y + '年の合計 ' + annualQuotaOf(y) + ' 日';
 
     const bar = $('holidayBar');
     bar.textContent = '';
@@ -1221,7 +1259,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   function staffTip(s) {
     const av = s.availDow.map((v, i) => v ? DOW[i] : '').filter(Boolean).join('');
     return [s.kind + '／' + s.employment,
-            '週' + s.weekDays + '日・公休 ' + offQuotaFor(s) + ' 日',
+            '週' + s.weekDays + '日・今月の公休 ' + offQuotaFor() + ' 日（全員共通）',
             '連勤 ' + (s.maxCons || DB.rules.maxConsDefault) + ' 日まで'
               + (s.maxCons ? '' : '（既定値）'),
             '出られる曜日: ' + (av || 'なし'),
@@ -1367,7 +1405,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         if (isPubOff(v)) off++;
         else if (!v) blank++;
       }
-      const quota = offQuotaFor(s);
+      const quota = offQuotaFor();
       // 公休はノルマちょうど。多くても少なくても労基上の管理が狂う
       if (off !== quota) {
         msgs.push(s.name + '：公休（公休＋希望休）が ' + off + ' 日。ノルマは '
@@ -1410,6 +1448,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
 
     autoNotes.forEach(t => msgs.unshift('自動生成 — ' + t));
+
+    // 契約の年間公休日数と、暦から出る年間の合計が合わない人
+    const yy = Number($('yy').value) || new Date().getFullYear();
+    const calYear = annualQuotaOf(yy);
+    const offBy = [];
+    ROWS.forEach(row => {
+      if (row.kind !== 'staff' || !row.staff) return;
+      const a = Number(row.staff.annualOff);
+      if (!a) return;                       // 空欄は暦どおりの扱い
+      if (a !== calYear) offBy.push(row.staff.name + '（契約 ' + a + ' 日）');
+    });
+    if (offBy.length) {
+      msgs.push(yy + '年の暦の公休は ' + calYear + ' 日です。契約の年間公休日数と'
+        + '合わない人がいます: ' + offBy.join('、'));
+    }
 
     // マスタの日付が読めない行。画面を開いていなくても気づけるよう表の下にも出す
     (DB.holidays || []).forEach(h => {
@@ -1515,7 +1568,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     // 3. 公休はノルマちょうどに置く。希望休は既に枠を使っているので差し引く
     const free = inMonth.filter(c => !keep.has(c) && !forced.has(c));
-    const quota = offQuotaFor(s);
+    const quota = offQuotaFor();
     const room = quota - keepPub.size;               // まだ置ける公休の数
     if (room < 0) {
       note_(s.name + '：希望休が ' + keepPub.size + ' 日で、公休ノルマ '
@@ -1656,8 +1709,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'kind',       head: '区分',        type: 'select', opts: ['薬剤師', '事務員'], group: '本人' },
       { key: 'employment', head: '雇用',        type: 'select', opts: ['社員', '派遣', 'パート'], group: '本人' },
       { key: 'weekDays',   head: '週勤務日数',  type: 'num', min: 0, max: 7, group: '配置ルール（この人だけに効く）' },
-      { key: 'offQuota',   head: '公休ノルマ',  type: 'calc', calc: r => offQuotaFor(r), group: '配置ルール（この人だけに効く）' },
-      { key: 'offAdjust',  head: '公休 調整',   type: 'num', min: -15, max: 15, group: '配置ルール（この人だけに効く）' },
+      { key: 'annualOff',  head: '年間公休日数', type: 'num', min: 0, max: 200,
+        ph: () => String(annualQuotaOf(Number($('yy').value) || new Date().getFullYear())),
+        group: '契約' },
+      { key: 'annualCal',  head: '暦の年間', type: 'calc',
+        calc: () => annualQuotaOf(Number($('yy').value) || new Date().getFullYear()),
+        group: '契約' },
       { key: 'maxCons',    head: '連続出勤上限', type: 'num', min: 0, max: 14,
         ph: () => String(DB.rules.maxConsDefault), group: '配置ルール（この人だけに効く）' },
       { key: 'patterns',   head: '使える記号',   type: 'checks', from: 'patterns', group: '配置ルール（この人だけに効く）' },
@@ -1941,7 +1998,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const BLANK = {
     staff: () => ({
       id: newId('s'), name: '', kind: '薬剤師', employment: '社員',
-      weekDays: 5, offAdjust: 0, maxCons: 5, patterns: ['○', '●', '▲'],
+      weekDays: 5, annualOff: '', maxCons: 5, patterns: ['○', '●', '▲'],
       availDow: [1, 1, 1, 1, 1, 1, 1], fixedDow: [0, 0, 0, 0, 0, 0, 0],
       canClose: false, from: '', to: '', rule: '自動', memo: ''
     }),
@@ -2218,6 +2275,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   /* ═══ 全体の描き直し ═══════════════════════════════════ */
   function refreshAll() {
+    clearAnnualCache_();
     renderStoreSelect();
     renderPalette();
     renderDatalists();

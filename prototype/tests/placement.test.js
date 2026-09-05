@@ -111,7 +111,7 @@ function check(ok, label, detail) {
     const off = inMonth.filter(c => r.isPubOff(r.get(row, c))).length;
     const blank = inMonth.filter(c => !r.get(row, c)).length;
     const work = inMonth.filter(c => r.isWork(r.get(row, c))).length;
-    const quota = r.offQuotaFor(s);
+    const quota = r.offQuotaFor();
     const perWeek = r.weeks.map(w => w.cols.filter(c => r.isWork(r.get(row, c))).length);
     const cap = s.maxCons || r.DB.rules.maxConsDefault;
     const runW = longestRun(c => r.isWork(r.get(row, c)), inMonth);

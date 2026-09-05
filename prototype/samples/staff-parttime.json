@@ -7,7 +7,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 5,
       "patterns": [
         "○",
@@ -44,7 +44,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 5,
       "patterns": [
         "○",
@@ -81,7 +81,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 4,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 4,
       "patterns": [
         "○",
@@ -118,7 +118,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 4,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 4,
       "patterns": [
         "○",
@@ -155,7 +155,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 3,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "●"
@@ -190,7 +190,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 3,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○"
@@ -225,7 +225,7 @@
       "kind": "薬剤師",
       "employment": "派遣",
       "weekDays": 0,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 6,
       "patterns": [
         "▲",
@@ -261,7 +261,7 @@
       "kind": "事務員",
       "employment": "社員",
       "weekDays": 4,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 4,
       "patterns": [
         "○",
@@ -297,7 +297,7 @@
       "kind": "事務員",
       "employment": "社員",
       "weekDays": 4,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 4,
       "patterns": [
         "○",

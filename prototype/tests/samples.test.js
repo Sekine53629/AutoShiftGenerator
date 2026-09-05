@@ -80,7 +80,7 @@ staffFiles.forEach(f => {
       if (s.rule === '手動') return;
       autoN++;
       const pub = im.filter(c => r.isPubOff(r.get(row, c))).length;
-      const q = r.offQuotaFor(s);
+      const q = r.offQuotaFor();
       const cap = s.maxCons || r.DB.rules.maxConsDefault;
       const run = longest(c => r.isWork(r.get(row, c)), im);
       blanks += im.filter(c => !r.get(row, c)).length;

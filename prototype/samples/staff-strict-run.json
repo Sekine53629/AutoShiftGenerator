@@ -7,7 +7,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -44,7 +44,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -81,7 +81,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -118,7 +118,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -155,7 +155,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -192,7 +192,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -229,7 +229,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -266,7 +266,7 @@
       "kind": "薬剤師",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -303,7 +303,7 @@
       "kind": "事務員",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -339,7 +339,7 @@
       "kind": "事務員",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
@@ -375,7 +375,7 @@
       "kind": "事務員",
       "employment": "社員",
       "weekDays": 5,
-      "offAdjust": 0,
+      "annualOff": "",
       "maxCons": 3,
       "patterns": [
         "○",
