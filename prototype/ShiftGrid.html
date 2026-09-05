@@ -135,14 +135,41 @@ button.on, button.primary { background: var(--accent); color: var(--accent-ink);
 button.primary:hover { filter: brightness(1.12); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-#palette { display: flex; flex-wrap: wrap; align-items: stretch; gap: 5px 12px; }
-.pgroup { display: flex; align-items: center; gap: 4px; }
-.pgroup + .pgroup { border-left: 1px solid var(--rule-soft); padding-left: 12px; }
-.plabel {
-  font-size: 9px; font-weight: 700; letter-spacing: .1em;
-  color: var(--ink-faint); writing-mode: vertical-rl; text-orientation: upright;
-  line-height: 1; padding: 1px 0;
+#palette { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; }
+.pgroup { display: flex; align-items: center; }
+/* 群の見出し。押すと横に開く */
+.ptoggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px; font-size: 11px; white-space: nowrap;
+  border-radius: 3px 3px 3px 3px;
 }
+.pgroup.open .ptoggle {
+  background: var(--accent-soft); border-color: var(--accent);
+  border-radius: 3px 0 0 3px;
+}
+.ptoggle .plabel {
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--ink-soft);
+}
+.pgroup.open .ptoggle .plabel { color: var(--accent); }
+/* いま選んでいる記号を畳んだままでも見せる */
+.ptoggle .pcur {
+  font-family: "Roboto Mono", "Noto Sans JP", monospace; font-weight: 700;
+  min-width: 14px; text-align: center;
+}
+.ptoggle .caret { font-style: normal; font-size: 9px; color: var(--ink-faint); }
+.pitems {
+  display: flex; align-items: center; gap: 4px;
+  max-width: 0; opacity: 0; overflow: hidden;
+  transition: max-width .22s ease, opacity .16s ease, padding .22s ease;
+  padding: 0;
+}
+.pgroup.open .pitems {
+  max-width: 900px; opacity: 1;
+  padding: 0 6px 0 6px;
+  border: 1px solid var(--accent); border-left: 0; border-radius: 0 3px 3px 0;
+  background: var(--surface);
+}
+@media (prefers-reduced-motion: reduce) { .pitems { transition: none; } }
 .stamp {
   min-width: 34px; padding: 3px 7px;
   font-family: "Roboto Mono", "Noto Sans JP", monospace; font-weight: 700;
@@ -408,7 +435,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <span><i style="background:#ffd966"></i>祝日・休診</span>
     <span><i style="background:var(--outside)"></i>月外</span>
     <span>セルを選んでスタンプ、または <b>1</b>–<b>9</b> キー（シフト記号）。<b>Delete</b> で消去、方向キーで移動。</span>
-    <span>薄いスタンプは、いま選んでいる欄には押せないものです。</span>
+    <span>スタンプは群の見出しを押すと横に開きます。薄いものは、いま選んでいる欄には押せません。</span>
     <span><i style="background:repeating-linear-gradient(45deg,transparent 0 3px,var(--warn) 3px 4px)"></i>記号未定（公休枠を超えたぶん。有休・夏休を割り当ててください）</span>
   </div>
   <div id="gridWarn" style="padding:0 18px 20px"></div>
@@ -1181,7 +1208,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       cell.classList.add('sel');
       if (focusInput) { const i = cell.querySelector('input'); if (i) i.focus(); }
     }
-    updatePaletteState();   // その欄に押せないスタンプを薄くする
+    autoOpenFor_(ROWS[r]);  // その欄に押せる群を開く
+    updatePaletteState();   // 押せないスタンプを薄くする
   }
   /** そのスタンプをその行に押してよいか。押せない理由も返す */
   function stampRejectReason(row, st) {
@@ -1992,6 +2020,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     ];
   }
 
+  /** いま開いている群。閉じているときは null */
+  let openGroup = 'shift';
+
   function renderPalette() {
     const host = $('palette');
     host.textContent = '';
@@ -2004,21 +2035,62 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const first = groups.find(g => g.items.length);
       stamp = first ? { kind: first.kind, value: first.items[0].value }
                     : { kind: 'clear', value: '' };
+      openGroup = stamp.kind === 'clear' ? null : stamp.kind;
     }
 
     groups.forEach(g => {
       if (!g.items.length) return;
       const box = el('span', 'pgroup');
-      box.appendChild(el('span', 'plabel', g.label));
-      g.items.forEach(it => box.appendChild(stampButton(g.kind, it)));
+      box.dataset.kind = g.kind;
+
+      const tog = el('button', 'ptoggle');
+      tog.appendChild(el('span', 'plabel', g.label));
+      tog.appendChild(el('span', 'pcur', ''));
+      tog.appendChild(el('i', 'caret', '▸'));
+      tog.addEventListener('click', () => {
+        openGroup = (openGroup === g.kind) ? null : g.kind;
+        syncPaletteOpen();
+      });
+      box.appendChild(tog);
+
+      const items = el('span', 'pitems');
+      g.items.forEach(it => items.appendChild(stampButton(g.kind, it)));
+      box.appendChild(items);
       host.appendChild(box);
     });
 
-    const tail = el('span', 'pgroup');
-    tail.appendChild(stampButton('clear', { value: '', face: '×', sub: '消去' }));
-    host.appendChild(tail);
+    // 消去は使う頻度が高いので畳まない
+    host.appendChild(stampButton('clear', { value: '', face: '×', sub: '消去' }));
 
+    syncPaletteOpen();
     updatePaletteState();
+  }
+
+  /**
+   * 群の開閉を反映する。作り直さずクラスだけ付け替えるので、
+   * 開くときの動きが途切れない。
+   */
+  function syncPaletteOpen() {
+    document.querySelectorAll('#palette .pgroup').forEach(box => {
+      const on = box.dataset.kind === openGroup;
+      box.classList.toggle('open', on);
+      const caret = box.querySelector('.caret');
+      if (caret) caret.textContent = on ? '▾' : '▸';
+      const tog = box.querySelector('.ptoggle');
+      if (tog) tog.title = (on ? '閉じる' : '開く') + '（' + box.dataset.kind + '）';
+    });
+  }
+
+  /**
+   * 選んだ欄に押せる群を開く。
+   * いまのスタンプがその欄に押せるなら何もしない（勝手に畳まない）。
+   */
+  function autoOpenFor_(row) {
+    if (!row || canStamp(row, stamp)) return;
+    const kind = row.kind === 'staff' ? 'shift'
+               : row.kind === 'doctor' ? 'doctor'
+               : row.kind === 'note' ? 'note' : null;
+    if (kind && kind !== openGroup) { openGroup = kind; syncPaletteOpen(); }
   }
 
   function stampButton(kind, it) {
@@ -2050,6 +2122,14 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const why = row ? stampRejectReason(row, st) : '';
       b.classList.toggle('dim', !!why);
       if (why) b.title = why;
+    });
+    // 畳んでいても、その群で選んでいる記号が見えるようにする
+    document.querySelectorAll('#palette .pgroup').forEach(box => {
+      const cur = box.querySelector('.pcur');
+      if (!cur) return;
+      const on = box.querySelector('.stamp.on');
+      cur.textContent = on ? on.firstChild.nodeValue : '·';
+      cur.style.color = on ? 'var(--accent)' : 'var(--ink-faint)';
     });
   }
 
