@@ -265,6 +265,23 @@ table.mt thead th {
   background: var(--band); font-size: 10px; font-weight: 700;
   letter-spacing: .1em; color: var(--ink-soft);
 }
+/* 横に長い表は氏名が流れてしまい、誰の行か分からなくなる。1列目を固定する */
+table.mt th:first-child, table.mt td:first-child {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--surface);
+  border-right: 2px solid var(--rule);
+}
+table.mt thead th:first-child { z-index: 3; background: var(--band); }
+table.mt tbody tr:hover td:first-child { background: var(--accent-soft); }
+/* 役割ごとの見出し。どこからどこまでが配置ルールかを示す */
+table.mt tr.grouprow th {
+  position: static;
+  background: var(--agg); color: var(--ink);
+  font-size: 9px; letter-spacing: .18em; text-align: center;
+  border-bottom: 1px solid var(--rule);
+  padding: 2px 6px;
+}
+table.mt tr.grouprow th.gap { background: var(--surface); }
 table.mt tbody tr:hover td { background: var(--accent-soft); }
 table.mt input[type="text"], table.mt input[type="number"], table.mt select {
   width: 100%; border: 1px solid transparent; background: transparent; padding: 2px 4px;
@@ -561,7 +578,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     });
     // 土日祝も営業する。出られない曜日は個人の事情であって、店の休みではない
     const ALL = [1, 1, 1, 1, 1, 1, 1];
-    ['A', 'B', 'C', 'D', 'E', 'F'].forEach(x =>
+    // 連続出勤の上限は人ごとに違う。A は 3 日、B 以降は 5 日
+    staff.push(mk('薬剤師 A', '薬剤師', '社員', 5, 0, 3, ['○', '●', '▲'], ALL, [], true, '自動'));
+    ['B', 'C', 'D', 'E', 'F'].forEach(x =>
       staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, 0, 5, ['○', '●', '▲'], ALL, [], true, '自動')));
     staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, 0, 4, ['○', '●'], [1, 1, 1, 0, 0, 1, 1], [], true, '自動'));
     staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, 0, 3, ['●'], [0, 0, 1, 1, 0, 1, 1], [], false, '自動'));
@@ -1127,7 +1146,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const av = s.availDow.map((v, i) => v ? DOW[i] : '').filter(Boolean).join('');
     return [s.kind + '／' + s.employment,
             '週' + s.weekDays + '日・公休 ' + offQuotaFor(s) + ' 日',
-            '連勤' + s.maxCons + '日まで',
+            '連勤 ' + (s.maxCons || DB.rules.maxConsDefault) + ' 日まで'
+              + (s.maxCons ? '' : '（既定値）'),
             '出られる曜日: ' + (av || 'なし'),
             '使える記号: ' + s.patterns.join(' '),
             s.canClose ? '締め作業できる' : '締め作業できない',
@@ -1396,21 +1416,22 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   const COLS = {
     staff: [
-      { key: 'name',       head: '氏名',        type: 'text',  w: 130 },
-      { key: 'kind',       head: '区分',        type: 'select', opts: ['薬剤師', '事務員'] },
-      { key: 'employment', head: '雇用',        type: 'select', opts: ['社員', '派遣', 'パート'] },
-      { key: 'weekDays',   head: '週勤務日数',  type: 'num', min: 0, max: 7 },
-      { key: 'offQuota',   head: '公休ノルマ',  type: 'calc', calc: r => offQuotaFor(r) },
-      { key: 'offAdjust',  head: '公休 調整',   type: 'num', min: -15, max: 15 },
-      { key: 'maxCons',    head: '連続出勤上限', type: 'num', min: 1, max: 14 },
-      { key: 'patterns',   head: '使える記号',   type: 'checks', from: 'patterns' },
-      { key: 'availDow',   head: '出られる曜日', type: 'dow' },
-      { key: 'fixedDow',   head: '固定で出る曜日', type: 'dow' },
-      { key: 'canClose',   head: '締め作業',    type: 'check' },
-      { key: 'from',       head: '在籍 開始',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM },
-      { key: 'to',         head: '在籍 終了',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM },
-      { key: 'rule',       head: 'ルール',      type: 'select', opts: ['自動', '手動'] },
-      { key: 'memo',       head: '備考',        type: 'text', w: 140 }
+      { key: 'name',       head: '氏名',        type: 'text',  w: 130, group: '本人' },
+      { key: 'kind',       head: '区分',        type: 'select', opts: ['薬剤師', '事務員'], group: '本人' },
+      { key: 'employment', head: '雇用',        type: 'select', opts: ['社員', '派遣', 'パート'], group: '本人' },
+      { key: 'weekDays',   head: '週勤務日数',  type: 'num', min: 0, max: 7, group: '配置ルール（この人だけに効く）' },
+      { key: 'offQuota',   head: '公休ノルマ',  type: 'calc', calc: r => offQuotaFor(r), group: '配置ルール（この人だけに効く）' },
+      { key: 'offAdjust',  head: '公休 調整',   type: 'num', min: -15, max: 15, group: '配置ルール（この人だけに効く）' },
+      { key: 'maxCons',    head: '連続出勤上限', type: 'num', min: 0, max: 14,
+        ph: () => String(DB.rules.maxConsDefault), group: '配置ルール（この人だけに効く）' },
+      { key: 'patterns',   head: '使える記号',   type: 'checks', from: 'patterns', group: '配置ルール（この人だけに効く）' },
+      { key: 'availDow',   head: '出られる曜日', type: 'dow', group: '配置ルール（この人だけに効く）' },
+      { key: 'fixedDow',   head: '固定で出る曜日', type: 'dow', group: '配置ルール（この人だけに効く）' },
+      { key: 'canClose',   head: '締め作業',    type: 'check', group: '資格' },
+      { key: 'from',       head: '在籍 開始',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM, group: '在籍' },
+      { key: 'to',         head: '在籍 終了',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM, group: '在籍' },
+      { key: 'rule',       head: 'ルール',      type: 'select', opts: ['自動', '手動'], group: '在籍' },
+      { key: 'memo',       head: '備考',        type: 'text', w: 140, group: '在籍' }
     ],
     doctor: [
       { key: 'name',  head: '医師名', type: 'text', w: 150 },
@@ -1483,6 +1504,22 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     table.textContent = '';
 
     const thead = el('thead');
+    // 列が多い表は、役割ごとの見出しを一段かぶせないと読めない
+    if (cols.some(c => c.group)) {
+      const gr = el('tr', 'grouprow');
+      let i = 0;
+      while (i < cols.length) {
+        const g = cols[i].group || '';
+        let span = 1;
+        while (i + span < cols.length && (cols[i + span].group || '') === g) span++;
+        const th = el('th', g ? '' : 'gap', g);
+        th.colSpan = span;
+        gr.appendChild(th);
+        i += span;
+      }
+      gr.appendChild(el('th', 'gap'));
+      thead.appendChild(gr);
+    }
     const hr = el('tr');
     cols.forEach(c => hr.appendChild(el('th', '', c.head)));
     hr.appendChild(el('th', '', ''));
@@ -1631,7 +1668,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
     if (col.min !== undefined) inp.min = col.min;
     if (col.max !== undefined) inp.max = col.max;
-    if (col.ph) inp.placeholder = col.ph;
+    if (col.ph) inp.placeholder = (typeof col.ph === 'function') ? col.ph() : col.ph;
     if (col.w) inp.style.width = col.w + 'px';
     inp.value = rec[col.key] === undefined ? '' : rec[col.key];
     inp.addEventListener('change', () => {
@@ -1701,7 +1738,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'clerkEarlyN', label: '事務員の○早番', type: 'num', unit: '人/日', min: 0, max: 6 }
     ]},
     { title: '連続と休み', items: [
-      { key: 'maxConsDefault', label: '連続出勤の上限（既定）', type: 'num', unit: '日', min: 1, max: 14 },
+      { key: 'maxConsDefault', label: '連続出勤の上限（既定値）', type: 'num', unit: '日', min: 1, max: 14 },
+      { note: '連続出勤の上限は社員ごとに社員マスタで設定します。ここは、その欄が空の人にだけ使う値です。' },
       { key: 'maxOffRun', label: '連続休暇の上限', type: 'num', unit: '日', min: 1, max: 14 },
       { key: 'wishMax', label: '希望休の上限', type: 'num', unit: '日/月', min: 0, max: 31 },
       { key: 'carryOver', label: '前月末の連勤を引き継ぐ', type: 'check' },
