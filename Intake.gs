@@ -16,6 +16,15 @@
  *
  * このファイルで**実装済みなのは契約の部分だけ**（検証・正規化・項目定義）。
  * 経路とアダプタはサンプルデータが来てから書く。
+ *
+ * 【加算の数え方】項目ごとに違う。取り違えると特徴量として使えない。
+ *   一包化   … 1処方箋につき1回。**作業量に比例しない**（14日分も90日分も「1」）
+ *              工数は投与日数で決まるので onePackDays を併せて取る
+ *   計量混合 … 混ぜた回数だけ。比例する
+ *   自家製剤 … 1処方に複数取れる（剤ごと）。比例する
+ *
+ * 【名前で持たない】診療報酬は改定で名称・区分が変わる。加算名をキーにすると
+ * 改定のたびに系列が切れるので、キーは「何の作業か」で持つ。
  */
 
 const MODULE_INTAKE = 'Intake';
@@ -28,15 +37,20 @@ const MODULE_INTAKE = 'Intake';
  */
 const INTAKE_SCHEMA = Object.freeze({
   counts: Object.freeze({
-    prescriptions:     { label: '処方箋枚数',                 unit: '枚' },
-    newPatients:       { label: '新患',                       unit: '人' },
-    onePack:           { label: '一包化加算',                 unit: '算定回数' },
-    mixing:            { label: '計量混合調剤加算',           unit: '算定回数' },
-    compounding:       { label: '自家製剤加算',               unit: '算定回数' },
-    duplicationCheck:  { label: '重複投薬・相互作用等防止加算', unit: '算定回数' },
-    narcotics:         { label: '麻薬管理指導加算',           unit: '算定回数' },
-    homeVisit:         { label: '在宅患者訪問薬剤管理指導料', unit: '算定回数' },
-    internalDrugUnits: { label: '内服薬の剤数',               unit: '剤' },
+    prescriptions:     { label: '処方箋枚数', unit: '枚', work: '量' },
+    newPatients:       { label: '新患',       unit: '人', work: '指導' },
+
+    // 加算は数え方が項目ごとに違う。work が「作業量に比例するか」
+    onePack:           { label: '一包化加算', unit: '1処方箋につき1回', work: '比例しない' },
+    // 一包化の工数は投与日数で決まる。14日分と90日分が同じ「1」になるので、
+    // 件数だけでは足りない。日数を併せて取る
+    onePackDays:       { label: '一包化 投与日数（合計）', unit: '日', work: '比例する' },
+    mixing:            { label: '計量混合調剤加算', unit: '混ぜた回数', work: '比例する' },
+    compounding:       { label: '自家製剤加算', unit: '剤ごと（1処方に複数可）', work: '比例する' },
+    duplicationCheck:  { label: '重複投薬・相互作用等防止加算', unit: '算定回数', work: '照会1件' },
+    narcotics:         { label: '麻薬管理指導加算', unit: '算定回数', work: '手続き' },
+    homeVisit:         { label: '在宅患者訪問薬剤管理指導料', unit: '算定回数', work: '別枠' },
+    internalDrugUnits: { label: '内服薬の剤数', unit: '剤', work: '比例する' },
   }),
   /** 処方日数 → 件数。N日後の再来を積み上げるために使う */
   dispenseDays: { label: '処方日数の分布', unit: '件' },
