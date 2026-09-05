@@ -27,8 +27,9 @@
  * 改定のたびに系列が切れるので、キーは「何の作業か」で持つ。
  *
  * 【患者の個票】次回来局日の予測は患者単位でしか作れない（残日数を追うため）。
- * ただし受け取るのは**仮名化された識別子と処方日数だけ**。氏名・生年月日・
- * 保険証番号が入っていたら、その行は取り込まない（patientRowError_）。
+ * 通し患者番号があるのでキーには困らないが、**それは患者を特定できる番号**
+ * なので生のままシートへ置かない。境界（patientKeyOf_）でハッシュ化し、
+ * 保存するのはハッシュだけにする。氏名・生年月日が入っていたらその行は弾く。
  */
 
 const MODULE_INTAKE = 'Intake';
@@ -174,9 +175,13 @@ function patientRowError_(row) {
       }
     }
   }
-  if (!row.patientKey) return 'patientKey がありません';
-  if (String(row.patientKey).length < 8) {
-    return 'patientKey が短すぎます（仮名化されていない可能性）: ' + row.patientKey;
+  // 通し患者番号（patientNo）か、ハッシュ済みの patientKey のどちらか。
+  // patientNo で来た場合は取り込みのときにハッシュ化し、生の番号は保存しない
+  if (!row.patientNo && !row.patientKey) {
+    return 'patientNo か patientKey がありません';
+  }
+  if (row.patientKey && String(row.patientKey).length < 16) {
+    return 'patientKey が短すぎます（ハッシュ化されていない可能性）: ' + row.patientKey;
   }
   const d = row.days;
   if (d === null || d === undefined || d === '') return 'days がありません';
@@ -184,6 +189,51 @@ function patientRowError_(row) {
     return 'days が 1〜400 の数ではありません: ' + d;
   }
   return '';
+}
+
+/**
+ * 通し患者番号からシートに保存する患者キーを作る。
+ *
+ * **生の患者番号をシートへ書かない。** シートは共有・書き出し・控えの対象なので、
+ * そこに患者番号が乗ると、持ち出された時点で氏名まで辿れる（薬局側に対応表がある）。
+ *
+ * ソルトはスクリプトプロパティに置く。患者番号の空間は小さい（数万程度）ため、
+ * ソルト無しのハッシュは総当たりですぐ逆引きできる。
+ *
+ * 【これが守るもの・守らないもの】
+ *   守る   … シートが外へ出たときに、そこから患者を辿れないこと
+ *   守らない … スクリプトを触れる人はソルトを読めるので、その人には無力。
+ *              法令上の「匿名加工情報」にはならない。取扱いは個人情報のまま
+ *
+ * @param {string|number} rawNo 通し患者番号
+ * @return {string} 24文字のハッシュ
+ */
+function patientKeyOf_(rawNo) {
+  const salt = ensurePatientSalt_();
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256, salt + '|' + String(rawNo), Utilities.Charset.UTF_8);
+  return bytes
+    .map(b => ((b + 256) % 256).toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 24);
+}
+
+/**
+ * ソルトを取り出す。無ければ作る。
+ * **一度作ったら変えないこと。** 変えると過去の患者キーと突き合わせられなくなり、
+ * 残日数の追跡が切れる。控えを取っておくこと。
+ */
+function ensurePatientSalt_() {
+  const props = PropertiesService.getScriptProperties();
+  let salt = props.getProperty(CONFIG.PROP_PATIENT_SALT);
+  if (!salt) {
+    salt = Utilities.getUuid() + Utilities.getUuid();
+    props.setProperty(CONFIG.PROP_PATIENT_SALT, salt);
+    logError(MODULE_INTAKE, 'ensurePatientSalt_',
+      '患者キーのソルトを新しく作りました。控えを取ってください。'
+      + '失うと過去の患者キーと突き合わせられなくなります。', '', true);
+  }
+  return salt;
 }
 
 /**
@@ -259,7 +309,12 @@ function normalizeRecord_(rec, meta) {
   });
 
   out.dispenseDays = rec.dispenseDays || null;
-  out.patients = rec.patients || null;
+  // 生の患者番号はここで落とす。保存するのはハッシュだけ
+  out.patients = (rec.patients || []).map(row => ({
+    patientKey: row.patientKey || patientKeyOf_(row.patientNo),
+    days: Number(row.days),
+  }));
+  if (!out.patients.length) out.patients = null;
   out.byDoctor = rec.byDoctor || null;
 
   // 契約に無いキー
