@@ -1415,6 +1415,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         cell.dataset.row = row.index;
         cell.dataset.col = c;
         cell.appendChild(el('span', 'v'));
+        fillCell_(cell, row, c);        // 組み立て時に中身まで書く
         tr.appendChild(cell);
       }
 
@@ -1425,7 +1426,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       });
 
       body.appendChild(tr);
-      if (row.kind === 'staff') paintRow(row);
     });
     return body;
   }
@@ -1485,9 +1485,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     return true;
   }
 
-  function paintCell(row, c) {
-    const cell = cellAt(row.index, c);
-    if (!cell) return;
+  /**
+   * セルの中身を書く。**要素を直接受け取る**ので、まだ画面に載っていない
+   * 状態でも効く。
+   *
+   * 以前は画面から探す paintCell しか無く、表を組み立てている途中
+   * （tbody をまだ document に入れていない段階）で呼ぶと何も書けなかった。
+   * 医師名欄は input に値を入れていたので気づきにくく、スタッフ欄だけが
+   * 空のまま出ていた（集計は values から出るので正しく動き、
+   * 「データは戻っているのに表示だけ変わらない」状態になっていた）。
+   */
+  function fillCell_(cell, row, c) {
     const t = get(row, c);
     const inp = cell.querySelector('input');
     if (inp) { inp.value = t; return; }   // 医師名欄・備考行は入力欄
@@ -1496,9 +1504,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     v.textContent = t;
     v.classList.toggle('small', t.length > 1);
     // 記号が無い日は要判断（公休枠を超えたぶん）。見て分かるようにする
-    cell.classList.toggle('todo', row.kind === 'staff' && !t && days[c].inMonth);
-    cell.title = cell.classList.contains('todo')
+    const todo = row.kind === 'staff' && !t && days[c].inMonth;
+    cell.classList.toggle('todo', todo);
+    cell.title = todo
       ? '公休枠を超えるため空けてあります。有休・夏休を割り当ててください' : '';
+  }
+
+  /** 画面から探して書き直す。既に載っているセル向け */
+  function paintCell(row, c) {
+    const cell = cellAt(row.index, c);
+    if (cell) fillCell_(cell, row, c);
   }
   const paintRow = row => { for (let c = 0; c < DAY_COLS; c++) paintCell(row, c); };
 
