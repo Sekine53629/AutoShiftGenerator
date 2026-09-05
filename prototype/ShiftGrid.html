@@ -131,6 +131,8 @@ button {
   border: 1px solid var(--rule); border-radius: 3px; cursor: pointer;
 }
 button:hover { background: var(--accent-soft); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button:disabled:hover { background: var(--surface); }
 button.on, button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 button.primary:hover { filter: brightness(1.12); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -418,7 +420,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <div class="group">
       <button id="autoRun" class="primary">自動生成</button>
       <button id="histNow" title="いまの状態を控えます">控えを取る</button>
-      <button id="undoBtn" title="ひとつ前の控えに戻ります。押すごとに1つずつ遡ります">戻す</button>
+      <button id="undoBtn" title="ひとつ前の控えに戻ります（Ctrl+Z）">← 戻す</button>
+      <button id="redoBtn" title="戻しすぎたぶんを進めます（Ctrl+Y）">進める →</button>
       <button id="clearAll" title="開いている月の入力だけを消します">今月の入力を消す</button>
       <span class="note" id="undoStat"></span>
     </div>
@@ -440,6 +443,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <span><i style="background:var(--outside)"></i>月外</span>
     <span>セルを選んでスタンプ、または <b>1</b>–<b>9</b> キー（シフト記号）。<b>Delete</b> で消去、方向キーで移動。</span>
     <span>スタンプは群の見出しを押すと横に開きます。薄いものは、いま選んでいる欄には押せません。</span>
+    <span><b>Ctrl+Z</b> で戻す、<b>Ctrl+Y</b> で進める。</span>
     <span><i style="background:repeating-linear-gradient(45deg,transparent 0 3px,var(--warn) 3px 4px)"></i>記号未定（公休枠を超えたぶん。有休・夏休を割り当ててください）</span>
   </div>
   <div id="gridWarn" style="padding:0 18px 20px"></div>
@@ -604,7 +608,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <b>取り返しのつかない操作の直前に、自動で控えます。</b>
     自動生成・取り込み・消去の前と、手で「控えを取る」を押したときです。
     医師名欄・スタッフ欄・備考行のすべてが対象で、開いている月のぶんを控えます。<br>
-    復元するときも、その直前の状態を控えます。戻しすぎても戻れます。
+    復元するときも、その直前の状態を控えます。戻しすぎたら「進める」で戻れます。
   </p>
   <div class="mtfoot" style="margin:0 0 10px">
     <span class="note">
@@ -1305,6 +1309,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     table.appendChild(buildBody());
     recalc();
     updatePaletteState();
+    updateUndoButtons_();
   }
 
   function headCells(tag, dayText) {
@@ -2697,6 +2702,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     });
   });
 
+  // 戻す・進める。文字を打っている最中は、その欄の取り消しに任せる
+  document.addEventListener('keydown', ev => {
+    if (!(ev.ctrlKey || ev.metaKey)) return;
+    const inText = ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA';
+    if (inText) return;
+    const k = ev.key.toLowerCase();
+    if (k === 'z' && !ev.shiftKey) { undoOnce_(); ev.preventDefault(); }
+    else if (k === 'y' || (k === 'z' && ev.shiftKey)) { redoOnce_(); ev.preventDefault(); }
+  });
+
   document.addEventListener('keydown', ev => {
     if (!sel) return;
     const inText = ev.target.tagName === 'INPUT' && ev.target.type === 'text';
@@ -2740,6 +2755,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     undoStat_(done ? 'いまの状態を控えました' : '前回の控えから変わっていません');
   });
   $('undoBtn').addEventListener('click', undoOnce_);
+  $('redoBtn').addEventListener('click', redoOnce_);
   // 全部の月を消すと取り返しがつかない。開いている月だけにする
   arm($('clearAll'), 'もう一度押すと消去', () => {
     snapshot_('消去の直前');
@@ -2908,10 +2924,47 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     undoStat_(fmtWhen_(snap.at) + ' の状態（' + snap.label + '）へ戻しました');
   }
 
-  function undoStat_(t) { const el2 = $('undoStat'); if (el2) el2.textContent = t; }
+  /**
+   * 戻しすぎたぶんを進める。
+   * undoPos が 0 まで来ると「戻し始める前の状態」に届く。
+   * 表を触ると undoPos が -1 に戻るので、そのあとは進めない
+   * （枝分かれしたので、進む先が無くなる）。
+   */
+  function redoOnce_() {
+    if (undoPos < 0) { undoStat_('戻していないので、進めません'); return; }
+    if (undoPos === 0) { undoStat_('これ以上は進めません'); return; }
+    const list = loadHistory_()[curYm] || [];
+    undoPos--;
+    const snap = list[undoPos];
+    if (!snap) { undoStat_('進める先が見つかりません'); return; }
+    applySnapshot_(snap);
+    renderHistory();
+    undoStat_(fmtWhen_(snap.at) + ' の状態（' + snap.label + '）へ進めました'
+      + (undoPos === 0 ? '。戻し始める前の状態です' : ''));
+  }
 
-  /** 表を触ったら、遡りの位置を忘れる */
-  function markEdited_() { undoPos = -1; }
+  function undoStat_(t) {
+    const el2 = $('undoStat');
+    if (el2) el2.textContent = t;
+    updateUndoButtons_();
+  }
+
+  /** 押せるかどうかを見て分かるようにする */
+  function updateUndoButtons_() {
+    const list = loadHistory_()[curYm] || [];
+    const u = $('undoBtn'), r = $('redoBtn');
+    if (u) u.disabled = !list.length || (undoPos >= 0 && undoPos >= list.length - 1);
+    if (r) r.disabled = undoPos <= 0;
+  }
+
+  /**
+   * 表を触ったら、遡りの位置を忘れる。
+   * ここで枝分かれするので、進む先は無くなる（控えは残るので戻ることはできる）。
+   */
+  function markEdited_() {
+    undoPos = -1;
+    updateUndoButtons_();
+  }
 
   function fmtWhen_(iso) {
     const d = new Date(iso);

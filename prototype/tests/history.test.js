@@ -137,6 +137,7 @@ console.log('■ 「戻す」を連打すると一段ずつ遡る');
     'function applySnapshot_(s) { cellsNow = JSON.parse(JSON.stringify(s.cells)); }',
     'function renderGrid() {} function renderHistory() {}',
     'function fmtWhen_() { return ""; } function histStat_() {}',
+    'function $() { return null; } function updateUndoButtons_() {}',
     'function undoStat_(t) { last = t; }',
     g('snapshot_'), g('undoOnce_'), g('markEdited_'),
     'return { snapshot_, undoOnce_, markEdited_, set: c => { cellsNow = c; },',
@@ -157,6 +158,59 @@ console.log('■ 「戻す」を連打すると一段ずつ遡る');
   u.undoOnce_();
   console.log('  E に編集してから戻す → ' + u.now().s1['1']);
   check(u.now().s1['1'] === 'D', '編集後の1回目はその直前へ', u.now().s1['1']);
+}
+
+console.log('');
+console.log('■ 戻す・進める の往復');
+{
+  const src3 = fs.readFileSync('prototype/ShiftGrid.html', 'utf8');
+  const g = n => {
+    const at = src3.indexOf('function ' + n + '(');
+    let d = 0;
+    for (let j = src3.indexOf('{', at); j < src3.length; j++) {
+      if (src3[j] === '{') d++; else if (src3[j] === '}') { d--; if (!d) return src3.slice(at, j + 1); }
+    }
+  };
+  const L = t => src3.split(/\r?\n/).find(l => l.includes(t));
+  const u = new Function('localStorage', [
+    L('const HISTORY_KEY'), L('const HISTORY_KEEP'), L('  let undoPos'),
+    g('loadHistory_'), g('saveHistory_'), g('dropOldestSnapshot_'), g('diffCount_'),
+    'let cellsNow = {}; let curYm = "2026-10"; let last = "";',
+    'function currentCells_() { return JSON.parse(JSON.stringify(cellsNow)); }',
+    'function applySnapshot_(s) { cellsNow = JSON.parse(JSON.stringify(s.cells)); }',
+    'function renderGrid() {} function renderHistory() {}',
+    'function fmtWhen_() { return ""; } function histStat_() {}',
+    'function $() { return null; } function updateUndoButtons_() {}',
+    'function undoStat_(t) { last = t; updateUndoButtons_(); }',
+    g('snapshot_'), g('undoOnce_'), g('redoOnce_'), g('markEdited_'),
+    'return { snapshot_, undoOnce_, redoOnce_, markEdited_, set: c => { cellsNow = c; },',
+    '  now: () => (cellsNow.s1 ? cellsNow.s1["1"] : ""), msg: () => last, pos: () => undoPos };'
+  ].join('\n'))(makeStore(5000000));
+
+  const V = v => ({ s1: { 1: v } });
+  ['A', 'B', 'C'].forEach(v => { u.set(V(v)); u.snapshot_('保存 ' + v); u.markEdited_(); });
+  u.set(V('D')); u.markEdited_();
+
+  const back = [];
+  for (let i = 0; i < 3; i++) { u.undoOnce_(); back.push(u.now()); }
+  const fwd = [];
+  for (let i = 0; i < 3; i++) { u.redoOnce_(); fwd.push(u.now()); }
+  console.log('  戻す×3 → ' + back.join(' ') + '   進める×3 → ' + fwd.join(' '));
+  check(back.join(',') === 'C,B,A', '戻すが一段ずつ', back.join(','));
+  check(fwd.join(',') === 'B,C,D', '進めるで元に戻る', fwd.join(','));
+
+  u.redoOnce_();
+  check(u.msg().indexOf('これ以上') >= 0, '進めすぎで止まる', u.msg());
+
+  u.markEdited_(); u.redoOnce_();
+  check(u.msg().indexOf('戻していない') >= 0, '戻していなければ進めない', u.msg());
+
+  u.set(V('D')); u.markEdited_();
+  u.undoOnce_();
+  u.set(V('X')); u.markEdited_();
+  u.redoOnce_();
+  console.log('  戻す→編集→進める: 表示 ' + u.now() + '（編集が消えない）');
+  check(u.now() === 'X', '編集後は進めず、編集内容が残る', u.now());
 }
 
 console.log('');
