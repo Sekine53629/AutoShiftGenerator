@@ -23,3 +23,8 @@ desktop.ini
 node_modules/
 dist/
 build/
+
+# 画面から書き出したマスタ・シフトの実データ（実名が入る）
+archive/*.json
+prototype/*.json
+*.export.json

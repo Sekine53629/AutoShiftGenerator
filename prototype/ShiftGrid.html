@@ -1508,13 +1508,26 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   function dataStat(text) { $('dataStat').textContent = text; }
 
-  $('dataDump').addEventListener('click', () => {
-    const text = dumpText();
+  /**
+   * 欄へ書き出す。失敗したときに空欄のまま黙っていると、
+   * 中身の無いファイルを保存してしまうので、必ず理由を出す。
+   */
+  function fillDataBox(focus) {
+    let text;
+    try {
+      text = dumpText();
+    } catch (e) {
+      $('dataBox').value = '';
+      dataStat('書き出せませんでした: ' + e.message);
+      return;
+    }
     $('dataBox').value = text;
-    $('dataBox').focus();
-    $('dataBox').select();
-    dataStat('書き出しました（' + text.length.toLocaleString() + ' 文字）。このままコピーできます。');
-  });
+    if (focus) { $('dataBox').focus(); $('dataBox').select(); }
+    dataStat('書き出しました（' + text.length.toLocaleString() + ' 文字）。'
+      + (focus ? 'このままコピーできます。' : '欄を選んでコピーしてください。'));
+  }
+
+  $('dataDump').addEventListener('click', () => fillDataBox(true));
 
   $('dataApply').addEventListener('click', () => {
     let parsed;
@@ -1574,10 +1587,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     btn.classList.add('on');
     document.querySelectorAll('.panel').forEach(p =>
       p.classList.toggle('on', p.dataset.panel === btn.dataset.tab));
-    if (btn.dataset.tab === 'data' && !$('dataBox').value) {
-      $('dataBox').value = dumpText();
-      dataStat('いまの内容です。選んでコピーできます。');
-    }
+    // 貼り付け途中の内容を消さないよう、空のときだけ入れ直す
+    if (btn.dataset.tab === 'data' && !$('dataBox').value) fillDataBox(false);
   });
 
   /* ═══ 起動 ═════════════════════════════════════════════ */
@@ -1589,6 +1600,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   renderRules();
   refreshAll();
   autoGenerate();   // 空の表では集計も色も確かめられないので、例を入れて開く
+  fillDataBox(false);   // 書き出し欄は最初から埋めておく（空のまま保存されるのを防ぐ）
 })();
 </script>
 </body>
