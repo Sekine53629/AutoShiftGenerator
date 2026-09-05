@@ -418,8 +418,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     </p>
     <div class="rules" id="rulesForm"></div>
     <p class="hint">
-      この試作の自動生成は簡易版です。本番は Engine.gs（VBA 版と同じ出力になるよう移植したもの）が置きます。
-      ここで確かめたいのは「ルールを変えると表がどう動くか」の見え方です。
+      自動生成は<b>週（日曜始まり）ごとに出勤日数を決めてから配ります</b>。
+      公休ノルマは労基上の管理項目なので動かさず、連続出勤の上限は
+      同じ週の中での入れ替えで守ります（休みを後から足すとノルマが狂うため）。
+      守れなかったことはシフト表の下に出ます。本番は Engine.gs が置きます。
     </p>
   </div>
 </section>
@@ -1278,14 +1280,28 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const cap = s.maxCons || r.maxConsDefault;
       if (worst > cap) msgs.push(s.name + '：連続出勤が ' + worst + ' 日（上限 ' + cap + ' 日）');
 
+      // ノルマに数えるのは公休だけ。有休・希休・夏休は別に管理する
+      const offSym = (DB.patterns.find(p => !p.work) || { sym: '公休' }).sym;
       let off = 0;
       for (let c = 0; c < DAY_COLS; c++) {
-        if (days[c].inMonth && !isWork(get(row, c)) && get(row, c)) off++;
+        if (days[c].inMonth && get(row, c) === offSym) off++;
       }
       const quota = offQuotaFor(s);
-      if (off !== quota) {
-        msgs.push(s.name + '：休みが ' + off + ' 日（公休ノルマ ' + quota + ' 日）');
+      // 公休ノルマは下限。足りなければ労基上の問題なので必ず出す
+      if (off < quota) {
+        msgs.push(s.name + '：公休が ' + off + ' 日でノルマ ' + quota + ' 日に足りません');
+      } else if (off > quota && (Number(s.weekDays) || 0) >= 5) {
+        msgs.push(s.name + '：公休が ' + off + ' 日（ノルマ ' + quota + ' 日）。多すぎます');
       }
+      // 週ごとの出勤日数。週をまたぐ配分が崩れていないか見る
+      buildWeeks().forEach((w, i) => {
+        const on = w.cols.filter(c => isWork(get(row, c))).length;
+        const limit = Math.min(Number(s.weekDays) || 0, w.cols.length);
+        if (on > limit) {
+          msgs.push(s.name + '：第' + (i + 1) + '週の出勤が ' + on
+            + ' 日（週 ' + s.weekDays + ' 日、その週は ' + w.cols.length + ' 日）');
+        }
+      });
       for (let c = 0; c < DAY_COLS; c++) {
         if (!days[c].inMonth || !isWork(get(row, c))) continue;
         if (!s.availDow[days[c].dow]) {
@@ -1308,6 +1324,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       if (on < need) msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人（営業マスタの下限 ' + need + ' 人）');
       if (r.needCloser && closer === 0) msgs.push(days[c].day + '日：締め作業ができる人がいない');
     }
+
+    autoNotes.forEach(t => msgs.unshift('自動生成 — ' + t));
 
     // マスタの日付が読めない行。画面を開いていなくても気づけるよう表の下にも出す
     (DB.holidays || []).forEach(h => {
@@ -1342,66 +1360,183 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /* ═══ 自動生成（簡易版） ═══════════════════════════════
      本番は Engine.gs が置く。ここはルールの効き方を見るためのもの。
      手順は「まず全日を出勤にして、休めない日を避けながら休みノルマを埋める」。 */
+  /**
+   * 月を日曜始まりの週に切る。月初と月末の欠けた週も1つの週として扱う。
+   * 週の途中で月が変わるぶんは、その週の日数が減るだけ。
+   */
+  function buildWeeks() {
+    const weeks = [];
+    let cur = null;
+    for (let c = 0; c < DAY_COLS; c++) {
+      if (!days[c].inMonth) continue;
+      if (!cur || days[c].dow === 0) { cur = { cols: [] }; weeks.push(cur); }
+      cur.cols.push(c);
+    }
+    return weeks;
+  }
+
+  /** 自動生成が守れなかったこと。黙って通さず表の下に出す */
+  let autoNotes = [];
+  const note_ = t => { if (autoNotes.indexOf(t) < 0) autoNotes.push(t); };
+
+  /**
+   * 自動生成。週ごとに出勤日数を決めてから配る。
+   *
+   * 以前は「余裕のある日を余裕の多い順に休みへ回す」だけだったので、
+   * 余裕が似た日が並ぶとそこが連続して休みになっていた（謎の連休）。
+   * さらに連勤上限を超えた分を後から休みに足していたため、
+   * 公休ノルマもそのぶん狂っていた。
+   *
+   * 公休ノルマは労基上の管理項目なので動かさない。週の出勤日数を
+   * 先に決め、連勤上限は「同じ週の中での入れ替え」で直す。
+   */
   function autoGenerate() {
     const offSym = (DB.patterns.find(p => !p.work) || { sym: '公休' }).sym;
+    const weeks = buildWeeks();
+    autoNotes = [];
 
     ROWS.forEach(row => {
       if (row.kind !== 'staff' || !row.staff) return;
-      const s = row.staff;
-      if (s.rule === '手動') return;
-
-      const okPats = s.patterns.filter(p => workSyms().indexOf(p) >= 0);
-      const workSym = okPats[0] || '●';
-
-      // 既に入っている希休・有休・夏休は動かさない
-      const fixedOff = new Set();
-      for (let c = 0; c < DAY_COLS; c++) {
-        const v = get(row, c);
-        if (v && !isWork(v) && v !== offSym) fixedOff.add(c);
-      }
-
-      const inMonth = [];
-      for (let c = 0; c < DAY_COLS; c++) if (days[c].inMonth) inMonth.push(c);
-
-      // いったん全部出勤にする
-      inMonth.forEach(c => { if (!fixedOff.has(c)) setV(row, c, workSym); });
-
-      // 休みにするしかない日（閉店日・出られない曜日）を先に埋める
-      const forced = inMonth.filter(c =>
-        !fixedOff.has(c) && (isClosed(days[c]) || !s.availDow[days[c].dow]));
-      forced.forEach(c => setV(row, c, offSym));
-
-      // 残りのノルマを、人が余っている日から順に休みへ回す
-      let need = offQuotaFor(s) - forced.length - fixedOff.size;
-      if (need > 0) {
-        const cand = inMonth.filter(c =>
-          !fixedOff.has(c) && !forced.includes(c) && !s.fixedDow[days[c].dow]);
-        cand.sort((a, b) => surplus(b) - surplus(a));
-        cand.slice(0, need).forEach(c => setV(row, c, offSym));
-      }
-
-      // 連勤の上限を超えたところを崩す
-      const cap = s.maxCons || DB.rules.maxConsDefault;
-      let run = 0;
-      inMonth.forEach(c => {
-        if (isWork(get(row, c))) {
-          run++;
-          if (run > cap) { setV(row, c, offSym); run = 0; }
-        } else run = 0;
-      });
-
+      if (row.staff.rule === '手動') return;      // 派遣など。手で置く
+      placeOneStaff_(row, row.staff, weeks, offSym);
       paintRow(row);
     });
-
     recalc();
+  }
 
-    function surplus(c) {
-      let on = 0;
-      ROWS.forEach(r2 => {
-        if (r2.kind === 'staff' && r2.role !== 'clerk' && isWork(get(r2, c))) on++;
-      });
-      return on - (docCount(c) + (Number(DB.rules.reqPlus) || 0));
+  function placeOneStaff_(row, s, weeks, offSym) {
+    const workSym = (s.patterns || []).filter(x => workSyms().indexOf(x) >= 0)[0] || '●';
+    const cap = s.maxCons || DB.rules.maxConsDefault;
+
+    const inMonth = [];
+    for (let c = 0; c < DAY_COLS; c++) if (days[c].inMonth) inMonth.push(c);
+
+    // 1. 動かさない日 … 既に入っている希休・有休・夏休（公休とは別に数える）
+    const keep = new Set();
+    inMonth.forEach(c => {
+      const v = get(row, c);
+      if (v && !isWork(v) && v !== offSym) keep.add(c);
+    });
+
+    // 2. 必ず公休になる日 … 休業日と、本人が出られない曜日
+    const forced = new Set();
+    inMonth.forEach(c => {
+      if (keep.has(c)) return;
+      if (!days[c].open || !s.availDow[days[c].dow]) forced.add(c);
+    });
+
+    // 3. 公休ノルマから、残りを何日出勤にするかを決める
+    const free = inMonth.filter(c => !keep.has(c) && !forced.has(c));
+    const quota = offQuotaFor(s);
+    if (forced.size > quota) {
+      note_(s.name + '：公休が ' + forced.size + ' 日で、ノルマ ' + quota
+        + ' 日を超えます（休業日と出られない曜日だけで超過）');
     }
+    const extraOff = Math.max(0, quota - forced.size);
+
+    // 4. 週ごとの出勤日数。上限は週勤務日数
+    const freeSet = new Set(free);
+    const wk = weeks.map(w => {
+      const cols = w.cols.filter(c => freeSet.has(c));
+      return { cols: cols, cap: Math.min(Number(s.weekDays) || 0, cols.length), n: 0, over: false };
+    });
+    // 週勤務日数は超えない。公休ノルマは「最低これだけ休む」という下限として扱う。
+    // 週3の人は31日の月に13日ほどしか働けないので、公休はノルマを必ず超える。
+    // ノルマに合わせて無理に出勤させると、週勤務日数の約束を破ることになる。
+    const capSum = wk.reduce((a, w) => a + w.cap, 0);
+    const workTarget = Math.min(Math.max(0, free.length - extraOff), capSum);
+
+    wk.forEach(w => { w.n = w.cap; });
+    let sum = capSum;
+    // 埋まり具合の高い週から1日ずつ減らす。週をまたいで均し、
+    // 特定の週だけ薄くなるのを避ける
+    let guard = 0;
+    while (sum > workTarget && guard++ < 400) {
+      const t = pickWeek_(wk, w => w.n > 0, -1);
+      if (!t) break;
+      t.n--; sum--;
+    }
+
+    const willOff = free.length - sum + forced.size;
+    if (willOff > quota) {
+      note_(s.name + '：公休 ' + willOff + ' 日（ノルマ ' + quota
+        + ' 日）。週 ' + s.weekDays + ' 日と出られる曜日の制約から、ノルマより多く休みます');
+    }
+
+    // 5. いったん全部公休にしてから、週ごとに人手の足りない日を出勤にする
+    inMonth.forEach(c => { if (!keep.has(c)) setV(row, c, offSym); });
+    wk.forEach(w => {
+      const order = w.cols.slice().sort((a, b) =>
+        (shortage_(b) - shortage_(a)) || (a - b));
+      order.slice(0, w.n).forEach(c => setV(row, c, workSym));
+    });
+
+    // 6. 連勤上限を、週ごとの出勤日数を変えずに直す
+    repairRuns_(row, s, wk, cap, workSym, offSym);
+  }
+
+  /** 埋まり具合がいちばん高い(dir<0)／低い(dir>0)週を返す */
+  function pickWeek_(wk, ok, dir) {
+    let best = null, bestRatio = 0;
+    wk.forEach(w => {
+      if (!w.cols.length || !ok(w)) return;
+      const r = w.n / w.cols.length;
+      if (!best || (dir > 0 ? r < bestRatio : r > bestRatio)) { best = w; bestRatio = r; }
+    });
+    return best;
+  }
+
+  /** その日の人手の不足ぶん。大きいほど出勤させたい */
+  function shortage_(c) {
+    let on = 0;
+    ROWS.forEach(r => {
+      if (r.kind === 'staff' && r.role !== 'clerk' && isWork(get(r, c))) on++;
+    });
+    const need = Math.max(days[c].pharmMin, docCount(c) + (Number(DB.rules.reqPlus) || 0));
+    return need - on;
+  }
+
+  /** 上限を超えた最初の出勤日。無ければ -1 */
+  function firstOverrun_(row, cap) {
+    let run = 0;
+    for (let c = 0; c < DAY_COLS; c++) {
+      if (!days[c].inMonth) continue;
+      if (isWork(get(row, c))) {
+        run++;
+        if (run > cap) return c;
+      } else run = 0;
+    }
+    return -1;
+  }
+
+  /**
+   * 連勤上限を守らせる。
+   * 休みを足すのではなく、同じ週の中で出勤日と休みを入れ替える。
+   * 足すやり方だと出勤日数が減り、公休ノルマが狂う。
+   */
+  function repairRuns_(row, s, wk, cap, workSym, offSym) {
+    for (let pass = 0; pass < 40; pass++) {
+      const bad = firstOverrun_(row, cap);
+      if (bad < 0) return;
+      const w = wk.find(x => x.cols.indexOf(bad) >= 0);
+      if (!w) { setV(row, bad, offSym); continue; }
+
+      let swapped = false;
+      const offs = w.cols.filter(c => c !== bad && get(row, c) === offSym);
+      for (let i = 0; i < offs.length; i++) {
+        setV(row, bad, offSym);
+        setV(row, offs[i], workSym);
+        const next = firstOverrun_(row, cap);
+        if (next < 0 || next > bad) { swapped = true; break; }
+        setV(row, bad, workSym);       // 直らないので戻す
+        setV(row, offs[i], offSym);
+      }
+      if (!swapped) {
+        setV(row, bad, offSym);
+        note_(s.name + '：連続出勤 ' + cap + ' 日を守るため、その週の出勤を1日減らしました');
+      }
+    }
+    note_(s.name + '：連続出勤の調整が終わりませんでした（条件が厳しすぎます）');
   }
 
   /* ═══ マスタ画面 ═══════════════════════════════════════
