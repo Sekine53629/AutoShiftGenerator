@@ -1476,9 +1476,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { kind: 'shift', label: 'シフト', items: byOrder(DB.patterns).map((p, i) => ({
           value: p.sym, face: p.sym.charAt(0), sub: p.label,
           hint: i < 9 ? String(i + 1) + ' キー' : '' })) },
+      // 押すのは略称。日付欄は 34px しかなく、氏名は入りきらない。
+      // 氏名で入れたいときは、押したあと打ち直せる（入力候補にも氏名が出る）
       { kind: 'doctor', label: '医師', items: byOrder(DB.doctors)
           .filter(d => d.name).map(d => ({
-            value: d.name, face: d.short || d.name.charAt(0), sub: d.name })) },
+            value: d.short || d.name, face: d.short || d.name.charAt(0), sub: d.name })) },
       { kind: 'note', label: '備考', items: byOrder(DB.notes)
           .filter(n => n.text).map(n => ({
             value: n.text, face: n.text, sub: n.desc || n.text })) }
@@ -1673,13 +1675,19 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     try { parsed = JSON.parse($('dataBox').value); }
     catch (e) { dataStat('JSON として読めません: ' + e.message); return; }
     const master = parsed && (parsed.master || parsed);
-    if (!master || !master.staff || !master.rules) {
-      dataStat('staff と rules が見つかりません。書き出したときの形で貼ってください。');
+    // 一部だけ貼れるようにする（医師マスタだけ入れ替える、など）。
+    // 全部を要求すると、試したいものだけ差し替えることができない
+    const KEYS = ['staff', 'doctors', 'patterns', 'notes', 'leave', 'rules'];
+    const present = master ? KEYS.filter(k => master[k] !== undefined) : [];
+    if (!present.length) {
+      dataStat('マスタが見つかりません。' + KEYS.join(' / ') + ' のどれかを含めてください。');
       return;
     }
-    DB = master;
+    present.forEach(k => { DB[k] = master[k]; });
     save();
-    values.clear();
+    // 社員が入れ替わるとセルのキー（社員ID）が合わなくなるので入力を捨てる。
+    // 医師マスタだけの差し替えなら、いま組んである表は残す
+    if (present.indexOf('staff') >= 0 || parsed.shift) values.clear();
     if (parsed.targetMonth) {
       const p = String(parsed.targetMonth).split('-');
       if (p.length === 2) { $('yy').value = Number(p[0]); $('mm').value = Number(p[1]); }
@@ -1702,9 +1710,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         if (row.kind === 'staff') paintRow(row);
       });
       renderGrid();
-      dataStat('取り込みました（マスタと ' + n + ' セル）。');
+      dataStat('取り込みました（' + present.join(' / ') + ' と ' + n + ' セル）。');
     } else {
-      dataStat('マスタを取り込みました。');
+      dataStat('取り込みました（' + present.join(' / ') + '）。');
     }
   });
 
