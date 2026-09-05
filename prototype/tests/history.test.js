@@ -29,6 +29,7 @@ function makeStore(limit) {
 function build(limit) {
   return new Function('localStorage', [
     line('const HISTORY_KEY'), line('const HISTORY_KEEP'),
+    line('  let historyMem'), line('  let historyPersist'),
     grab('loadHistory_'), grab('saveHistory_'), grab('dropOldestSnapshot_'),
     grab('diffCount_'),
     // currentCells_ / snapshot_ は ROWS と days に依存するので、ここでは薄く作る
@@ -131,6 +132,7 @@ console.log('■ 「戻す」を連打すると一段ずつ遡る');
   const L = t => src2.split(/\r?\n/).find(l => l.includes(t));
   const u = new Function('localStorage', [
     L('const HISTORY_KEY'), L('const HISTORY_KEEP'), L('  let undoPos'),
+    L('  let historyMem'), L('  let historyPersist'),
     g('loadHistory_'), g('saveHistory_'), g('dropOldestSnapshot_'), g('diffCount_'),
     'let cellsNow = {}; let curYm = "2026-10"; let last = "";',
     'function currentCells_() { return JSON.parse(JSON.stringify(cellsNow)); }',
@@ -174,6 +176,7 @@ console.log('■ 戻す・進める の往復');
   const L = t => src3.split(/\r?\n/).find(l => l.includes(t));
   const u = new Function('localStorage', [
     L('const HISTORY_KEY'), L('const HISTORY_KEEP'), L('  let undoPos'),
+    L('  let historyMem'), L('  let historyPersist'),
     g('loadHistory_'), g('saveHistory_'), g('dropOldestSnapshot_'), g('diffCount_'),
     'let cellsNow = {}; let curYm = "2026-10"; let last = "";',
     'function currentCells_() { return JSON.parse(JSON.stringify(cellsNow)); }',
@@ -211,6 +214,67 @@ console.log('■ 戻す・進める の往復');
   u.redoOnce_();
   console.log('  戻す→編集→進める: 表示 ' + u.now() + '（編集が消えない）');
   check(u.now() === 'X', '編集後は進めず、編集内容が残る', u.now());
+}
+
+console.log('');
+console.log('■ 保存できない環境でも戻す・進めるが効く');
+{
+  const src4 = fs.readFileSync('prototype/ShiftGrid.html', 'utf8');
+  const g = n => {
+    const at = src4.indexOf('function ' + n + '(');
+    let d = 0;
+    for (let j = src4.indexOf('{', at); j < src4.length; j++) {
+      if (src4[j] === '{') d++; else if (src4[j] === '}') { d--; if (!d) return src4.slice(at, j + 1); }
+    }
+  };
+  const L = t => src4.split(/\r?\n/).find(l => l.includes(t));
+
+  const make = mode => {
+    let data = {};
+    const store = {
+      getItem: k => (k in data ? data[k] : null),
+      setItem: (k, v) => {
+        if (mode === 'fail' || (mode === 'small' && v.length > 3000)) {
+          const e = new Error('Quota'); e.name = 'QuotaExceededError'; throw e;
+        }
+        data[k] = v;
+      },
+      removeItem: k => { delete data[k]; },
+    };
+    return new Function('localStorage', [
+      L('const HISTORY_KEY'), L('const HISTORY_KEEP'), L('  let undoPos'),
+    L('  let historyMem'), L('  let historyPersist'),
+      g('loadHistory_'), g('saveHistory_'), g('dropOldestSnapshot_'), g('diffCount_'),
+      'let cellsNow = {}; let curYm = "2026-10"; let last = "";',
+      'function currentCells_() { return JSON.parse(JSON.stringify(cellsNow)); }',
+      'function applySnapshot_(s) { cellsNow = JSON.parse(JSON.stringify(s.cells)); }',
+      'function renderGrid() {} function renderHistory() {}',
+      'function fmtWhen_() { return ""; } function histStat_() {}',
+      'function $() { return null; } function updateUndoButtons_() {}',
+      'function undoStat_(t) { last = t; }',
+      g('snapshot_'), g('undoOnce_'), g('redoOnce_'), g('markEdited_'),
+      'return { snapshot_, undoOnce_, redoOnce_, markEdited_, set: c => { cellsNow = c; },',
+      '  now: () => (cellsNow.s1 ? cellsNow.s1["1"] : ""), persist: () => historyPersist,',
+      '  hist: () => loadHistory_()["2026-10"] || [] };'
+    ].join('\n'))(store);
+  };
+
+  [['保存が通る', 'ok'], ['保存が一切通らない', 'fail'], ['容量が小さい', 'small']].forEach(([label, mode]) => {
+    const u = make(mode);
+    const V = v => ({ s1: { 1: v } });
+    u.set(V('手で組んだ')); u.markEdited_();
+    u.snapshot_('自動生成の直前'); u.markEdited_();
+    u.set(V('自動生成の結果'));
+    u.undoOnce_();
+    const back = u.now();
+    u.redoOnce_();
+    const fwd = u.now();
+    console.log('  ' + label.padEnd(18) + '戻す→' + back + '  進める→' + fwd
+      + '  控え' + u.hist().length + '件 保存' + (u.persist() ? '成功' : '失敗'));
+    check(back === '手で組んだ', label + ': 戻せる', back);
+    check(fwd === '自動生成の結果', label + ': 進められる', fwd);
+    check(u.hist().length === 2, label + ': 控えが残る', String(u.hist().length));
+  });
 }
 
 console.log('');

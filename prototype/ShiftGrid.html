@@ -2784,27 +2784,56 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /** どこまで遡ったか。-1 は遡っていない状態。表を触ると -1 に戻る */
   let undoPos = -1;
 
+  /**
+   * 控えは**メモリを正**とし、localStorage はその写しとして扱う。
+   *
+   * 以前は localStorage を正にしていたため、保存が通らなかったときに
+   * 読み直すと控えが消えており、「これ以上は遡れません」になっていた。
+   * 保存できないこと自体は起こりうる（容量・権限・埋め込み枠の制限）ので、
+   * **保存に失敗しても、その場での戻す・進めるは効く**ようにする。
+   * 失うのは「再読み込みしたあとも残ること」だけ。
+   */
+  let historyMem = null;
+  let historyPersist = true;   // 前回の保存が通ったか
+
   function loadHistory_() {
+    if (historyMem) return historyMem;
     try {
       const raw = localStorage.getItem(HISTORY_KEY);
       const parsed = raw ? JSON.parse(raw) : null;
-      return (parsed && typeof parsed === 'object') ? parsed : {};
-    } catch (e) { return {}; }
+      historyMem = (parsed && typeof parsed === 'object') ? parsed : {};
+    } catch (e) {
+      historyMem = {};
+    }
+    return historyMem;
   }
 
   /**
    * 控えを書く。入りきらないときは古いものから捨てて入れ直す。
-   * 「保存できませんでした」で終わらせると、直前の状態が失われる
+   * メモリの中身は必ず残るので、保存に失敗しても控え自体は消えない。
+   * @return {boolean} 保存まで通ったか
    */
   function saveHistory_(h) {
-    for (let i = 0; i < 6; i++) {
+    historyMem = h;
+    // 入りきらないときは古いものから捨てて入れ直すが、**捨てるのは写しのほうだけ**。
+    // メモリを削ると、保存できない環境で控えが消えて戻せなくなる
+    let copy;
+    try {
+      copy = JSON.parse(JSON.stringify(h));
+    } catch (e) {
+      historyPersist = false;
+      return false;
+    }
+    for (let i = 0; i < 8; i++) {
       try {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(h));
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(copy));
+        historyPersist = true;
         return true;
       } catch (e) {
-        if (!dropOldestSnapshot_(h)) return false;
+        if (!dropOldestSnapshot_(copy)) break;
       }
     }
+    historyPersist = false;
     return false;
   }
 
@@ -2862,7 +2891,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (list.length && diffCount_(list[0].cells, cells) === 0) return false;
     list.unshift({ at: new Date().toISOString(), label: label || '保存', cells: cells });
     if (list.length > HISTORY_KEEP) list.length = HISTORY_KEEP;
-    saveHistory_(h);
+    saveHistory_(h);   // 失敗してもメモリには残るので、戻す・進めるは効く
     return true;
   }
 
@@ -2906,7 +2935,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (!list.length) { undoStat_('この月の控えがまだありません'); return; }
 
     if (undoPos < 0) {
-      // 遡り始め。いまの状態を控えてから、ひとつ前へ
+      // 遡り始め。いまの状態を控えてから、ひとつ前へ。
+      // 積めたかどうかに関わらず、ひとつ前は index 1
       snapshot_('戻す直前');
       list = loadHistory_()[curYm] || [];
       undoPos = 1;
@@ -3012,7 +3042,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-    histStat_(list.length ? ('控え ' + list.length + ' 件（最大 ' + HISTORY_KEEP + ' 件）') : '');
+    histStat_((list.length ? ('控え ' + list.length + ' 件（最大 ' + HISTORY_KEEP + ' 件）') : '')
+      + (historyPersist ? ''
+        : '　⚠ このブラウザに保存できていません。戻す・進めるは効きますが、'
+          + '再読み込みすると控えは消えます'));
   }
 
   /* ═══ 書き出しと取り込み ═══════════════════════════════
