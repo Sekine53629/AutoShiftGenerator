@@ -320,6 +320,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <button data-tab="pattern">シフトパターン</button>
   <button data-tab="note">備考マスタ</button>
   <button data-tab="leave">有休管理</button>
+  <button data-tab="data">データ書き出し</button>
 </nav>
 
 <!-- ══ シフト表 ══════════════════════════════════════ -->
@@ -424,6 +425,26 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <button data-add="leave">行を追加</button>
     <span class="note">付与日から2年で時効になるぶんは、まだ見ていません。</span>
   </div>
+</div></section>
+
+<section class="panel" data-panel="data"><div class="sheet">
+  <h2>データ書き出し</h2>
+  <p class="lead">
+    マスタと今月の入力を JSON で出します。この中身はブラウザの中にしか無く、
+    こちら側からは見えません。移行に使うときや、内容について相談したいときは、
+    下の欄を選んで丸ごとコピーして渡してください。
+  </p>
+  <div class="mtfoot" style="margin:0 0 9px">
+    <button id="dataDump" class="primary">いまの内容を書き出す</button>
+    <button id="dataApply">貼り付けた内容を取り込む</button>
+    <button id="dataReset">初期値に戻す</button>
+    <span class="note" id="dataStat"></span>
+  </div>
+  <textarea id="dataBox" spellcheck="false"
+    style="width:100%;height:390px;font-family:'Roboto Mono',monospace;font-size:11px;line-height:1.45"></textarea>
+  <p class="hint">
+    取り込みは、いまのマスタと入力をすべて置き換えます。書き出しておいてから行ってください。
+  </p>
 </div></section>
 
 <datalist id="dlDoctor"></datalist>
@@ -1462,6 +1483,90 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   arm($('clearAll'), 'もう一度押すと消去', () => { values.clear(); renderGrid(); });
   ['yy', 'mm'].forEach(id => $(id).addEventListener('change', renderGrid));
 
+  /* ═══ 書き出しと取り込み ═══════════════════════════════
+     枠の中では download が効かないので、貼り付けでやり取りする。 */
+  function dumpText() {
+    const y = Number($('yy').value), m = Number($('mm').value);
+    const cells = {};
+    ROWS.forEach(row => {
+      if (!isInput(row)) return;
+      const line = {};
+      for (let c = 0; c < DAY_COLS; c++) {
+        if (days[c].inMonth && get(row, c)) line[days[c].day] = get(row, c);
+      }
+      if (Object.keys(line).length) {
+        cells[row.staff ? row.staff.id : row.kind + row.index] = line;
+      }
+    });
+    return JSON.stringify({
+      exportedAt: new Date().toISOString(),
+      targetMonth: y + '-' + String(m).padStart(2, '0'),
+      master: DB,
+      shift: cells
+    }, null, 2);
+  }
+
+  function dataStat(text) { $('dataStat').textContent = text; }
+
+  $('dataDump').addEventListener('click', () => {
+    const text = dumpText();
+    $('dataBox').value = text;
+    $('dataBox').focus();
+    $('dataBox').select();
+    dataStat('書き出しました（' + text.length.toLocaleString() + ' 文字）。このままコピーできます。');
+  });
+
+  $('dataApply').addEventListener('click', () => {
+    let parsed;
+    try { parsed = JSON.parse($('dataBox').value); }
+    catch (e) { dataStat('JSON として読めません: ' + e.message); return; }
+    const master = parsed && (parsed.master || parsed);
+    if (!master || !master.staff || !master.rules) {
+      dataStat('staff と rules が見つかりません。書き出したときの形で貼ってください。');
+      return;
+    }
+    DB = master;
+    save();
+    values.clear();
+    if (parsed.targetMonth) {
+      const p = String(parsed.targetMonth).split('-');
+      if (p.length === 2) { $('yy').value = Number(p[0]); $('mm').value = Number(p[1]); }
+    }
+    Object.keys(COLS).forEach(renderMaster);
+    renderRules();
+    refreshAll();
+
+    // 表の中身は行が出来てからでないと入れられない
+    if (parsed.shift) {
+      let n = 0;
+      ROWS.forEach(row => {
+        if (!isInput(row)) return;
+        const line = parsed.shift[row.staff ? row.staff.id : row.kind + row.index];
+        if (!line) return;
+        for (let c = 0; c < DAY_COLS; c++) {
+          const v = line[days[c].day];
+          if (days[c].inMonth && v) { setV(row, c, v); n++; }
+        }
+        if (row.kind === 'staff') paintRow(row);
+      });
+      renderGrid();
+      dataStat('取り込みました（マスタと ' + n + ' セル）。');
+    } else {
+      dataStat('マスタを取り込みました。');
+    }
+  });
+
+  arm($('dataReset'), 'もう一度押すと初期化', () => {
+    DB = seedDb();
+    save();
+    values.clear();
+    Object.keys(COLS).forEach(renderMaster);
+    renderRules();
+    refreshAll();
+    autoGenerate();
+    dataStat('初期値に戻しました。');
+  });
+
   $('tabs').addEventListener('click', ev => {
     const btn = ev.target.closest('button[data-tab]');
     if (!btn) return;
@@ -1469,6 +1574,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     btn.classList.add('on');
     document.querySelectorAll('.panel').forEach(p =>
       p.classList.toggle('on', p.dataset.panel === btn.dataset.tab));
+    if (btn.dataset.tab === 'data' && !$('dataBox').value) {
+      $('dataBox').value = dumpText();
+      dataStat('いまの内容です。選んでコピーできます。');
+    }
   });
 
   /* ═══ 起動 ═════════════════════════════════════════════ */
