@@ -659,7 +659,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const live = DB.staff.filter(s => inService(s, y, m));
 
     push({ kind: 'band', label: '医師名' });
-    for (let i = 0; i < DOC_ROWS; i++) push({ kind: 'doctor', label: '医師 ' + (i + 1) });
+    for (let i = 0; i < DOC_ROWS; i++) {
+      push({ kind: 'doctor', key: 'doc' + (i + 1), label: '医師 ' + (i + 1) });
+    }
     push({ kind: 'repeat', label: '' });
 
     const groups = [
@@ -670,11 +672,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     groups.forEach(g => {
       push({ kind: 'band', label: g.label });
       live.filter(g.pick).forEach(s =>
-        push({ kind: 'staff', role: g.role, label: s.name, staff: s }));
+        push({ kind: 'staff', role: g.role, key: s.id, label: s.name, staff: s }));
     });
 
     push({ kind: 'band', label: '備考' });
-    push({ kind: 'note', label: '備考' });
+    push({ kind: 'note', key: 'note', label: '備考' });
 
     push({ kind: 'agg', label: '医師数(診)',   calc: 'doc' });
     push({ kind: 'agg', label: '薬剤師出勤数', calc: 'pharm' });
@@ -685,8 +687,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const isInput = r => r.kind === 'doctor' || r.kind === 'staff' || r.kind === 'note';
 
   /* ═══ 状態 ═════════════════════════════════════════════ */
-  const values = new Map();                 // 'staffId|day' か 'doc<n>|day' -> 文字列
-  const cellKey = (row, c) => (row.staff ? row.staff.id : row.kind + row.index) + '|' + c;
+  const values = new Map();   // '<row.key>|日' -> 文字列。row.key は社員ID / doc1..5 / note
+  const cellKey = (row, c) => row.key + '|' + c;
   const get = (row, c) => values.get(cellKey(row, c)) || '';
   const setV = (row, c, v) => {
     if (v) values.set(cellKey(row, c), v); else values.delete(cellKey(row, c));
@@ -1636,7 +1638,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         if (days[c].inMonth && get(row, c)) line[days[c].day] = get(row, c);
       }
       if (Object.keys(line).length) {
-        cells[row.staff ? row.staff.id : row.kind + row.index] = line;
+        cells[row.key] = line;
       }
     });
     return JSON.stringify({
@@ -1679,15 +1681,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 全部を要求すると、試したいものだけ差し替えることができない
     const KEYS = ['staff', 'doctors', 'patterns', 'notes', 'leave', 'rules'];
     const present = master ? KEYS.filter(k => master[k] !== undefined) : [];
-    if (!present.length) {
-      dataStat('マスタが見つかりません。' + KEYS.join(' / ') + ' のどれかを含めてください。');
+    if (!present.length && !parsed.shift) {
+      dataStat('中身が見つかりません。' + KEYS.join(' / ') + ' か shift を含めてください。');
       return;
     }
     present.forEach(k => { DB[k] = master[k]; });
     save();
     // 社員が入れ替わるとセルのキー（社員ID）が合わなくなるので入力を捨てる。
-    // 医師マスタだけの差し替えなら、いま組んである表は残す
-    if (present.indexOf('staff') >= 0 || parsed.shift) values.clear();
+    // それ以外は、貼られた行だけを入れ替える（下の shift の処理で行ごとに消す）
+    if (present.indexOf('staff') >= 0) values.clear();
     if (parsed.targetMonth) {
       const p = String(parsed.targetMonth).split('-');
       if (p.length === 2) { $('yy').value = Number(p[0]); $('mm').value = Number(p[1]); }
@@ -1698,19 +1700,26 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     // 表の中身は行が出来てからでないと入れられない
     if (parsed.shift) {
-      let n = 0;
+      let n = 0, rows = 0, unknown = [];
+      Object.keys(parsed.shift).forEach(k => {
+        if (!ROWS.some(row => isInput(row) && row.key === k)) unknown.push(k);
+      });
       ROWS.forEach(row => {
         if (!isInput(row)) return;
-        const line = parsed.shift[row.staff ? row.staff.id : row.kind + row.index];
-        if (!line) return;
+        const line = parsed.shift[row.key];
+        if (!line) return;                       // 貼られていない行は触らない
+        rows++;
+        for (let c = 0; c < DAY_COLS; c++) setV(row, c, '');   // その行だけ入れ替える
         for (let c = 0; c < DAY_COLS; c++) {
           const v = line[days[c].day];
           if (days[c].inMonth && v) { setV(row, c, v); n++; }
         }
-        if (row.kind === 'staff') paintRow(row);
       });
       renderGrid();
-      dataStat('取り込みました（' + present.join(' / ') + ' と ' + n + ' セル）。');
+      const parts = present.length ? [present.join(' / ')] : [];
+      parts.push(rows + ' 行 / ' + n + ' セル');
+      dataStat('取り込みました（' + parts.join(' と ') + '）。'
+        + (unknown.length ? ' 該当する行が無いキー: ' + unknown.join(', ') : ''));
     } else {
       dataStat('取り込みました（' + present.join(' / ') + '）。');
     }
