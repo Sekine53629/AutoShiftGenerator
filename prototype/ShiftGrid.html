@@ -1545,6 +1545,14 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       });
       const need = days[c].pharmMin;
       if (on < need) msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人（営業マスタの下限 ' + need + ' 人）');
+      let clerks = 0;
+      ROWS.forEach(r2 => {
+        if (r2.kind === 'staff' && r2.role === 'clerk' && isWork(get(r2, c))) clerks++;
+      });
+      if (clerks < days[c].clerkMin) {
+        msgs.push(days[c].day + '日：事務 ' + clerks + ' 人（営業マスタの下限 '
+          + days[c].clerkMin + ' 人）');
+      }
       if (r.needCloser && closer === 0) msgs.push(days[c].day + '日：締め作業ができる人がいない');
     }
 
@@ -1770,7 +1778,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       // 必ず出る日を先に取り、残りを人手の足りない日から埋める
       const must = w.cols.filter(c => mustWork.has(c));
       const rest = w.cols.filter(c => !mustWork.has(c))
-        .sort((a, b) => (shortage_(b) - shortage_(a)) || (a - b));
+        .sort((a, b) => (shortage_(b, row.role) - shortage_(a, row.role)) || (a - b));
       const pick = w.picked ? w.picked
         : must.concat(rest.slice(0, Math.max(0, w.n - must.length)));
       pick.forEach(c => { setV(row, c, workSym); workDays.add(c); });
@@ -1804,8 +1812,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   }
 
   /** その日の人手の不足ぶん。大きいほど出勤させたい */
-  function shortage_(c) {
+  /**
+   * その日の人手の不足ぶん。大きいほど出勤させたい。
+   *
+   * 置こうとしている人の区分で見る。以前は薬剤師しか数えていなかったので、
+   * 事務を置くときに「その日に事務が何人いるか」を見ておらず、
+   * 同じ設定の事務2人が同じ日に休んで事務0人の日ができていた。
+   */
+  function shortage_(c, role) {
     let on = 0;
+    if (role === 'clerk') {
+      ROWS.forEach(r => {
+        if (r.kind === 'staff' && r.role === 'clerk' && isWork(get(r, c))) on++;
+      });
+      return days[c].clerkMin - on;
+    }
     ROWS.forEach(r => {
       if (r.kind === 'staff' && r.role !== 'clerk' && isWork(get(r, c))) on++;
     });
