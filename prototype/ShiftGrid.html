@@ -135,12 +135,28 @@ button.on, button.primary { background: var(--accent); color: var(--accent-ink);
 button.primary:hover { filter: brightness(1.12); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.stamp { min-width: 34px; font-family: "Roboto Mono", "Noto Sans JP", monospace; font-weight: 700; }
+#palette { display: flex; flex-wrap: wrap; align-items: stretch; gap: 5px 12px; }
+.pgroup { display: flex; align-items: center; gap: 4px; }
+.pgroup + .pgroup { border-left: 1px solid var(--rule-soft); padding-left: 12px; }
+.plabel {
+  font-size: 9px; font-weight: 700; letter-spacing: .1em;
+  color: var(--ink-faint); writing-mode: vertical-rl; text-orientation: upright;
+  line-height: 1; padding: 1px 0;
+}
+.stamp {
+  min-width: 34px; padding: 3px 7px;
+  font-family: "Roboto Mono", "Noto Sans JP", monospace; font-weight: 700;
+}
+.stamp.wide { min-width: 42px; font-size: 11px; }
 .stamp small {
   display: block; font-family: "Noto Sans JP", sans-serif;
   font-size: 9px; font-weight: 400; color: var(--ink-faint);
+  max-width: 74px; overflow: hidden; text-overflow: ellipsis;
 }
 .stamp.on small { color: var(--accent-ink); }
+/* その欄には押せないスタンプ。押すこと自体は塞がない（先に選んでから押す使い方のため） */
+.stamp.dim { opacity: .32; }
+.stamp.dim.on { opacity: .6; }
 
 /* ── 祝日の帯 ────────────────────────────────────────── */
 .holiday-bar {
@@ -332,8 +348,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       <input type="number" id="mm" min="1" max="12" step="1" style="width:54px">
     </div>
     <div class="group">
-      <span class="lbl">記号</span>
-      <span id="palette" style="display:flex;gap:5px;flex-wrap:wrap"></span>
+      <span class="lbl">スタンプ</span>
+      <span id="palette"></span>
     </div>
     <div class="group">
       <button id="autoRun" class="primary">自動生成</button>
@@ -355,7 +371,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <span><i style="background:#e8927c"></i>日曜</span>
     <span><i style="background:#ffd966"></i>祝日・休診</span>
     <span><i style="background:var(--outside)"></i>月外</span>
-    <span>セルを選んで記号ボタン、または <b>1</b>–<b>9</b> キー。<b>Delete</b> で消去、方向キーで移動。</span>
+    <span>セルを選んでスタンプ、または <b>1</b>–<b>9</b> キー（シフト記号）。<b>Delete</b> で消去、方向キーで移動。</span>
+    <span>薄いスタンプは、いま選んでいる欄には押せないものです。</span>
   </div>
   <div id="gridWarn" style="padding:0 18px 20px"></div>
 </section>
@@ -675,7 +692,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (v) values.set(cellKey(row, c), v); else values.delete(cellKey(row, c));
   };
 
-  let stamp = '○';
+  /**
+   * いま選んでいるスタンプ。{ kind, value }
+   * kind は shift / doctor / note / clear。押せる行が kind ごとに決まっていて、
+   * シフト記号が医師名欄に落ちると 医師数(診)（あの欄の COUNTA）が増え、
+   * 必要人数がその月ぶん丸ごと狂う。ここは緩められない。
+   */
+  let stamp = { kind: 'shift', value: '○' };
   let sel = null;
   let days = [];
   const $ = id => document.getElementById(id);
@@ -764,10 +787,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
 
     const table = $('grid');
+    sel = null;              // 表を作り直すと選択の行番号が合わなくなる
     table.textContent = '';
     table.appendChild(buildHead());
     table.appendChild(buildBody());
     recalc();
+    updatePaletteState();
   }
 
   function headCells(tag, dayText) {
@@ -892,23 +917,43 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     document.querySelectorAll('td.cell.sel').forEach(e => e.classList.remove('sel'));
     sel = { r: r, c: c };
     const cell = cellAt(r, c);
-    if (!cell) return;
-    cell.classList.add('sel');
-    if (focusInput) { const i = cell.querySelector('input'); if (i) i.focus(); }
+    if (cell) {
+      cell.classList.add('sel');
+      if (focusInput) { const i = cell.querySelector('input'); if (i) i.focus(); }
+    }
+    updatePaletteState();   // その欄に押せないスタンプを薄くする
   }
-  function applyStamp(r, c, sym) {
+  /** そのスタンプをその行に押してよいか。押せない理由も返す */
+  function stampRejectReason(row, st) {
+    if (!row || !isInput(row)) return '書き込めない行です';
+    if (st.kind === 'clear') return '';
+    if (st.kind === 'shift'  && row.kind !== 'staff')
+      return 'シフト記号はスタッフ欄にしか押せません';
+    if (st.kind === 'doctor' && row.kind !== 'doctor')
+      return '医師名は医師名欄にしか押せません';
+    if (st.kind === 'note'   && row.kind !== 'note')
+      return '備考は備考行にしか押せません';
+    return '';
+  }
+  const canStamp = (row, st) => !stampRejectReason(row, st);
+
+  function applyStamp(r, c, st) {
     const row = ROWS[r];
-    if (!row || row.kind !== 'staff') return;
-    setV(row, c, sym);
+    if (!canStamp(row, st)) return false;
+    setV(row, c, st.value);
     paintCell(row, c);
     recalc();
+    return true;
   }
+
   function paintCell(row, c) {
     const cell = cellAt(row.index, c);
     if (!cell) return;
+    const t = get(row, c);
+    const inp = cell.querySelector('input');
+    if (inp) { inp.value = t; return; }   // 医師名欄・備考行は入力欄
     const v = cell.querySelector('.v');
     if (!v) return;
-    const t = get(row, c);
     v.textContent = t;
     v.classList.toggle('small', t.length > 1);
   }
@@ -1423,36 +1468,82 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   }
 
   /* ═══ 記号パレットと入力候補 ═══════════════════════════ */
+  const byOrder = list => list.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+
+  /** パレットの中身。シフト記号・医師名・備考を、それぞれのマスタから作る */
+  function paletteGroups() {
+    return [
+      { kind: 'shift', label: 'シフト', items: byOrder(DB.patterns).map((p, i) => ({
+          value: p.sym, face: p.sym.charAt(0), sub: p.label,
+          hint: i < 9 ? String(i + 1) + ' キー' : '' })) },
+      { kind: 'doctor', label: '医師', items: byOrder(DB.doctors)
+          .filter(d => d.name).map(d => ({
+            value: d.name, face: d.short || d.name.charAt(0), sub: d.name })) },
+      { kind: 'note', label: '備考', items: byOrder(DB.notes)
+          .filter(n => n.text).map(n => ({
+            value: n.text, face: n.text, sub: n.desc || n.text })) }
+    ];
+  }
+
   function renderPalette() {
     const host = $('palette');
     host.textContent = '';
-    const list = DB.patterns.slice().sort((a, b) => a.order - b.order);
-    list.forEach((p, i) => {
-      const b = el('button', 'stamp');
-      b.appendChild(document.createTextNode(p.sym.charAt(0)));
-      b.appendChild(el('small', '', p.label));
-      b.dataset.sym = p.sym;
-      if (i < 9) b.title = String(i + 1) + ' キー';
-      b.addEventListener('click', () => {
-        stamp = p.sym;
-        host.querySelectorAll('.stamp').forEach(x => x.classList.remove('on'));
-        b.classList.add('on');
-      });
-      host.appendChild(b);
-    });
-    const clr = el('button', 'stamp');
-    clr.appendChild(document.createTextNode('×'));
-    clr.appendChild(el('small', '', '消去'));
-    clr.addEventListener('click', () => {
-      stamp = '';
-      host.querySelectorAll('.stamp').forEach(x => x.classList.remove('on'));
-      clr.classList.add('on');
-    });
-    host.appendChild(clr);
 
-    if (list.length && list.map(p => p.sym).indexOf(stamp) < 0) stamp = list[0].sym;
-    const cur = host.querySelector('.stamp[data-sym="' + stamp + '"]');
-    if (cur) cur.classList.add('on');
+    const groups = paletteGroups();
+    // 選んでいたスタンプがマスタから消えていたら、先頭に寄せる
+    const stillThere = groups.some(g =>
+      g.kind === stamp.kind && g.items.some(it => it.value === stamp.value));
+    if (stamp.kind !== 'clear' && !stillThere) {
+      const first = groups.find(g => g.items.length);
+      stamp = first ? { kind: first.kind, value: first.items[0].value }
+                    : { kind: 'clear', value: '' };
+    }
+
+    groups.forEach(g => {
+      if (!g.items.length) return;
+      const box = el('span', 'pgroup');
+      box.appendChild(el('span', 'plabel', g.label));
+      g.items.forEach(it => box.appendChild(stampButton(g.kind, it)));
+      host.appendChild(box);
+    });
+
+    const tail = el('span', 'pgroup');
+    tail.appendChild(stampButton('clear', { value: '', face: '×', sub: '消去' }));
+    host.appendChild(tail);
+
+    updatePaletteState();
+  }
+
+  function stampButton(kind, it) {
+    const b = el('button', 'stamp' + (it.face.length > 1 ? ' wide' : ''));
+    b.appendChild(document.createTextNode(it.face));
+    b.appendChild(el('small', '', it.sub));
+    b.dataset.kind = kind;
+    b.dataset.value = it.value;
+    b.title = (it.sub || it.value) + (it.hint ? '（' + it.hint + '）' : '');
+    b.addEventListener('click', () => {
+      stamp = { kind: kind, value: it.value };
+      updatePaletteState();
+      // 押した先が選ばれていれば、そのまま反映する
+      if (sel) applyStamp(sel.r, sel.c, stamp);
+    });
+    return b;
+  }
+
+  /**
+   * 選択中のスタンプに印を付け、いま選んでいるセルに押せないものを薄くする。
+   * 薄いだけで押せるようにしてあるのは、先にスタンプを選んでから
+   * セルを押す使い方を塞がないため。
+   */
+  function updatePaletteState() {
+    const row = sel ? ROWS[sel.r] : null;
+    document.querySelectorAll('#palette .stamp').forEach(b => {
+      const st = { kind: b.dataset.kind, value: b.dataset.value };
+      b.classList.toggle('on', st.kind === stamp.kind && st.value === stamp.value);
+      const why = row ? stampRejectReason(row, st) : '';
+      b.classList.toggle('dim', !!why);
+      if (why) b.title = why;
+    });
   }
 
   function renderDatalists() {
@@ -1481,9 +1572,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const cell = ev.target.closest('td.cell');
     if (!cell) return;
     const r = Number(cell.dataset.row), c = Number(cell.dataset.col);
-    if (cell.classList.contains('text')) { select(r, c, true); return; }
-    select(r, c, false);
-    applyStamp(r, c, stamp);
+    const isText = cell.classList.contains('text');
+    select(r, c, isText);
+    applyStamp(r, c, stamp);        // 押せないスタンプなら何も起きない
+    // 医師名欄・備考行は、押したあとそのまま打ち直せるようにしておく
+    if (isText) { const i = cell.querySelector('input'); if (i) i.select(); }
   });
 
   document.querySelectorAll('[data-zoom]').forEach(btn => {
@@ -1503,13 +1596,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const inText = ev.target.tagName === 'INPUT' && ev.target.type === 'text';
 
     if (!inText && ev.key >= '1' && ev.key <= '9') {
-      const list = DB.patterns.slice().sort((a, b) => a.order - b.order);
-      const p = list[Number(ev.key) - 1];
-      if (p) { applyStamp(sel.r, sel.c, p.sym); ev.preventDefault(); }
+      const p = byOrder(DB.patterns)[Number(ev.key) - 1];
+      if (p) { applyStamp(sel.r, sel.c, { kind: 'shift', value: p.sym }); ev.preventDefault(); }
       return;
     }
     if (!inText && (ev.key === 'Delete' || ev.key === 'Backspace')) {
-      applyStamp(sel.r, sel.c, '');
+      applyStamp(sel.r, sel.c, { kind: 'clear', value: '' });
       ev.preventDefault();
       return;
     }
