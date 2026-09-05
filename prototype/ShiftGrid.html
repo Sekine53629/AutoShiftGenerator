@@ -467,8 +467,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   <h2 style="margin-top:22px">特例日</h2>
   <p class="lead">
-    曜日の決まりより優先します。年末年始や臨時休業、時短営業をここに入れます。
-    <code>12/29</code> のように月/日で書き、年をまたぐ範囲（<code>12/29</code>→<code>1/3</code>）も指定できます。
+    <b>この店だけ</b>の臨時休業・時短をここに入れます（棚卸・設備工事など）。
+    曜日の決まりより優先します。<br>
+    <b>年末年始のような全店共通の休みは祝日マスタ側です。</b>
+    両方に書くと、片方だけ直したときに食い違います。
   </p>
   <div class="mtwrap"><table class="mt" id="mtClosure"></table></div>
   <div class="mtfoot">
@@ -481,8 +483,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <h2>祝日マスタ</h2>
   <p class="lead">
     元日・成人の日といった暦の祝日は算出するので、ここには持ちません。
-    ここに入れるのは<b>会社として決める休み</b>と、<b>算出結果の上書き</b>です。
-    同じ日に両方あれば、こちらが優先します。
+    ここに入れるのは<b>会社として決める全店共通の休み</b>（年末年始・創立記念日など）と、
+    <b>算出結果の上書き</b>です。同じ日に両方あれば、こちらが優先します。<br>
+    店ごとの臨時休業は「店舗・営業」タブの特例日に入れてください。
   </p>
   <div class="warnbox" style="margin:0 0 12px">
     <b>種別は3つ</b>
@@ -653,14 +656,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
        *   対象外   … 暦としては祝日だが、公休ノルマに数えない
        */
       holidays: [
-        { id: 'hd1', name: '年始休業', kind: '休業', from: '1/1', to: '1/3', memo: '三が日' }
+        { id: 'hd1', name: '年末年始休業', kind: '休業', from: '12/29', to: '1/3',
+          memo: '全店共通の所定休日' }
       ],
 
-      /** 特例日。店ごとの臨時休業・時短。曜日の決まりより優先する */
-      closures: [
-        { id: 'c1', storeId: 'st1', from: '12/29', to: '1/3', kind: '休業',
-          label: '年末年始', from2: '', to2: '' }
-      ],
+      /**
+       * 特例日。**その店だけ**の臨時休業・時短（棚卸・設備工事など）。
+       * 全店共通の休み（年末年始・創立記念日）は祝日マスタが持つ。
+       * 両方に書くと、片方だけ直したときに食い違う。
+       */
+      closures: [],
 
       staff: staff,
       doctors: [1, 2, 3, 4, 5, 6].map(i => ({
@@ -730,6 +735,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       x.fixedDow = normDow_(x.fixedDow, 0);
       x.patterns = Array.isArray(x.patterns) ? x.patterns.slice() : [];
     });
+
+    // 年末年始を祝日マスタへ一本化した名残。こちらが初期値として置いた行だけ
+    // 直す。利用者が自分で入れた行は判断できないので触らない
+    const ny = (db.holidays || []).find(h => h.id === 'hd1');
+    if (ny && ny.from === '1/1' && ny.to === '1/3') {
+      ny.from = '12/29';
+      ny.name = ny.name === '年始休業' ? '年末年始休業' : ny.name;
+      ny.memo = '全店共通の所定休日';
+    }
+    db.closures = (db.closures || []).filter(c =>
+      !(c.id === 'c1' && c.kind === '休業' && c.from === '12/29' && c.to === '1/3'));
 
     // 参照先の無い有休行は捨てない。画面で「参照先なし」と出して人に判断させる
     return db;
@@ -1028,6 +1044,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
                 || (!!hd && hd.kind !== '対象外')
                 || !(!!h.open && !closed),
         open: !!h.open && !closed,                  // 店として開けるか
+        shutByHoliday: !!(hd && hd.kind === '休業'),
+        shutByClosure: !!(ex && ex.kind === '休業'),
         exception: ex ? ex.label : (hd && hd.kind === '休業' ? hd.name : ''),
         from: (ex && ex.kind === '短縮' && ex.from2) ? ex.from2 : h.from,
         to:   (ex && ex.kind === '短縮' && ex.to2)   ? ex.to2   : h.to,
@@ -1462,6 +1480,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (offBy.length) {
       msgs.push(yy + '年の暦の公休は ' + calYear + ' 日です。契約の年間公休日数と'
         + '合わない人がいます: ' + offBy.join('、'));
+    }
+
+    // 祝日マスタと特例日の両方で閉めている日。結果は同じでも、
+    // 片方だけ直したときに食い違うので気づけるようにする
+    const dup = days.filter(d => d.inMonth && d.shutByHoliday && d.shutByClosure)
+      .map(d => d.day + '日');
+    if (dup.length) {
+      msgs.push('祝日マスタと特例日の両方で休業にしている日があります（'
+        + dup.join('、') + '）。全店共通の休みは祝日マスタに寄せてください');
     }
 
     // マスタの日付が読めない行。画面を開いていなくても気づけるよう表の下にも出す
