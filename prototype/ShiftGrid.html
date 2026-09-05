@@ -204,6 +204,13 @@ button.primary:hover { filter: brightness(1.12); }
 .sun { background: var(--sun) !important; color: var(--day-ink) !important; }
 .hol { background: var(--hol) !important; color: var(--day-ink) !important; }
 .outside { background: var(--outside) !important; color: var(--ink-faint) !important; }
+/* 休業日。祝日の色は暦の事実なので潰さず、網掛けを重ねる */
+.shut {
+  background-image: repeating-linear-gradient(
+    -45deg, transparent 0 3px, var(--rule) 3px 4px) !important;
+}
+th.shut, td.shut { color: var(--ink-soft) !important; }
+.chip.shut b { text-decoration: line-through; }
 
 .bandrow td, .bandrow th {
   background: var(--band); height: 21px;
@@ -331,6 +338,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 <nav class="tabs" id="tabs">
   <button data-tab="grid" class="on">シフト表</button>
   <button data-tab="rules">自動生成ルール</button>
+  <button data-tab="store">店舗・営業</button>
+  <button data-tab="holiday">祝日マスタ</button>
   <button data-tab="staff">社員マスタ</button>
   <button data-tab="doctor">医師マスタ</button>
   <button data-tab="pattern">シフトパターン</button>
@@ -342,6 +351,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 <!-- ══ シフト表 ══════════════════════════════════════ -->
 <section class="panel on" data-panel="grid">
   <div class="toolbar">
+    <div class="group">
+      <span class="lbl">店舗</span>
+      <select id="storeSel"></select>
+    </div>
     <div class="group">
       <span class="lbl">年月</span>
       <input type="number" id="yy" min="2000" max="2100" step="1" style="width:74px">
@@ -394,6 +407,53 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 </section>
 
 <!-- ══ 各マスタ ══════════════════════════════════════ -->
+<section class="panel" data-panel="store"><div class="sheet">
+  <h2>店舗マスタ</h2>
+  <p class="lead">店舗ごとに営業日と必要人数を持ちます。表の行・営業日・特例日はここで選んだ店舗のものです。</p>
+  <div class="mtwrap"><table class="mt" id="mtStore"></table></div>
+  <div class="mtfoot"><button data-add="store">行を追加</button></div>
+
+  <h2 style="margin-top:22px">店舗営業マスタ（曜日別）</h2>
+  <p class="lead">
+    <b>営業日は暦ではなく店が決めます。</b>土日祝も開けるなら、その日はむしろ人手が要ります。
+    ここの「薬剤師 下限」「事務 下限」が、表の下の過不足とルール違反の判定に使われます。
+  </p>
+  <div class="mtwrap"><table class="mt" id="mtHours"></table></div>
+
+  <h2 style="margin-top:22px">特例日</h2>
+  <p class="lead">
+    曜日の決まりより優先します。年末年始や臨時休業、時短営業をここに入れます。
+    <code>12/29</code> のように月/日で書き、年をまたぐ範囲（<code>12/29</code>→<code>1/3</code>）も指定できます。
+  </p>
+  <div class="mtwrap"><table class="mt" id="mtClosure"></table></div>
+  <div class="mtfoot">
+    <button data-add="closure">行を追加</button>
+    <span class="note">休業日は網掛けで示します。祝日の色（#ffd966）は暦の事実なので消しません。</span>
+  </div>
+</div></section>
+
+<section class="panel" data-panel="holiday"><div class="sheet">
+  <h2>祝日マスタ</h2>
+  <p class="lead">
+    元日・成人の日といった暦の祝日は算出するので、ここには持ちません。
+    ここに入れるのは<b>会社として決める休み</b>と、<b>算出結果の上書き</b>です。
+    同じ日に両方あれば、こちらが優先します。
+  </p>
+  <div class="warnbox" style="margin:0 0 12px">
+    <b>種別は3つ</b>
+    <ul>
+      <li><b>公休加算</b> … 店は開ける。公休ノルマに1日加える（国民の祝日はこちら）</li>
+      <li><b>休業</b> … 店を閉める。全員休みになり、公休ノルマにも加わる（三が日など）</li>
+      <li><b>対象外</b> … 暦としては祝日だが、公休ノルマに数えない</li>
+    </ul>
+  </div>
+  <div class="mtwrap"><table class="mt" id="mtHoliday"></table></div>
+  <div class="mtfoot">
+    <button data-add="holiday">行を追加</button>
+    <span class="note">日付は <code>1/1</code> のように月/日で。範囲は開始と終了に分けて入れます。</span>
+  </div>
+</div></section>
+
 <section class="panel" data-panel="staff"><div class="sheet">
   <h2>社員マスタ</h2>
   <p class="lead">
@@ -494,23 +554,59 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const staff = [];
     const mk = (name, kind, emp, week, off, cons, pats, avail, fixed, close, rule) => ({
       id: 's' + (staff.length + 1), name: name, kind: kind, employment: emp,
-      weekDays: week, monthOff: off, maxCons: cons,
+      weekDays: week, offAdjust: off, maxCons: cons,
       patterns: pats, availDow: avail, fixedDow: fixed,
       canClose: close, from: '', to: '', rule: rule, memo: ''
     });
+    // 土日祝も営業する。出られない曜日は個人の事情であって、店の休みではない
     const ALL = [1, 1, 1, 1, 1, 1, 1];
-    const NOSUN = [0, 1, 1, 1, 1, 1, 1];
     ['A', 'B', 'C', 'D', 'E', 'F'].forEach(x =>
-      staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, 9, 5, ['○', '●', '▲'], NOSUN, [], true, '自動')));
-    staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, 13, 4, ['○', '●'], [0, 1, 1, 0, 0, 1, 1], [], true, '自動'));
-    staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, 17, 3, ['●'], [0, 0, 1, 1, 0, 1, 0], [], false, '自動'));
+      staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, 0, 5, ['○', '●', '▲'], ALL, [], true, '自動')));
+    staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, 0, 4, ['○', '●'], [1, 1, 1, 0, 0, 1, 1], [], true, '自動'));
+    staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, 0, 3, ['●'], [0, 0, 1, 1, 0, 1, 1], [], false, '自動'));
     ['1', '2', '3'].forEach(x =>
-      staff.push(mk('派遣 ' + x, '薬剤師', '派遣', 0, 0, 6, ['▲', '●'], NOSUN, [], false, '手動')));
+      staff.push(mk('派遣 ' + x, '薬剤師', '派遣', 0, 0, 6, ['▲', '●'], ALL, [], false, '手動')));
     ['A', 'B', 'C'].forEach(x =>
-      staff.push(mk('事務 ' + x, '事務員', '社員', 5, 9, 5, ['○', '●'], NOSUN, [], true, '自動')));
-    staff.push(mk('事務 D', '事務員', '社員', 4, 13, 4, ['○'], [0, 1, 1, 1, 0, 1, 0], [], false, '自動'));
+      staff.push(mk('事務 ' + x, '事務員', '社員', 5, 0, 5, ['○', '●'], ALL, [], true, '自動')));
+    staff.push(mk('事務 D', '事務員', '社員', 4, 0, 4, ['○'], [1, 1, 1, 1, 0, 1, 0], [], false, '自動'));
 
     return {
+      stores: [{ id: 'st1', name: '本店', short: '本', memo: '' }],
+
+      /**
+       * 店舗営業マスタ。曜日ごとの営業有無・開局時間・必要人数の下限。
+       * 営業日は暦ではなく店が決める。日曜も祝日も営業する店では、
+       * 「祝日だから休み」という決めつけがそのまま人手不足になる。
+       */
+      hours: [
+        { id: 'h0', storeId: 'st1', dow: 0, open: true, from: '09:00', to: '17:00', pharmMin: 2, clerkMin: 1 },
+        { id: 'h1', storeId: 'st1', dow: 1, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h2', storeId: 'st1', dow: 2, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h3', storeId: 'st1', dow: 3, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h4', storeId: 'st1', dow: 4, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h5', storeId: 'st1', dow: 5, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h6', storeId: 'st1', dow: 6, open: true, from: '09:00', to: '17:00', pharmMin: 2, clerkMin: 1 }
+      ],
+
+      /**
+       * 祝日マスタ。暦の祝日（元日・成人の日…）は算出するので持たない。
+       * ここに入れるのは、会社として決める休みと、算出結果の上書き。
+       *
+       * 種別は2つ:
+       *   公休加算 … 店は開ける。公休ノルマに1日加える（国民の祝日はこちら）
+       *   休業     … 店を閉める。全員休みになり、公休ノルマにも加わる
+       *   対象外   … 暦としては祝日だが、公休ノルマに数えない
+       */
+      holidays: [
+        { id: 'hd1', name: '年始休業', kind: '休業', from: '1/1', to: '1/3', memo: '三が日' }
+      ],
+
+      /** 特例日。店ごとの臨時休業・時短。曜日の決まりより優先する */
+      closures: [
+        { id: 'c1', storeId: 'st1', from: '12/29', to: '1/3', kind: '休業',
+          label: '年末年始', from2: '', to2: '' }
+      ],
+
       staff: staff,
       doctors: [1, 2, 3, 4, 5, 6].map(i => ({
         id: 'd' + i, name: '医師 ' + String.fromCharCode(64 + i),
@@ -533,25 +629,34 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       leave: staff.filter(s => s.employment === '社員')
         .map(s => ({ id: 'l' + s.id, staffId: s.id, grantDate: '', grantDays: 10, usedDays: 0 })),
       rules: {
+        // 曜日別の必要人数と休業日は 店舗営業マスタ が正。ここには置かない
         reqPlus: 1,
-        dowMin: [0, 3, 3, 3, 3, 3, 2],   // 曜日別の薬剤師の下限（日〜土）
         earlyN: 1, lateN: 1, midN: 0, clerkEarlyN: 1,
+        countNationalOff: true,   // 国民の祝日を公休ノルマに数えるか
         maxConsDefault: 5, maxOffRun: 3,
         needCloser: true,
         wishMax: 3,
-        closedRanges: '12/29-1/3',
         carryOver: true
       }
     };
   }
 
   let DB = load();
+  /** いま表示している店舗。営業マスタ・特例日・社員の絞り込みに使う */
+  let activeStore = (DB.stores && DB.stores[0]) ? DB.stores[0].id : 'st1';
   function load() {
     try {
       const raw = localStorage.getItem(STORE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && parsed.staff && parsed.rules) return parsed;
+        if (parsed && parsed.staff && parsed.rules) {
+          // 店舗・営業マスタを足す前に保存されたものを引き上げる
+          const seed = seedDb();
+          ['stores', 'hours', 'closures', 'holidays'].forEach(k => {
+            if (!Array.isArray(parsed[k]) || !parsed[k].length) parsed[k] = seed[k];
+          });
+          return parsed;
+        }
       }
     } catch (e) { /* 読めなければ初期値で開く */ }
     return seedDb();
@@ -612,30 +717,60 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     return map;
   }
 
-  /** ルール画面の「休診日」欄（例 12/29-1/3, 8/15）を M-D の集合にする */
-  function closedSet(m) {
-    const out = new Set();
-    String(DB.rules.closedRanges || '').split(/[,、\s]+/).forEach(part => {
-      if (!part) return;
-      const seg = part.split('-');
-      const one = s => {
-        const t = s.split('/');
-        return t.length === 2 ? { m: Number(t[0]), d: Number(t[1]) } : null;
-      };
-      const a = one(seg[0]);
-      if (!a) return;
-      const b = seg.length > 1 ? one(seg[1]) : a;
-      if (!b) return;
-      // 年をまたぐ指定（12/29-1/3）にも対応させるため、日付を順に進める
-      let cm = a.m, cd = a.d;
-      for (let guard = 0; guard < 60; guard++) {
-        if (cm === m) out.add(cd);
-        if (cm === b.m && cd === b.d) break;
-        cd++;
-        if (cd > new Date(2001, cm, 0).getDate()) { cd = 1; cm = cm === 12 ? 1 : cm + 1; }
-      }
-    });
+  /**
+   * M/D 形式の範囲を、対象月に落ちる日だけ呼び出す。
+   * 12/29 → 1/3 のように年をまたぐ指定も受ける。
+   */
+  function eachDayInRange(from, to, m, cb) {
+    const one = t => {
+      const p = String(t || '').split('/');
+      return p.length === 2 ? { m: Number(p[0]), d: Number(p[1]) } : null;
+    };
+    const a = one(from);
+    if (!a) return;
+    const b = one(to) || a;
+    let cm = a.m, cd = a.d;
+    for (let guard = 0; guard < 400; guard++) {
+      if (cm === m) cb(cd);
+      if (cm === b.m && cd === b.d) break;
+      cd++;
+      if (cd > new Date(2001, cm, 0).getDate()) { cd = 1; cm = cm === 12 ? 1 : cm + 1; }
+    }
+  }
+
+  /** 特例日（店舗営業マスタ）を、その月の「日 -> 特例」の対応にする */
+  function closureMap(m) {
+    const out = new Map();
+    storeRows(DB.closures).forEach(c =>
+      eachDayInRange(c.from, c.to, m, d => out.set(d, c)));
     return out;
+  }
+
+  /**
+   * その月の「日 -> 祝日」の対応。暦の祝日に祝日マスタを重ねる。
+   * マスタの行があとから入るので、同じ日なら会社の決めが暦に優先する。
+   */
+  function holidayInfoOf(y, m) {
+    const out = new Map();
+    const natKind = DB.rules.countNationalOff === false ? '対象外' : '公休加算';
+    holidaysOf(y).forEach((name, key) => {
+      const p = key.split('-');
+      if (Number(p[0]) === m) out.set(Number(p[1]), { name: name, kind: natKind });
+    });
+    (DB.holidays || []).forEach(h =>
+      eachDayInRange(h.from, h.to, m, d =>
+        out.set(d, { name: h.name || '会社休', kind: h.kind || '公休加算' })));
+    return out;
+  }
+
+  /** いま選んでいる店舗の行だけを取り出す */
+  function storeRows(list) {
+    return (list || []).filter(r => !r.storeId || r.storeId === activeStore);
+  }
+  /** 曜日の営業設定 */
+  function hoursOf(dow) {
+    return storeRows(DB.hours).find(h => Number(h.dow) === dow)
+      || { open: true, from: '', to: '', pharmMin: 0, clerkMin: 0 };
   }
 
   /* ═══ 行の組み立て ═════════════════════════════════════
@@ -737,18 +872,41 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const isWork = v => v === '◯' || workSyms().indexOf(v) >= 0;
 
   /* ═══ 日付列 ═══════════════════════════════════════════ */
+  /**
+   * 日付列を組む。
+   * 「祝日かどうか」（暦）と「営業するかどうか」（店舗営業マスタ）は別物。
+   * 混同すると、土日祝も開けている店で人手が要る日を休みにしてしまう。
+   */
   function buildDays(y, m) {
     const last = new Date(y, m, 0).getDate();
-    const hol = holidaysOf(y);
-    const closed = closedSet(m);
+    const hol = holidayInfoOf(y, m);
+    const closures = closureMap(m);
     const out = [];
     for (let d = 1; d <= DAY_COLS; d++) {
-      if (d > last) { out.push({ day: d, inMonth: false }); continue; }
-      const name = hol.get(m + '-' + d) || (closed.has(d) ? '休診' : '');
-      out.push({ day: d, inMonth: true, dow: new Date(y, m - 1, d).getDay(), holiday: name });
+      if (d > last) { out.push({ day: d, inMonth: false, open: false, countsOff: false }); continue; }
+      const dow = new Date(y, m - 1, d).getDay();
+      const h = hoursOf(dow);
+      const ex = closures.get(d);
+      const hd = hol.get(d);
+      const closed = (ex && ex.kind === '休業') || (hd && hd.kind === '休業');
+      out.push({
+        day: d, inMonth: true, dow: dow,
+        holiday: hd ? hd.name : '',                 // 暦の事実
+        holidayKind: hd ? hd.kind : '',
+        // 公休ノルマに数える日 = 土日 ＋ 公休加算の祝日 ＋ 社内休日
+        countsOff: dow === 0 || dow === 6 || (!!hd && hd.kind !== '対象外'),
+        open: !!h.open && !closed,                  // 店として開けるか
+        exception: ex ? ex.label : (hd && hd.kind === '休業' ? hd.name : ''),
+        from: (ex && ex.kind === '短縮' && ex.from2) ? ex.from2 : h.from,
+        to:   (ex && ex.kind === '短縮' && ex.to2)   ? ex.to2   : h.to,
+        pharmMin: Number(h.pharmMin) || 0,
+        clerkMin: Number(h.clerkMin) || 0
+      });
     }
     return out;
   }
+
+  /** 日付行・曜日行の色。指定どおり 土/日/祝 の3色。営業の有無とは無関係 */
   function dayClass(info) {
     if (!info.inMonth) return 'outside';
     if (info.holiday) return 'hol';
@@ -756,8 +914,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (info.dow === 6) return 'sat';
     return '';
   }
-  /** 店が閉まっている日（日曜・祝日・休診） */
-  const isClosed = info => !info.inMonth || info.dow === 0 || !!info.holiday;
+  /**
+   * その月の公休ノルマ。土日 ＋ 公休加算の祝日 ＋ 社内休日 の合計。
+   * 手入力ではなく暦から決まる。同じ日が土曜かつ祝日でも1日として数える。
+   */
+  function offQuotaBase() {
+    return days.filter(d => d.inMonth && d.countsOff).length;
+  }
+  /** 個人の公休ノルマ。基準に社員マスタの調整を足す */
+  function offQuotaFor(staff) {
+    return Math.max(0, offQuotaBase() + (Number(staff && staff.offAdjust) || 0));
+  }
+
+  /** 休業日は色ではなく網掛けで示す。祝日の色を潰さないため */
+  const closedClass = info => (info.inMonth && !info.open) ? ' shut' : '';
+  const isClosed = info => !info.inMonth || !info.open;
 
   /* ═══ シフト表の描画 ═══════════════════════════════════ */
   function el(tag, cls, text) {
@@ -775,15 +946,29 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     const bar = $('holidayBar');
     bar.textContent = '';
-    const listed = days.filter(d => d.inMonth && d.holiday);
+    const sat = days.filter(d => d.inMonth && d.dow === 6).length;
+    const sun = days.filter(d => d.inMonth && d.dow === 0).length;
+    const extra = days.filter(d => d.inMonth && d.countsOff && d.dow !== 0 && d.dow !== 6).length;
+    const quota = el('span', 'chip');
+    quota.appendChild(el('b', '', '公休ノルマ ' + offQuotaBase() + ' 日'));
+    quota.appendChild(document.createTextNode(
+      '土' + sat + ' ＋ 日' + sun + ' ＋ 祝・社内休 ' + extra));
+    quota.title = '土日と、公休加算の祝日・社内休日の合計。'
+      + '同じ日が土日かつ祝日でも1日として数えます。';
+    bar.appendChild(quota);
+
+    const listed = days.filter(d => d.inMonth && (d.holiday || !d.open || d.exception));
     if (!listed.length) {
-      bar.appendChild(el('span', '', 'この月に祝日・休診日はありません'));
+      bar.appendChild(el('span', '', 'この月に祝日・特例日はありません'));
     } else {
       listed.forEach(d => {
-        const chip = el('span', 'chip');
-        chip.appendChild(el('i'));
+        const chip = el('span', 'chip' + (d.open ? '' : ' shut'));
+        const mark = el('i');
+        if (!d.holiday) mark.style.background = 'var(--rule)';
+        chip.appendChild(mark);
         chip.appendChild(el('b', '', d.day + '日'));
-        chip.appendChild(document.createTextNode(d.holiday));
+        const words = [d.holiday, d.exception, d.open ? '' : '休業'].filter(Boolean);
+        chip.appendChild(document.createTextNode(words.join('・')));
         bar.appendChild(chip);
       });
     }
@@ -798,12 +983,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   }
 
   function headCells(tag, dayText) {
-    const cells = [];
-    days.forEach(d => {
-      const c = el(tag, 'day ' + dayClass(d), d.inMonth ? dayText(d) : '');
-      cells.push(c);
+    return days.map(d => {
+      const c = el(tag, 'day ' + dayClass(d) + closedClass(d), d.inMonth ? dayText(d) : '');
+      if (d.inMonth) c.title = dayTip(d);
+      return c;
     });
-    return cells;
+  }
+
+  function dayTip(d) {
+    const bits = [d.day + '日（' + DOW[d.dow] + '）'];
+    if (d.holiday) bits.push(d.holiday);
+    if (!d.open) bits.push('休業' + (d.exception ? '：' + d.exception : ''));
+    else {
+      if (d.exception) bits.push(d.exception);
+      if (d.from && d.to) bits.push(d.from + '–' + d.to);
+      bits.push('薬剤師 ' + d.pharmMin + ' 人以上／事務 ' + d.clerkMin + ' 人以上');
+    }
+    return bits.join('\n');
   }
 
   function buildHead() {
@@ -903,7 +1099,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   function staffTip(s) {
     const av = s.availDow.map((v, i) => v ? DOW[i] : '').filter(Boolean).join('');
     return [s.kind + '／' + s.employment,
-            '週' + s.weekDays + '日・月' + s.monthOff + '休',
+            '週' + s.weekDays + '日・公休 ' + offQuotaFor(s) + ' 日',
             '連勤' + s.maxCons + '日まで',
             '出られる曜日: ' + (av || 'なし'),
             '使える記号: ' + s.patterns.join(' '),
@@ -1039,8 +1235,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       for (let c = 0; c < DAY_COLS; c++) {
         if (days[c].inMonth && !isWork(get(row, c)) && get(row, c)) off++;
       }
-      if (s.monthOff && off !== s.monthOff) {
-        msgs.push(s.name + '：休みが ' + off + ' 日（ノルマ ' + s.monthOff + ' 日）');
+      const quota = offQuotaFor(s);
+      if (off !== quota) {
+        msgs.push(s.name + '：休みが ' + off + ' 日（公休ノルマ ' + quota + ' 日）');
       }
       for (let c = 0; c < DAY_COLS; c++) {
         if (!days[c].inMonth || !isWork(get(row, c))) continue;
@@ -1060,8 +1257,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         on++;
         if (row.staff && row.staff.canClose) closer++;
       });
-      const need = r.dowMin[days[c].dow] || 0;
-      if (on < need) msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人（曜日の下限 ' + need + ' 人）');
+      const need = days[c].pharmMin;
+      if (on < need) msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人（営業マスタの下限 ' + need + ' 人）');
       if (r.needCloser && closer === 0) msgs.push(days[c].day + '日：締め作業ができる人がいない');
     }
 
@@ -1112,7 +1309,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       forced.forEach(c => setV(row, c, offSym));
 
       // 残りのノルマを、人が余っている日から順に休みへ回す
-      let need = (s.monthOff || 0) - forced.length - fixedOff.size;
+      let need = offQuotaFor(s) - forced.length - fixedOff.size;
       if (need > 0) {
         const cand = inMonth.filter(c =>
           !fixedOff.has(c) && !forced.includes(c) && !s.fixedDow[days[c].dow]);
@@ -1152,7 +1349,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'kind',       head: '区分',        type: 'select', opts: ['薬剤師', '事務員'] },
       { key: 'employment', head: '雇用',        type: 'select', opts: ['社員', '派遣', 'パート'] },
       { key: 'weekDays',   head: '週勤務日数',  type: 'num', min: 0, max: 7 },
-      { key: 'monthOff',   head: '月間休日数',  type: 'num', min: 0, max: 31 },
+      { key: 'offQuota',   head: '公休ノルマ',  type: 'calc', calc: r => offQuotaFor(r) },
+      { key: 'offAdjust',  head: '公休 調整',   type: 'num', min: -15, max: 15 },
       { key: 'maxCons',    head: '連続出勤上限', type: 'num', min: 1, max: 14 },
       { key: 'patterns',   head: '使える記号',   type: 'checks', from: 'patterns' },
       { key: 'availDow',   head: '出られる曜日', type: 'dow' },
@@ -1183,6 +1381,34 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'desc',  head: '説明',   type: 'text', w: 240 },
       { key: 'order', head: '表示順', type: 'num', min: 1, max: 99 }
     ],
+    store: [
+      { key: 'name',  head: '店舗名', type: 'text', w: 150 },
+      { key: 'short', head: '略称',   type: 'text', w: 70 },
+      { key: 'memo',  head: '備考',   type: 'text', w: 240 }
+    ],
+    hours: [
+      { key: 'dow',      head: '曜日',       type: 'dowName' },
+      { key: 'open',     head: '営業',       type: 'check' },
+      { key: 'from',     head: '開局',       type: 'text', w: 70, ph: 'hh:mm' },
+      { key: 'to',       head: '閉局',       type: 'text', w: 70, ph: 'hh:mm' },
+      { key: 'pharmMin', head: '薬剤師 下限', type: 'num', min: 0, max: 9 },
+      { key: 'clerkMin', head: '事務 下限',   type: 'num', min: 0, max: 9 }
+    ],
+    holiday: [
+      { key: 'name', head: '名称', type: 'text', w: 150 },
+      { key: 'kind', head: '種別', type: 'select', opts: ['公休加算', '休業', '対象外'] },
+      { key: 'from', head: '開始', type: 'text', w: 78, ph: 'M/D' },
+      { key: 'to',   head: '終了', type: 'text', w: 78, ph: 'M/D' },
+      { key: 'memo', head: '備考', type: 'text', w: 200 }
+    ],
+    closure: [
+      { key: 'label', head: '名称', type: 'text', w: 140 },
+      { key: 'kind',  head: '種別', type: 'select', opts: ['休業', '短縮'] },
+      { key: 'from',  head: '開始', type: 'text', w: 78, ph: 'M/D' },
+      { key: 'to',    head: '終了', type: 'text', w: 78, ph: 'M/D' },
+      { key: 'from2', head: '短縮時 開局', type: 'text', w: 88, ph: 'hh:mm' },
+      { key: 'to2',   head: '短縮時 閉局', type: 'text', w: 88, ph: 'hh:mm' }
+    ],
     leave: [
       { key: 'staffId',   head: '氏名',     type: 'staff' },
       { key: 'grantDate', head: '付与日',   type: 'text', w: 110, ph: 'yyyy-mm-dd' },
@@ -1192,7 +1418,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         calc: r => (Number(r.grantDays) || 0) - (Number(r.usedDays) || 0) }
     ]
   };
-  const LIST_OF = { staff: 'staff', doctor: 'doctors', pattern: 'patterns', note: 'notes', leave: 'leave' };
+  const LIST_OF = { store: 'stores', hours: 'hours', closure: 'closures',
+                    holiday: 'holidays',
+                    staff: 'staff', doctor: 'doctors', pattern: 'patterns',
+                    note: 'notes', leave: 'leave' };
 
   function renderMaster(name) {
     const cols = COLS[name];
@@ -1209,19 +1438,25 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     table.appendChild(thead);
 
     const tbody = el('tbody');
-    list.forEach((rec, i) => {
+    // 店舗に属するマスタは、選んでいる店舗のぶんだけ出す
+    const rows = (name === 'hours' || name === 'closure') ? storeRows(list) : list;
+    rows.forEach(rec => {
       const tr = el('tr');
       cols.forEach(col => tr.appendChild(fieldCell(col, rec, name)));
       const dc = el('td');
-      const del = el('button', 'del', '×');
-      del.title = 'この行を削除（二度押し）';
-      arm(del, '削除?', () => {
-        list.splice(i, 1);
-        save(); renderMaster(name);
-        if (name === 'staff') renderMaster('leave');   // 参照先が消えたことを出す
-        refreshAll();
-      });
-      dc.appendChild(del);
+      if (name !== 'hours') {                          // 曜日の行は7本で固定
+        const del = el('button', 'del', '×');
+        del.title = 'この行を削除（二度押し）';
+        arm(del, '削除?', () => {
+          const at = list.indexOf(rec);
+          if (at >= 0) list.splice(at, 1);
+          save(); renderMaster(name);
+          if (name === 'staff') renderMaster('leave');  // 参照先が消えたことを出す
+          if (name === 'store') syncActiveStore();
+          refreshAll();
+        });
+        dc.appendChild(del);
+      }
       tr.appendChild(dc);
       tbody.appendChild(tr);
     });
@@ -1254,6 +1489,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (col.type === 'calc') {
       td.className = 'num';
       td.textContent = String(col.calc(rec));
+      return td;
+    }
+    if (col.type === 'dowName') {
+      const i = Number(rec[col.key]);
+      td.className = 'd' + i;
+      td.style.fontWeight = '700';
+      td.textContent = DOW[i];
       return td;
     }
     if (col.type === 'check') {
@@ -1355,10 +1597,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const BLANK = {
     staff: () => ({
       id: newId('s'), name: '', kind: '薬剤師', employment: '社員',
-      weekDays: 5, monthOff: 9, maxCons: 5, patterns: ['○', '●', '▲'],
+      weekDays: 5, offAdjust: 0, maxCons: 5, patterns: ['○', '●', '▲'],
       availDow: [0, 1, 1, 1, 1, 1, 1], fixedDow: [0, 0, 0, 0, 0, 0, 0],
       canClose: false, from: '', to: '', rule: '自動', memo: ''
     }),
+    store:   () => ({ id: newId('st'), name: '', short: '', memo: '' }),
+    holiday: () => ({ id: newId('hd'), name: '', kind: '公休加算',
+                      from: '', to: '', memo: '' }),
+    closure: () => ({ id: newId('c'), storeId: activeStore, label: '', kind: '休業',
+                      from: '', to: '', from2: '', to2: '' }),
     doctor:  () => ({ id: newId('d'), name: '', short: '', order: DB.doctors.length + 1, memo: '' }),
     pattern: () => ({ id: newId('p'), sym: '', label: '', kind: '出勤',
                       start: '', end: '', work: true, order: DB.patterns.length + 1 }),
@@ -1385,7 +1632,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const RULE_FORM = [
     { title: '必要な人数', items: [
       { key: 'reqPlus', label: '必要数 ＝ 医師数 ＋', type: 'num', unit: '人', min: 0, max: 6 },
-      { key: 'dowMin', label: '曜日別の薬剤師の下限', type: 'dowNum' },
+      { note: '曜日別の下限は 店舗営業マスタ で設定します。' },
       { key: 'earlyN', label: '○早番', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'lateN',  label: '▲遅番', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'midN',   label: '●遅半', type: 'num', unit: '人/日', min: 0, max: 6 },
@@ -1398,10 +1645,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'carryOver', label: '前月末の連勤を引き継ぐ', type: 'check' },
       { note: '個人ごとの上限は社員マスタが優先します。ここは登録が無い人に使う値です。' }
     ]},
-    { title: '休診とスキル', items: [
-      { key: 'closedRanges', label: '休診日', type: 'text', ph: '12/29-1/3, 8/15' },
+    { title: 'スキル', items: [
       { key: 'needCloser', label: '締め作業ができる人を毎日1名以上', type: 'check' },
-      { note: '休診日は祝日と同じ色（#ffd966）で塗り、全員を休みにします。' }
+      { note: '営業日・営業時間・曜日別の必要人数・休業日は 店舗営業マスタ が正です。' }
     ]}
   ];
 
@@ -1414,25 +1660,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       box.items.forEach(it => {
         if (it.note) { b.appendChild(el('p', 'hint', it.note)); return; }
 
-        if (it.type === 'dowNum') {
-          b.appendChild(el('div', 'field')).appendChild(el('span', '', it.label));
-          const g = el('div', 'dowgrid');
-          DOW.forEach((d, i) => {
-            const cell = el('div');
-            cell.appendChild(el('label', 'd' + i, d));
-            const inp = document.createElement('input');
-            inp.type = 'number'; inp.min = 0; inp.max = 9;
-            inp.value = DB.rules.dowMin[i];
-            inp.addEventListener('change', () => {
-              DB.rules.dowMin[i] = Number(inp.value) || 0;
-              save(); refreshAll();
-            });
-            cell.appendChild(inp);
-            g.appendChild(cell);
-          });
-          b.appendChild(g);
-          return;
-        }
         if (it.type === 'check') {
           const line = el('label', 'chkline');
           const cb = document.createElement('input');
@@ -1550,6 +1777,30 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     });
   }
 
+  /** 店舗が消えた／増えたときに、選んでいる店舗を辻褄の合う値へ寄せる */
+  function syncActiveStore() {
+    if (!DB.stores.length) {
+      DB.stores = [{ id: 'st1', name: '本店', short: '本', memo: '' }];
+      save();
+    }
+    if (!DB.stores.some(t => t.id === activeStore)) activeStore = DB.stores[0].id;
+  }
+
+  function renderStoreSelect() {
+    syncActiveStore();
+    const sel2 = $('storeSel');
+    sel2.textContent = '';
+    DB.stores.forEach(t => {
+      const op = document.createElement('option');
+      op.value = t.id;
+      op.textContent = t.name || '(名称未設定)';
+      sel2.appendChild(op);
+    });
+    sel2.value = activeStore;
+    sel2.style.display = DB.stores.length > 1 ? '' : 'none';
+    sel2.previousElementSibling.style.display = DB.stores.length > 1 ? '' : 'none';
+  }
+
   function renderDatalists() {
     const fill = (id, items) => {
       const dl = $(id);
@@ -1566,6 +1817,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   /* ═══ 全体の描き直し ═══════════════════════════════════ */
   function refreshAll() {
+    renderStoreSelect();
     renderPalette();
     renderDatalists();
     renderGrid();
@@ -1625,6 +1877,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   arm($('autoRun'), 'もう一度押すと生成', autoGenerate);
   arm($('clearAll'), 'もう一度押すと消去', () => { values.clear(); renderGrid(); });
   ['yy', 'mm'].forEach(id => $(id).addEventListener('change', renderGrid));
+  $('storeSel').addEventListener('change', () => {
+    activeStore = $('storeSel').value;
+    renderMaster('hours');
+    renderMaster('closure');
+    refreshAll();
+  });
 
   /* ═══ 書き出しと取り込み ═══════════════════════════════
      枠の中では download が効かないので、貼り付けでやり取りする。 */
