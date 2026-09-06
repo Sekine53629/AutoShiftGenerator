@@ -179,6 +179,7 @@ button.primary:hover { filter: brightness(1.12); }
   font-size: 11px; color: var(--ink-soft); line-height: 1.6;
 }
 .more { align-self: center; }
+.themesel { align-self: center; font-size: 12px; padding: 3px 6px; }
 
 /**
  * スタンプ。**群のボタンは動かさない。**
@@ -288,6 +289,16 @@ td.cell.todo {
   font-variant-numeric: tabular-nums; background: var(--band); color: var(--ink);
 }
 #grid thead .nm { font-family: "Yu Gothic UI", "Meiryo", sans-serif; font-weight: 700; }
+/**
+ * 日付の再掲は、見出しの日付行と同じ見え方にする。
+ * 同じ「日付の行」なのに、平日のセルだけ背景が透明で、
+ * 書体と太さも違っていた。
+ */
+#grid .r-repeat > th {
+  font-family: ui-monospace, "Consolas", monospace; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  background: var(--band); color: var(--ink);
+}
 
 .sat { background: var(--sat) !important; color: var(--day-ink) !important; }
 .sun { background: var(--sun) !important; color: var(--day-ink) !important; }
@@ -586,6 +597,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <span class="note" id="quotaNote"></span>
   <span class="storename" id="storeName"></span>
   <span class="note" id="appVer" style="margin-left:auto"></span>
+  <select id="themeSel" class="themesel" title="画面の明るさ">
+    <option value="auto">自動</option>
+    <option value="light">明るい</option>
+    <option value="dark">暗い</option>
+  </select>
   <button id="toolMore" class="more" aria-expanded="true"
     title="下の段をたたむ">操作 ▴</button>
 </header>
@@ -1027,7 +1043,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       // capPharm / capClerk は「同時に何人まで店に入れるか」。
       // 需要ではなく店舗の広さ・作業台の数で決まるので、必要人数の表ではなく
       // 店舗の属性として持つ
-      stores: [{ id: 'st1', name: '本店', short: '本',
+      /**
+       * 店舗。color は画面の差し色。**どの店の表を開いているか**を
+       * 色で分かるようにする。店舗を切り替えて作るとき、
+       * 見出しの文字だけだと取り違える。
+       */
+      stores: [{ id: 'st1', name: '本店', short: '本', color: '#2f6f7e',
                  capPharm: 6, capClerk: 3, memo: '' }],
 
       /**
@@ -3089,6 +3110,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     store: [
       { key: '_pick',    head: '表示',   type: 'pick' },
       { key: 'name',     head: '店舗名', type: 'text', w: 150 },
+      { key: 'color',    head: '色',     type: 'color' },
       { key: 'short',    head: '略称',   type: 'text', w: 70 },
       { key: 'capPharm', head: '薬剤師 収容上限', type: 'num', min: 0, max: 30 },
       { key: 'capClerk', head: '事務 収容上限',   type: 'num', min: 0, max: 30 },
@@ -3392,7 +3414,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       canClose: false, from: '', to: '', rule: RULE_NORMAL, memo: '',
       hq: false, stores: [activeStore]
     }),
-    store:   () => ({ id: newId('st'), name: '', short: '',
+    store:   () => ({ id: newId('st'), name: '', short: '', color: '#2f6f7e',
                       capPharm: 6, capClerk: 3, memo: '' }),
     // 店舗だけ増えても営業日が無ければ表は組めない。7行を一緒に作る
     holiday: () => ({ id: newId('hd'), name: '', kind: '公休加算',
@@ -3757,6 +3779,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /* ═══ 全体の描き直し ═══════════════════════════════════ */
   function refreshAll() {
     clearAnnualCache_();
+    applyStoreColor_();
     renderStoreSelect();
     renderStoreLabels();
     renderPalette();
@@ -4334,6 +4357,67 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    * スマホだと1段目のボタンだけで画面が埋まり、表が見えなくなる。
    * 開け閉めは覚えておく（毎回開き直すのは手間）。
    */
+  /**
+   * 画面の明るさ。自動／明るい／暗い。
+   * 自動は端末の設定に従う（@media prefers-color-scheme）。
+   * 明るい・暗いは data-theme を立てて、そちらを勝たせる。
+   */
+  const THEME_KEY = 'shiftgrid.theme.v1';
+  function applyTheme_(v) {
+    const ok = ['auto', 'light', 'dark'].indexOf(v) >= 0 ? v : 'auto';
+    if (ok === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', ok);
+    $('themeSel').value = ok;
+    try { localStorage.setItem(THEME_KEY, ok); } catch (e) { /* 使えなくてよい */ }
+  }
+  (function initTheme_() {
+    let v = null;
+    try { v = localStorage.getItem(THEME_KEY); } catch (e) { /* 使えなくてよい */ }
+    applyTheme_(v || 'auto');
+  })();
+  $('themeSel').addEventListener('change', () => {
+    applyTheme_($('themeSel').value);
+    applyStoreColor_();     // 淡い側は明暗で作り分けているので、必ず引き直す
+  });
+  // 端末側の設定が変わったときも引き直す（自動のとき）
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => { if ($('themeSel').value === 'auto') applyStoreColor_(); };
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+  }
+
+  /**
+   * 店舗の色を差し色に流す。**どの店の表を開いているか**を色で分かるようにする。
+   * 店舗を切り替えて作るとき、見出しの文字だけだと取り違える。
+   *
+   * 帳票の色（土日祝）は取り決めなので触らない。変えると表の意味が変わる。
+   */
+  function applyStoreColor_() {
+    const st = DB.stores.find(t => t.id === activeStore) || {};
+    const root = document.documentElement.style;
+    if (!/^#[0-9a-f]{6}$/i.test(st.color || '')) {
+      root.removeProperty('--accent');
+      root.removeProperty('--accent-soft');
+      root.removeProperty('--accent-ink');
+      return;
+    }
+    const r = parseInt(st.color.slice(1, 3), 16);
+    const g = parseInt(st.color.slice(3, 5), 16);
+    const b = parseInt(st.color.slice(5, 7), 16);
+    root.setProperty('--accent', st.color);
+    // 明るさで文字色を決める。濃い差し色に濃い文字を載せると読めない
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    root.setProperty('--accent-ink', lum > 0.6 ? '#111418' : '#ffffff');
+    // 淡い側は、暗い画面では暗く、明るい画面では明るく寄せる
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+      || (!document.documentElement.getAttribute('data-theme')
+          && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const mix = (c, t) => Math.round(c + (t - c) * 0.82);
+    root.setProperty('--accent-soft', dark
+      ? 'rgb(' + mix(r, 0) + ',' + mix(g, 0) + ',' + mix(b, 0) + ')'
+      : 'rgb(' + mix(r, 255) + ',' + mix(g, 255) + ',' + mix(b, 255) + ')');
+  }
+
   const MORE_KEY = 'shiftgrid.toolbar2.v1';
   function syncMore_(open) {
     $('toolbar2').classList.toggle('hide', !open);
