@@ -1998,6 +1998,7 @@ function fakeSs() {
     getLastColumn: () => rows.reduce((n, r) => Math.max(n, r.length), 4),
     setFrozenRows: () => sheet,
     hideSheet: () => sheet,
+    protect: () => ({ setDescription: () => ({ setWarningOnly: () => {} }) }),
     getRange: (r, c, nr, nc) => ({
       getValues: () => {
         const out = [];
@@ -2130,11 +2131,15 @@ test('短くなったとき、古い断片が後ろに残らない', function ()
   });
 });
 
-test('保存データのシートは隠す', function () {
-  // 人が触るシートではない。行を消されると保存が丸ごと壊れる
+test('保存データのシートは隠し、手書きには警告を出す', function () {
+  // 非表示は事故を防ぐだけで、隠すことにはならない
+  //（「表示 → 非表示のシート」で誰でも開ける）。行を消されると保存が壊れる
   const f = sandbox.storeSheet_.toString();
   assert.ok(/hideSheet\(\)/.test(f), '隠していない');
   assert.ok(/CONFIG\.SHEET_DATA/.test(f), 'シート名を直書きしている');
+  assert.ok(/setWarningOnly\(true\)/.test(f), '手書きへの警告が無い');
+  // 完全な保護にすると、実行ユーザー本人が書けなくなる
+  assert.ok(!/setWarningOnly\(false\)/.test(f), '保護が強すぎる');
 });
 
 test('保存の単位は 店舗×年月。別の月とはぶつからない', function () {

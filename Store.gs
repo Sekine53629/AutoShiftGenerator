@@ -70,11 +70,33 @@ function storeSheet_() {
     let sheet = ss.getSheetByName(CONFIG.SHEET_DATA);
     if (!sheet) {
       sheet = ss.insertSheet(CONFIG.SHEET_DATA);
-      sheet.getRange(1, 1, 1, 4)
-        .setValues([['名前', '版', '更新時刻', '更新者']])
+      sheet.getRange(1, 1, 1, 5)
+        .setValues([['名前', '版', '更新時刻', '更新者',
+                     '⚠ アプリが使う保存データです。手で書き換えないでください']])
         .setFontWeight('bold');
       sheet.setFrozenRows(1);
       sheet.hideSheet();
+      /**
+       * 手で書き換えようとしたら警告を出す。
+       *
+       * **これは事故を防ぐだけで、隠すことにはならない。**
+       * 非表示のシートは「表示 → 非表示のシート」で誰でも開ける。
+       * スプレッドシートを開ける人からは中身が読める。
+       * 読ませたくない相手には、そもそもスプレッドシートを共有しないこと
+       * （ウェブアプリを「自分として実行」でデプロイすれば、
+       * 利用者にスプレッドシートの権限は要らない）。
+       *
+       * 警告どまりにするのは、スクリプトからの書き込みを止めないため。
+       * 完全な保護にすると、実行ユーザー本人が書けなくなる。
+       */
+      try {
+        sheet.protect()
+          .setDescription('アプリの保存データ')
+          .setWarningOnly(true);
+      } catch (ignored) {
+        // 保護を付けられない環境でも保存自体は動かす
+        console.error(`[${MODULE_STORE}.storeSheet_] 保護を付けられませんでした`);
+      }
     }
     return sheet;
   } catch (error) {
