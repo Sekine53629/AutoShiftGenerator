@@ -67,7 +67,7 @@ const FN = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeIn
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays', 'normDow_',
   'syncDemand_', 'migrateDb_', 'inService', 'belongsHere', 'buildRows', 'needOf_', 'offQuotaBase',
   'offQuotaFor', 'annualQuotaOf', 'clearAnnualCache_', 'staffTip', 'dayClass',
-  'dayTip', 'headCells', 'el', 'fillCell_', 'buildBody', 'clerkCapOf_'];
+  'dayTip', 'headCells', 'el', 'naDay_', 'fillCell_', 'buildBody', 'clerkCapOf_'];
 
 // 医師名欄の行数まわり（clamp_ / DOC_ROWS_* / docRowCount_ / busyDocN_）を
 // HTML から丸ごと取る。seedDb と migrateDb_ がこれを参照する。
@@ -135,6 +135,77 @@ check(kinds.doctor && kinds.doctor[0] === '医A', '医師名欄が書けてい�
 check(kinds.staff && kinds.staff[0] === '○' && kinds.staff[1] === '公休',
   'スタッフ欄が書けている', JSON.stringify(kinds.staff));
 check(kinds.note && kinds.note[0] === '銀行', '備考行が書けている', JSON.stringify(kinds.note));
+
+console.log('');
+console.log('■ 出られない曜日が灰色になるか（実物と同じ扱い）');
+
+// 実物のシフト表は、出られない曜日のセルを #d0cece で潰している。
+// マスタには入っているのに表からは読み取れず、空欄と見分けが付かなかった。
+const naRun = new Function('document', [
+  'const DAY_COLS=31;', DOC_BLOCK,
+  'const DOW=["日","月","火","水","木","金","土"];',
+  RULE, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
+  src.slice(src.indexOf('const AGG_COLS'), src.indexOf('];', src.indexOf('const AGG_COLS')) + 2),
+  L('  const aggHead_ ='),
+  FN.map(grab).join('\n'),
+  L('  const isInput ='), upto('const dowNames_ ='),
+  L('  const closedClass ='), L('  const isClosed ='), L('  const byOrder ='),
+  'let DB=migrateDb_(seedDb()); const activeStore="st1";',
+  'const workSyms=()=>DB.patterns.filter(p=>p.work).map(p=>p.sym);',
+  'const isWork=v=>v==="◯"||workSyms().indexOf(v)>=0;',
+  'const pubOffSyms=()=>DB.patterns.filter(p=>!p.work&&p.pubOff).map(p=>p.sym);',
+  'const isPubOff=v=>!!v&&pubOffSyms().indexOf(v)>=0;',
+  'const values=new Map(); let curYm="2026-10";',
+  'let curYear_=2026, curMonth_=10;',
+  upto('const cellKey ='),
+  'const get=(r,c)=>values.get(cellKey(r,c))||"";',
+  'const setV=(r,c,v)=>{if(v)values.set(cellKey(r,c),v);else values.delete(cellKey(r,c));};',
+  'const docCount=()=>0; const paintRow=()=>{};',
+  'let days=buildDays(2026,10);',
+  // 1人だけ 月火金土 しか出られなくする（実物の「(月火金土18時)」と同じ形）
+  'DB.staff.forEach((s,i)=>{ s.availDow = i===0 ? [0,1,1,0,0,1,1] : [1,1,1,1,1,1,1]; });',
+  'let ROWS=buildRows(2026,10);',
+  'const body = buildBody();',
+  'return { body, ROWS, days, DB };'
+].join('\n'))(document);
+
+function cellsOf(body, rowIndex) {
+  const tr = body.children.find(t =>
+    t.children.some(td => td.dataset && String(td.dataset.row) === String(rowIndex)));
+  if (!tr) return [];
+  return tr.children.filter(td => td.dataset && td.dataset.col !== undefined);
+}
+
+const limited = naRun.ROWS.find(r => r.kind === 'staff');
+const free = naRun.ROWS.filter(r => r.kind === 'staff')[1];
+const limCells = cellsOf(naRun.body, limited.index);
+const freeCells = cellsOf(naRun.body, free.index);
+
+let wrongOn = 0, wrongOff = 0;
+limCells.forEach((td, c) => {
+  const info = naRun.days[c];
+  if (!info || !info.inMonth) return;
+  const na = String(td.className).split(/\s+/).indexOf('na') >= 0;
+  const canWork = !!limited.staff.availDow[info.dow];
+  if (canWork && na) wrongOn++;          // 出られる日に灰色が付いた
+  if (!canWork && !na) wrongOff++;       // 出られない日に灰色が付かない
+});
+check(wrongOn === 0, '出られる曜日に灰色を付けていない', '誤 ' + wrongOn + ' 件');
+check(wrongOff === 0, '出られない曜日をすべて灰色にした', '漏れ ' + wrongOff + ' 件');
+
+const anyFree = freeCells.some(td => String(td.className).split(/\s+/).indexOf('na') >= 0);
+check(!anyFree, '全曜日出られる人には灰色を付けない');
+
+const naCount = limCells.filter(td =>
+  String(td.className).split(/\s+/).indexOf('na') >= 0).length;
+console.log('  月火金土のみ出勤の人: 灰色 ' + naCount + ' 日 / 31 日中');
+check(naCount > 0, '灰色が1つも付いていない');
+
+// 医師欄・備考行には付けない（出られる曜日は社員だけの設定）
+const docRow = naRun.ROWS.find(r => r.kind === 'doctor');
+const docNa = cellsOf(naRun.body, docRow.index).some(td =>
+  String(td.className).split(/\s+/).indexOf('na') >= 0);
+check(!docNa, '医師欄には灰色を付けない');
 
 console.log('');
 console.log('■ document から探さずに書けているか（未挿入でも効くこと）');

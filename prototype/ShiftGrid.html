@@ -35,6 +35,7 @@
   --band:        #e7ebef;
   --agg:         #f2efe6;
   --outside:     #eeeeec;
+  --na:          #d0cece;   /* 出られない曜日。実物と同じ灰 */
   --accent:      #2f6f7e;
   --accent-ink:  #ffffff;
   --accent-soft: #dceaed;
@@ -59,6 +60,7 @@
     --ground: #16191d; --surface: #1e2227; --ink: #e6e9ec; --ink-soft: #a3acb6;
     --ink-faint: #77818c; --rule: #4a535d; --rule-soft: #333a42; --band: #272c33;
     --agg: #2a2823; --outside: #212429; --accent: #6fb5c4; --accent-ink: #10262b;
+    --na: #3a3a38;
     --accent-soft: #23383d; --danger: #f2857c; --warn: #f0c86a; --warn-bg: #33301f;
   }
 }
@@ -233,6 +235,12 @@ td.cell.todo {
 .sun { background: var(--sun) !important; color: var(--day-ink) !important; }
 .hol { background: var(--hol) !important; color: var(--day-ink) !important; }
 .outside { background: var(--outside) !important; color: var(--ink-faint) !important; }
+/**
+ * 出られない曜日。実物のシフト表も同じ灰色（#d0cece）で潰している。
+ * 押せなくはしない。管理者が事情を承知で入れることはあるし、
+ * 入れればルール違反として表の下に出る。
+ */
+.na { background: var(--na) !important; }
 /* 休業日。祝日の色は暦の事実なので潰さず、網掛けを重ねる */
 .shut {
   background-image: repeating-linear-gradient(
@@ -1570,6 +1578,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         const cell = el('td', 'day cell');
         cell.dataset.row = row.index;
         cell.dataset.col = c;
+        // 出られない曜日は灰色にする。マスタには入っているのに表からは
+        // 読み取れず、空欄と見分けが付かなかった（実物は灰色で潰している）
+        if (naDay_(row, c)) cell.classList.add('na');
         cell.appendChild(el('span', 'v'));
         fillCell_(cell, row, c);        // 組み立て時に中身まで書く
         tr.appendChild(cell);
@@ -1651,6 +1662,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    * 空のまま出ていた（集計は values から出るので正しく動き、
    * 「データは戻っているのに表示だけ変わらない」状態になっていた）。
    */
+  /**
+   * その人がその日に出られないか。
+   * 実物のシフト表は、出られない曜日のセルを灰色（#d0cece）で潰している。
+   * 「空欄」と「そもそも出られない」を見分けられるようにするため。
+   */
+  function naDay_(row, c) {
+    if (row.kind !== 'staff' || !row.staff || !days[c] || !days[c].inMonth) return false;
+    const av = row.staff.availDow;
+    return !!av && !av[days[c].dow];
+  }
+
   function fillCell_(cell, row, c) {
     const t = get(row, c);
     const inp = cell.querySelector('input');
@@ -1660,7 +1682,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     v.textContent = t;
     v.classList.toggle('small', t.length > 1);
     // 記号が無い日は要判断（公休枠を超えたぶん）。見て分かるようにする
-    const todo = row.kind === 'staff' && !t && days[c].inMonth;
+    cell.classList.toggle('na', naDay_(row, c));
+    const todo = row.kind === 'staff' && !t && days[c].inMonth && !naDay_(row, c);
     cell.classList.toggle('todo', todo);
     cell.title = todo
       ? '公休枠を超えるため空けてあります。有休・夏休を割り当ててください' : '';
