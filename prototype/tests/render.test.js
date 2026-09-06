@@ -95,7 +95,7 @@ const run = new Function('document', [
   'let ROWS=buildRows(2026,10);',
   // 医師・スタッフ・備考に値を入れてから組み立てる
   'ROWS.forEach(r=>{',
-  '  if(r.kind==="doctor") setV(r,0,"山田");',
+  '  if(r.kind==="doctor") setV(r,0,"医A");',
   '  if(r.kind==="staff"){ setV(r,0,"○"); setV(r,1,"公休"); }',
   '  if(r.kind==="note") setV(r,0,"銀行"); });',
   'const body = buildBody();',
@@ -131,7 +131,7 @@ Object.keys(kinds).forEach(k => {
   const got = kinds[k];
   console.log('  ' + k.padEnd(8) + JSON.stringify(got));
 });
-check(kinds.doctor && kinds.doctor[0] === '山田', '医師名欄が書けている', JSON.stringify(kinds.doctor));
+check(kinds.doctor && kinds.doctor[0] === '医A', '医師名欄が書けている', JSON.stringify(kinds.doctor));
 check(kinds.staff && kinds.staff[0] === '○' && kinds.staff[1] === '公休',
   'スタッフ欄が書けている', JSON.stringify(kinds.staff));
 check(kinds.note && kinds.note[0] === '銀行', '備考行が書けている', JSON.stringify(kinds.note));
