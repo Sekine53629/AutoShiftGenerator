@@ -209,16 +209,53 @@ ok('公休の日は記号を置き換えない', () => {
   });
 });
 
-console.log('■ 開局を覆う（minOnDuty）');
+console.log('■ 早番は開局の1人だけ（遅半のほうが優先）');
 
-ok('minOnDuty 2 なら、開局を覆えるだけ早番を置く', () => {
+// 早番に要るのは開局を覆う1人だけ。それ以上増やす理由が無い。
+// 実物も R8.8月で ○40 / ●47 / ▲120 と、早番がいちばん少ない。
+//
+// 以前は minOnDuty（同時にいてほしい薬剤師）をそのまま早番の人数にしていた。
+// 既定の2人が毎日早番に入り、遅半より多くなっていた。
+
+ok('minOnDuty を上げても、早番は1人のまま', () => {
   const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
                  { syms: ALL }, { syms: ALL }],
-    { earlyN: 1, midN: 1, minOnDuty: 2 }, 20);
+    { earlyN: 1, midN: 1, minOnDuty: 3 }, 20);
   r.byDay.forEach((d, c) => {
-    assert.strictEqual(d['○'] || 0, 2,
-      (c + 1) + '日目の早番が ' + (d['○'] || 0) + ' 人。開局が1人になる');
+    assert.strictEqual(d['○'] || 0, 1,
+      (c + 1) + '日目の早番が ' + (d['○'] || 0) + ' 人。minOnDuty を人数にしている');
   });
+});
+
+ok('人が足りないときに削られるのは早番。遅半は残る', () => {
+  // 3人しか出ない日。早番1・遅半1・遅番1 に落ち着く。
+  // earlyN を増やしても、増えたぶんから先に削れる
+  const off = [[], [], [], [0], [0]];
+  const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }],
+    { earlyN: 3, midN: 1, minOnDuty: 2 }, 10, off);
+  assert.strictEqual(r.byDay[0]['○'] || 0, 1, '早番が削られていない');
+  assert.strictEqual(r.byDay[0]['●'] || 0, 1, '遅半が削られている');
+  assert.strictEqual(r.byDay[0]['▲'] || 0, 1, '閉局まで残る人がいない');
+});
+
+ok('早番は0人にしない（開局に誰もいない日を作らない）', () => {
+  const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }],
+    { earlyN: 0, midN: 3, minOnDuty: 1 }, 20);
+  r.byDay.forEach((d, c) => {
+    assert.ok((d['○'] || 0) >= 1, (c + 1) + '日目に早番がいない');
+  });
+});
+
+ok('遅半を増やすと、早番ではなく遅番から回る', () => {
+  const a = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }], { earlyN: 1, midN: 1 }, 20);
+  const b = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }], { earlyN: 1, midN: 2 }, 20);
+  assert.strictEqual(b.byDay[0]['○'] || 0, a.byDay[0]['○'] || 0, '早番が動いた');
+  assert.strictEqual((b.byDay[0]['●'] || 0) - (a.byDay[0]['●'] || 0), 1);
+  assert.strictEqual((a.byDay[0]['▲'] || 0) - (b.byDay[0]['▲'] || 0), 1);
 });
 
 ok('minOnDuty 1 なら早番は1人のまま', () => {
@@ -240,6 +277,8 @@ ok('出勤が少ない日でも、締めの1人は必ず残す', () => {
 });
 
 ok('早番の均等さは保たれる', () => {
+  // 開局の1人は遅半より先に取る。遅半に取られた残りから選ぶと、
+  // 早番が特定の人に寄る（実測で差が2に開いた）
   const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
                  { syms: ALL }, { syms: ALL }],
     { earlyN: 1, midN: 1, minOnDuty: 2 }, 20);

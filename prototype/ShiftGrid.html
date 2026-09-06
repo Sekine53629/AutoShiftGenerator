@@ -2815,6 +2815,22 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (work[1]) need[work[1]] = Math.max(0, Number(r.midN) || 0);
     const fill = work[work.length - 1];       // 余った人はここ（遅番）
 
+    /**
+     * 当てる順。**遅半が先、早番が後。**
+     *
+     * 早番に要るのは開局を覆う1人だけで、それ以上増やす理由が無い。
+     * 実物も R8.8月で ○40 / ●47 / ▲120 と、早番がいちばん少ない。
+     *
+     * 以前は minOnDuty（同時にいてほしい薬剤師）をそのまま早番の人数にしていた。
+     * 既定の2人が毎日早番に入り、遅半より多くなっていた。minOnDuty は
+     * 「その時間帯に何人いてほしいか」であって、「何人を早番にするか」ではない。
+     * 遅半は開局の30分後に来るので、早番を積み増さなくても日中は覆える。
+     */
+    const order = work.slice(0, -1).reverse();
+
+    /** 早番に必ず1人は残す。開局に誰もいない日は作れない（薬剤師のみ） */
+    const EARLY_FLOOR = 1;
+
     const can_ = (row, sym) => (row.staff.patterns || []).indexOf(sym) >= 0;
     const tally = {};        // 'index|記号' → その月の回数
     const last = {};         // 'index|記号' → 最後に当てた日（散らすため）
@@ -2859,24 +2875,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
           .forEach(row => { const v = get(row, c); already[v] = (already[v] || 0) + 1; });
 
         const want = Object.assign({}, need);
+        let coveredOpen = false;   // 遅半だけで開局を覆えるか（薬剤師の枝で決まる）
         if (kind === 'clerk' && r.clerkEarlyN !== undefined) {
           want[work[0]] = Math.max(0, Number(r.clerkEarlyN) || 0);
         } else if (kind === 'pharm') {
           /**
-           * 開局直後は早番しかいない。早番が1人だとその時間帯が1人になる。
-           * 出勤が足りているなら、開局を覆えるだけの早番を置く。
+           * 開局を覆う早番。**1人でよい。**
            *
-           * 実物の 早番10:00〜19:00 / 遅半10:30〜19:30 のように、
-           * 2番目の記号が開局に間に合うなら早番＋遅半で覆えるので、
-           * 早番だけで揃える必要はない。
+           * 遅半が開局に間に合う時間割なら、それも要らない
+           * （実物は 早番10:00 / 遅半10:30 で、開局10:00 に間に合わない）。
            */
           const openAt = minOf_(days[c].from);
           const midAt = work[1]
             ? minOf_((DB.patterns.find(x => x.sym === work[1]) || {}).start) : null;
-          const covered = midAt !== null && openAt !== null && midAt <= openAt;
-          const needOpen = Math.max(1, Number(r.minOnDuty) || 1);
-          if (!covered) {
-            want[work[0]] = Math.max(want[work[0]] || 0, Math.min(needOpen, free.length));
+          coveredOpen = midAt !== null && openAt !== null && midAt <= openAt;
+          if (!coveredOpen) {
+            want[work[0]] = Math.max(want[work[0]] || 0,
+              Math.min(EARLY_FLOOR, free.length));
           }
 
           /**
@@ -2884,18 +2899,27 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
            * 早番と遅半で全員を使い切ると遅番が0人になり、遅半が上がったあとの
            * 時間帯が無人になる。30分でも締め作業ができない日は作れない。
            *
-           * 減らす順は後ろから。遅半を先に削り、それでも足りなければ早番を削る。
-           * 早番を先に削ると開局が薄くなり、直したい相手が入れ替わる。
+           * **削る順は当てる順の逆＝早番から。** 早番は優先度がいちばん低い。
+           * ただし開局の1人（EARLY_FLOOR）は最後まで残す。
+           * そこまで削っても入らなければ、遅半を削る。
+           * それでも入らない日は、開局か閉局のどちらかを諦めるしかない。
+           * 閉局を採る（締め作業は代わりが利かない）。表の下に薄い時間帯として出る。
            */
           if (free.filter(row => can_(row, fill)).length > 0) {
             const room = Math.max(0, free.length - 1);
-            const others = work.filter(x => x !== fill);
-            let sum = others.reduce((t, x) => t + (want[x] || 0), 0);
-            for (let i = others.length - 1; i >= 0 && sum > room; i--) {
-              const cut = Math.min(want[others[i]] || 0, sum - room);
-              want[others[i]] = (want[others[i]] || 0) - cut;
-              sum -= cut;
-            }
+            const floorOf = x => (x === work[0] && !coveredOpen) ? EARLY_FLOOR : 0;
+            const sum = () => order.reduce((t, x) => t + (want[x] || 0), 0);
+            const trim = keepFloor => {
+              order.slice().reverse().forEach(x => {
+                const over = sum() - room;
+                if (over <= 0) return;
+                const floor = keepFloor ? floorOf(x) : 0;
+                const cut = Math.min(Math.max(0, (want[x] || 0) - floor), over);
+                want[x] = (want[x] || 0) - cut;
+              });
+            };
+            trim(true);      // まず床を守って削る
+            trim(false);     // それでも入らなければ床も割る
           }
         }
         const left = new Set(free);
@@ -2920,9 +2944,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
             left.delete(row);
           });
 
-        // 2. 早番・遅半の残りを埋める
-        work.forEach(sym => {
-          let n2 = (want[sym] || 0) - (already[sym] || 0);
+        // 2. 定員を埋める。
+        //
+        //    開局の1人だけ先に取る。**それ以外は遅半が先、早番が後。**
+        //    開局の1人を遅半のあとに回すと、遅半に取られた残りから選ぶことになり、
+        //    早番が特定の人に寄る（実測で差が2に開いた）。
+        const take = (sym, n2) => {
           if (n2 <= 0) return;
           Array.from(left)
             .filter(row => can_(row, sym))
@@ -2933,7 +2960,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
               left.delete(row);
               n2--;
             });
-        });
+        };
+        const early = work[0];
+        const opener = coveredOpen ? 0
+          : Math.min(EARLY_FLOOR, (want[early] || 0) - (already[early] || 0));
+        take(early, opener);
+        order.forEach(sym => take(sym,
+          (want[sym] || 0) - (already[sym] || 0) - (sym === early ? opener : 0)));
 
         // 3. 残りは遅番
         left.forEach(row => {
