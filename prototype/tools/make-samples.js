@@ -160,120 +160,121 @@ Object.keys(PATTERNS).forEach(key => {
   fs.writeFileSync(path.join(OUT, key + '.json'), JSON.stringify(body, null, 2) + '\n', 'utf8');
 });
 
+
 // ─────────────────────────────────────────────────────────
-// 医師の出勤表
+// 医師の出勤表 — 10 パターン
+//
+// 現場の実態:
+//   月火金 … 5診 が多い
+//   日     … 3診（確定）
+//   その他 … 4診 の場合がある
+// これを基本に、混雑・閑散・偏りなどを振ったものを揃える。
+// 氏名は架空。実在の医師は書かない。
 // ─────────────────────────────────────────────────────────
+/** その月の第 n 月曜（ハッピーマンデーの祝日を出すのに使う） */
 function nthMonday(y, m, n) {
   return 1 + ((8 - new Date(y, m - 1, 1).getDay()) % 7) + (n - 1) * 7;
 }
 
-function makeDoctorShift(y, m, slots, holidays) {
-  const last = new Date(y, m, 0).getDate();
-  const shift = {};
-  slots.forEach(s => { shift[s.key] = {}; });
-  for (let day = 1; day <= last; day++) {
-    const d = new Date(y, m - 1, day).getDay();
-    const nth = Math.floor((day - 1) / 7) + 1;
-    slots.forEach(s => {
-      const name = s.rule({ dow: d, nth: nth, day: day, holiday: !!holidays[day] });
-      if (name) shift[s.key][day] = name;
-    });
+const DOC_NAMES = ['山田', '佐藤', '鈴木', '高橋', '田中', '伊藤', '渡辺', '中村', '小林', '加藤'];
+
+/**
+ * その曜日に出る医師の顔ぶれ。曜日ごとに顔ぶれをずらして、
+ * 「同じ曜日には同じ先生が来る」という実態に近づける。
+ */
+function roster(dow, n, shift) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(DOC_NAMES[(dow * 2 + i + (shift || 0)) % DOC_NAMES.length]);
   }
-  return shift;
+  return out;
 }
 
-const DOC_SETS = {};
+// 曜日ごとの診療数（日 月 火 水 木 金 土）
+const DOC_PATTERNS = [
+  { file: 'doctor-01-standard', title: '標準',
+    aim: '月火金5診・日3診・その他4診。いちばんよくある形',
+    counts: [3, 5, 5, 4, 4, 5, 4] },
+  { file: 'doctor-02-busy', title: '混雑',
+    aim: '平日はすべて5診。人員が足りるかを見る',
+    counts: [3, 5, 5, 5, 5, 5, 4] },
+  { file: 'doctor-03-light', title: '閑散',
+    aim: '全体に1診少ない。人が余る側の挙動を見る',
+    counts: [2, 4, 4, 3, 3, 4, 3] },
+  { file: 'doctor-04-valley', title: '中日が薄い',
+    aim: '月火金5診に対し水木は3診。週の真ん中が谷になる形',
+    counts: [3, 5, 5, 3, 3, 5, 4] },
+  { file: 'doctor-05-late-week', title: '週後半厚め',
+    aim: '木金土が厚い。週の後ろに寄せたときの連勤を見る',
+    counts: [3, 4, 4, 4, 5, 5, 5] },
+  { file: 'doctor-06-sat-heavy', title: '土曜厚め',
+    aim: '土曜5診。休日診療に人を回せるかを見る',
+    counts: [3, 5, 5, 4, 4, 5, 5] },
+  { file: 'doctor-07-holiday-closed', title: '祝日は休診',
+    aim: '標準と同じだが祝日だけ医師0。薬局は開くので曜日下限だけで人を置く',
+    counts: [3, 5, 5, 4, 4, 5, 4], holidayCount: 0 },
+  { file: 'doctor-08-holiday-open', title: '祝日も通常どおり',
+    aim: '祝日でも曜日どおりの診療数。休みが減らない月を見る',
+    counts: [3, 5, 5, 4, 4, 5, 4], holidaySameAsDow: true },
+  { file: 'doctor-09-rotating', title: '隔週で顔ぶれが替わる',
+    aim: '第1・3週と第2・4週で担当医が入れ替わる。診療数は標準のまま',
+    counts: [3, 5, 5, 4, 4, 5, 4], rotate: true },
+  { file: 'doctor-10-variable', title: '週ごとに変動',
+    aim: '週によって±1動く。読みにくい月を見る',
+    counts: [3, 5, 5, 4, 4, 5, 4], vary: true },
+];
 
-// 医院が日曜・祝日は休診（薬局は開けるので、その日は医師0名）
-DOC_SETS['doctor-shift-2026-10'] = {
-  y: 2026, m: 10, title: '日曜・祝日は休診',
-  aim: '薬局は開くが医師は0名。曜日下限だけで人を置くことになる日が出る',
-  slots: [
-    { key: 'doc1', rule: d => (d.dow !== 0 && !d.holiday ? '山田' : '') },
-    { key: 'doc2', rule: d => ([1, 2, 3, 4, 5].indexOf(d.dow) >= 0 && !d.holiday ? '佐藤' : '') },
-    { key: 'doc3', rule: d => (!d.holiday && [1, 3, 5].indexOf(d.dow) >= 0 ? '鈴木'
-                             : !d.holiday && [2, 4].indexOf(d.dow) >= 0 ? '伊藤' : '') },
-    { key: 'doc4', rule: d => (d.holiday ? ''
-                             : d.dow === 1 || d.dow === 4 ? '高橋'
-                             : d.dow === 3 && (d.nth === 2 || d.nth === 4) ? '田中'
-                             : d.dow === 5 ? '中村'
-                             : d.dow === 2 && (d.nth === 1 || d.nth === 3) ? '加藤' : '') },
-    { key: 'doc5', rule: d => (d.holiday ? ''
-                             : d.dow === 2 && (d.nth === 1 || d.nth === 3) ? '小林'
-                             : d.dow === 5 && d.nth === 2 ? '中村'
-                             : d.dow === 6 ? '渡辺' : '') }
-  ]
-};
+const DOC_Y = 2026, DOC_M = 10;
+/** 医師名欄の行数。ここを超える診療数は表に入らない（LAYOUT.DOC_BLOCK_ROWS と同じ） */
+const DOC_ROWS = 5;
 
-// 日曜も診療する（土日祝も営業する店に合わせた形）
-DOC_SETS['doctor-shift-2026-10-sunday'] = {
-  y: 2026, m: 10, title: '日曜・祝日も診療',
-  aim: '休診日が無い。医師数がそのまま必要人数に効く',
-  slots: [
-    { key: 'doc1', rule: () => '山田' },
-    { key: 'doc2', rule: d => (d.dow === 0 || d.dow === 6 ? '' : '佐藤') },
-    { key: 'doc3', rule: d => ([1, 3, 5].indexOf(d.dow) >= 0 ? '鈴木'
-                             : [2, 4].indexOf(d.dow) >= 0 ? '伊藤'
-                             : d.dow === 0 ? '渡辺' : '') },
-    { key: 'doc4', rule: d => (d.dow === 1 || d.dow === 4 ? '高橋'
-                             : d.dow === 3 ? '田中'
-                             : d.dow === 5 ? '中村' : '') },
-    { key: 'doc5', rule: d => (d.dow === 2 && d.nth % 2 === 1 ? '小林'
-                             : d.dow === 6 ? '渡辺'
-                             : d.dow === 5 && d.nth === 2 ? '加藤' : '') }
-  ]
-};
+DOC_PATTERNS.forEach(p => {
+  const last = new Date(DOC_Y, DOC_M, 0).getDate();
+  const hol = {};
+  hol[nthMonday(DOC_Y, 10, 2)] = 'スポーツの日';
 
-// 混雑月。5診の日を多くして「5診出勤」と過不足を強く動かす
-DOC_SETS['doctor-shift-2026-11-busy'] = {
-  y: 2026, m: 11, title: '混雑月（5診が多い）',
-  aim: '医師5名の日を増やし、必要人数が跳ね上がったときの過不足を見る',
-  slots: [
-    { key: 'doc1', rule: d => (d.dow !== 0 ? '山田' : '') },
-    { key: 'doc2', rule: d => (d.dow !== 0 ? '佐藤' : '') },
-    { key: 'doc3', rule: d => (d.dow !== 0 && d.dow !== 6 ? '鈴木' : '') },
-    { key: 'doc4', rule: d => (d.dow !== 0 && d.dow !== 6 ? '高橋' : '') },
-    { key: 'doc5', rule: d => ([1, 2, 3, 4, 5].indexOf(d.dow) >= 0 ? '小林'
-                             : d.dow === 6 ? '渡辺' : '') }
-  ]
-};
+  const shift = {};
+  for (let i = 1; i <= 5; i++) shift['doc' + i] = {};
+  const counts = [];
 
-Object.keys(DOC_SETS).forEach(key => {
-  const s = DOC_SETS[key];
-  const holidays = {};
-  if (s.m === 10) holidays[nthMonday(s.y, 10, 2)] = 'スポーツの日';
-  if (s.m === 11) { holidays[3] = '文化の日'; holidays[23] = '勤労感謝の日'; }
-  const shift = makeDoctorShift(s.y, s.m, s.slots, holidays);
-  const body = {
-    _comment: '医師の出勤表【' + s.title + '】' + s.aim
+  for (let day = 1; day <= last; day++) {
+    const dow = new Date(DOC_Y, DOC_M - 1, day).getDay();
+    const nth = Math.floor((day - 1) / 7) + 1;
+    const isHol = !!hol[day];
+
+    let n = p.counts[dow];
+    if (isHol && p.holidayCount !== undefined) n = p.holidayCount;
+    else if (isHol && !p.holidaySameAsDow) n = p.counts[0];   // 既定は日曜と同じ扱い
+    // 変動は下側だけに振る。上へ振ると 5 診を超えて表に入らない
+    if (p.vary) n = Math.max(2, n + [0, -1, 0, -2, -1][nth - 1]);
+
+    if (n > DOC_ROWS) {
+      throw new Error(p.file + ': ' + n + ' 診は医師名欄（' + DOC_ROWS + ' 行）に入りません');
+    }
+    const names = roster(dow, n, p.rotate ? (nth % 2) * 3 : 0);
+    names.forEach((name, i) => { shift['doc' + (i + 1)][day] = name; });
+    counts.push(n);
+  }
+
+  fs.writeFileSync(path.join(OUT, p.file + '.json'), JSON.stringify({
+    _comment: '医師の出勤表【' + p.title + '】' + p.aim
       + ' / 実在の医師ではありません。データ書き出しタブに貼って「貼り付けた内容を取り込む」。'
       + ' 医師名欄だけを差し替えます。',
-    targetMonth: s.y + '-' + String(s.m).padStart(2, '0'),
-    shift: shift
-  };
-  fs.writeFileSync(path.join(OUT, key + '.json'), JSON.stringify(body, null, 2) + '\n', 'utf8');
-  const last = new Date(s.y, s.m, 0).getDate();
-  const counts = [];
-  for (let d = 1; d <= last; d++) counts.push(s.slots.filter(x => shift[x.key][d]).length);
-  s.counts = counts;
+    targetMonth: DOC_Y + '-' + String(DOC_M).padStart(2, '0'),
+    shift: shift,
+  }, null, 2) + '\n', 'utf8');
+  p.counts_ = counts;
 });
 
-console.log('■ 社員マスタ');
-Object.keys(PATTERNS).forEach(k => {
-  const p = PATTERNS[k];
-  const auto = p.staff.filter(s => s.rule === '自動').length;
-  console.log('  ' + (k + '.json').padEnd(26) + p.title.padEnd(14)
-    + ' 計' + String(p.staff.length).padStart(2) + '名（自動' + auto
-    + '／手動' + (p.staff.length - auto) + '）'
-    + (p.pharmMin ? '  曜日下限 ' + p.pharmMin.join(' ') : ''));
-});
 console.log('');
-console.log('■ 医師の出勤表');
-Object.keys(DOC_SETS).forEach(k => {
-  const s = DOC_SETS[k];
-  const five = s.counts.map((c, i) => (c >= 5 ? i + 1 : null)).filter(Boolean);
-  const zero = s.counts.map((c, i) => (c === 0 ? i + 1 : null)).filter(Boolean);
-  console.log('  ' + (k + '.json').padEnd(34) + s.title);
-  console.log('      医師数 ' + s.counts.join(' '));
-  console.log('      5診の日 ' + (five.join(',') || 'なし') + ' ／ 医師0名の日 ' + (zero.join(',') || 'なし'));
+console.log('■ 医師の出勤表（' + DOC_Y + '年' + DOC_M + '月・日〜土の診療数）');
+console.log('  ファイル                        日 月 火 水 木 金 土   5診の日  医師0の日  延べ');
+DOC_PATTERNS.forEach(p => {
+  const c = p.counts_;
+  const five = c.filter(n => n >= 5).length;
+  const zero = c.filter(n => n === 0).length;
+  const total = c.reduce((a, b) => a + b, 0);
+  console.log('  ' + (p.file + '.json').padEnd(32)
+    + p.counts.join('  ')
+    + String(five).padStart(8) + String(zero).padStart(10) + String(total).padStart(7));
 });
