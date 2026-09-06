@@ -269,6 +269,41 @@ check(keys().join(' ') === 'doc1|2026-09|1 memo|2026-08 s001|2026-09|1',
   '両方押すと、今月は注記だけが残る', keys().join(' '));
 
 console.log('');
+console.log('■ 印刷を1枚に収める倍率');
+
+// 行数は人数と医師欄の行数で変わる。刷るたびに測って縮める。
+// 画面の寸法で測ると1.7倍高く見積もり、必要以上に縮む（実際そうなっていた）。
+const fitRun = new Function([
+  L('  const PRINT_W ='), L('  const PRINT_H ='), L('  const PRINT_MIN_ZOOM ='),
+  'const PRINT_SIZES = {};',
+  'let printZoom = 1; let W = 0, H = 0;',
+  'const document = { documentElement: { style: {',
+  '  setProperty(){}, removeProperty(){} } } };',
+  'const $ = () => ({ scrollWidth: W, scrollHeight: H, offsetHeight: 0 });',
+  'document.querySelector = () => ({ offsetHeight: 0 });',
+  grab('fitPrint_'),
+  'return { set: (w,h) => { W=w; H=h; }, fitPrint_, zoom: () => printZoom };',
+].join('\n'))();
+
+fitRun.set(1078, 400);          // 幅ぴったり・高さに余裕
+check(fitRun.fitPrint_() === 1, '入りきるときは縮めない', String(fitRun.fitPrint_()));
+
+fitRun.set(1078, 900);          // 高さが1.4倍
+const z2 = fitRun.fitPrint_();
+check(z2 > 0.7 && z2 < 0.75, '高さで縮む', z2.toFixed(3));
+
+fitRun.set(1600, 400);          // 幅が超過
+const z3 = fitRun.fitPrint_();
+check(z3 > 0.68 && z3 < 0.7, '幅でも縮む', z3.toFixed(3));
+
+fitRun.set(1078, 300);          // うんと小さい
+check(fitRun.fitPrint_() === 1, '拡大はしない', String(fitRun.fitPrint_()));
+
+fitRun.set(1078, 4000);         // 極端
+check(fitRun.fitPrint_() < 0.2, '素の倍率はそのまま返す');
+check(fitRun.zoom() === 0.5, '実際に当てる倍率は下限で止める', String(fitRun.zoom()));
+
+console.log('');
 console.log('■ document から探さずに書けているか（未挿入でも効くこと）');
 console.log('  document.querySelector は常に null を返す状態で組み立てた');
 check(kinds.staff && kinds.staff[0] !== '', '画面に載せる前でもスタッフ欄が埋まる');

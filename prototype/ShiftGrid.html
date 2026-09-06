@@ -36,6 +36,7 @@
   --agg:         #f2efe6;
   --outside:     #eeeeec;
   --na:          #d0cece;   /* 出られない曜日。実物と同じ灰 */
+  --print-zoom:  1;         /* 印刷を1枚に詰める倍率。fitPrint_ が入れる */
   --accent:      #2f6f7e;
   --accent-ink:  #ffffff;
   --accent-soft: #dceaed;
@@ -436,14 +437,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   :root {
     --ink: #000; --ink-soft: #222; --ink-faint: #444;
     --rule: #666; --rule-soft: #999;
-    /**
-     * 1枚に収める。実物は倍率61%固定だが CSS に倍率が無いので寸法で合わせる。
-     * A4横（297mm）− 左余白6mm ＝ 約1100px、
-     * 上下余白19mm ずつを引いて高さ 約650px に、表と凡例を入れる。
-     *   氏名80 ＋ 日26×31 ＋ 集計32×6 ＝ 1078px
-     */
-    --cell-w: 26px; --cell-h: 15px; --name-w: 80px; --agg-w: 32px;
   }
+  /* 表の寸法は PRINT_SIZES（JS）が入れる。測るときと刷るときで同じ値を使う */
   #grid td, #grid th, .page-head, .printnote { color: #000; }
   /* 0 を薄くする画面用の見せ方は、紙では消えてしまう */
   #grid td.zero, #grid .agcol { color: #000 !important; opacity: 1 !important; }
@@ -457,6 +452,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   body { background: #fff; margin: 0; }
   .page-head { padding: 0 0 4px; }
   /* 表を1枚に収める。行の途中で改ページさせない */
+  /**
+   * 1枚に詰める。行数は人数と医師欄の行数で変わるので、
+   * 刷るたびに計算した倍率を当てる（fitPrint_）。
+   * transform: scale ではなく zoom を使う。transform は見た目だけ縮んで
+   * 版面はもとの大きさのままなので、空白の2枚目が出る。
+   */
+  body { zoom: var(--print-zoom, 1); }
   #grid { font-size: 7.5pt; }
   #grid td.cell .v { font-size: 8pt; }
   #grid td.cell .v.small { font-size: 6.5pt; }
@@ -501,7 +503,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 </nav>
 
 <!-- ══ シフト表 ══════════════════════════════════════ -->
-<section class="panel on" data-panel="grid">
+<section class="panel on" data-panel="grid" id="gridPanel">
   <div class="toolbar">
     <div class="group">
       <span class="lbl">店舗</span>
@@ -1927,6 +1929,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     saveCells();     // 表が変わるたびに必ずここを通る。保存の唯一の出口
     renderPrintNote();
+    fitPrint_();     // 行数が変わると1枚に入るかも変わる
     checkRules();
   }
 
@@ -1970,6 +1973,60 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     $('monthMemoPrint').textContent = memo;
   }
 
+  /**
+   * 印刷を1枚に収める倍率を決める。
+   *
+   * 用紙は A4 横。余白は実物に合わせて 上下 1.9cm / 左 0.6cm / 右 0
+   * （docs/OUTPUT-FORMAT.md §6）。刷れる範囲は
+   *   幅  297 − 6      = 291mm ≒ 1100px（96dpi）
+   *   高さ 210 − 19×2  = 172mm ≒  650px
+   *
+   * 行数は人数と医師欄の行数で変わる。11名なら入るが15名だと溢れるので、
+   * 刷るたびに測って縮める。**拡大はしない**（1枚に満たないときは等倍）。
+   */
+  /**
+   * 印刷したときの表の寸法。**測定にも印刷にもこの値を使う。**
+   *
+   * 画面の寸法（26px セル）のまま測ると、実際より1.7倍高く見積もって
+   * 必要以上に縮めてしまう。実際そうなっていた（15人で0.57倍）。
+   *
+   * A4横（297mm）− 左余白6mm ＝ 約1100px に
+   *   氏名80 ＋ 日26×31 ＋ 集計32×6 ＝ 1078px
+   */
+  const PRINT_SIZES = {
+    '--cell-w': '26px', '--cell-h': '15px', '--name-w': '80px', '--agg-w': '32px'
+  };
+  (function applyPrintSizes_() {
+    const body = Object.keys(PRINT_SIZES).map(k => k + ':' + PRINT_SIZES[k]).join(';');
+    const st = document.createElement('style');
+    st.textContent = '@media print{:root{' + body + '}}';
+    document.head.appendChild(st);
+  })();
+
+  const PRINT_W = 1100;
+  const PRINT_H = 650;
+  /** これより小さいと紙で読めない。下回るときは1枚に収めるのを諦める */
+  const PRINT_MIN_ZOOM = 0.5;
+  let printZoom = 1;
+  function fitPrint_() {
+    const grid = $('grid');
+    const head = document.querySelector('.page-head');
+    const note = document.querySelector('.printnote');
+    if (!grid) return 1;
+    // 印刷の寸法にしてから測る。画面の寸法で測ると高く見積もりすぎる
+    const root = document.documentElement;
+    Object.keys(PRINT_SIZES).forEach(k => root.style.setProperty(k, PRINT_SIZES[k]));
+    const w = grid.scrollWidth;
+    const h = (head ? head.offsetHeight : 0) + grid.scrollHeight
+      + (note ? note.offsetHeight : 0) + 12;   // 12px は行間の余裕
+    Object.keys(PRINT_SIZES).forEach(k => root.style.removeProperty(k));
+    if (!w || !h) return 1;
+    const raw = Math.min(1, PRINT_W / w, PRINT_H / h);
+    printZoom = Math.max(PRINT_MIN_ZOOM, raw);
+    document.documentElement.style.setProperty('--print-zoom', printZoom.toFixed(3));
+    return raw;
+  }
+
   /* ═══ ルール違反の洗い出し ═════════════════════════════
      自動生成が守れなかったところを、黙って通さずに並べる。 */
   function checkRules() {
@@ -1977,6 +2034,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     box.textContent = '';
     const msgs = [];
     const r = DB.rules;
+
+    // 1枚に収めるために小さくしすぎているときは、刷る前に言う
+    if (printZoom < 0.62) {
+      msgs.push('行数が多いため、1枚に収めると ' + Math.round(printZoom * 100)
+        + '% まで縮みます。読みづらいときは、医師名欄の行数を減らすか、'
+        + '在籍していない人を社員マスタの在籍期間で外してください');
+    }
 
     // 保存できていないことを黙っていてはいけない。画面は動き続けるので、
     // 利用者は保存できたと思ったまま作業を続けてしまう
@@ -3890,6 +3954,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     autoGenerate();
     dataStat('初期値に戻しました。');
   });
+
+  // Ctrl+P の直前にも測る。注記を書き足したぶんで溢れることがある
+  window.addEventListener('beforeprint', fitPrint_);
 
   $('monthMemo').addEventListener('input', () => {
     const v = $('monthMemo').value;
