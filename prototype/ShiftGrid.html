@@ -3511,6 +3511,24 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (btn.dataset.tab === 'history') renderHistory();
   });
 
+  /**
+   * この保存領域を「消さないでほしい」とブラウザに申し出る。
+   *
+   * localStorage に有効期限は無く、放っておいて消えることはない。ただし
+   * ディスクの空きが逼迫すると、ブラウザは保存領域を整理対象にすることがある。
+   * persist() が通れば、その整理から外れる。
+   *
+   * 通らない環境（file:// で使えない、拒否される）でも動きに影響は無い。
+   * **通ったかどうかに関わらず、控えは手で取ってもらう。**
+   */
+  (function askPersist_() {
+    try {
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().catch(() => {});
+      }
+    } catch (e) { /* 使えない環境では何もしない */ }
+  })();
+
   /* ═══ 起動 ═════════════════════════════════════════════ */
   const now = new Date();
   $('yy').value = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
