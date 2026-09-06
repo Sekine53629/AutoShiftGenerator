@@ -95,8 +95,20 @@
 
 ```
 node prototype/tools/make-samples.js     # このフォルダの JSON を作り直す
-node prototype/tests/samples.test.js     # 全パターンを配置に通して整合を見る
+
 node prototype/tests/placement.test.js   # 既定のマスタで4か月ぶん検証する
+node prototype/tests/samples.test.js     # 全パターンを配置に通して整合を見る
+node prototype/tests/mustdow.test.js     # 「必ず出る曜日」が全ルールで守られるか
+node prototype/tests/seam.test.js        # 月をまたぐ週で週上限を超えないか
+node prototype/tests/manual.test.js      # 手で入れたものが自動生成で消えないか
+node prototype/tests/history.test.js     # 編集履歴（戻す・進める・保存できない環境）
+node prototype/tests/render.test.js      # 組み立て時にセルの中身が書けているか
+```
+
+`manual.test.js` は環境変数でマスタを差し替えられる。
+
+```
+FIXTURE=setup-onsite.json node prototype/tests/manual.test.js
 ```
 
 `samples.test.js` は各パターンについて次を検査します。
