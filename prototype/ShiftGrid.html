@@ -152,6 +152,48 @@ button.primary:hover { filter: brightness(1.12); }
 
 /* 見出しもスタンプと同じ部品にして、高さと余白を必ず揃える */
 #palette { display: flex; flex-wrap: wrap; align-items: stretch; gap: 5px 8px; }
+/**
+ * 2段目。表示の大小と操作の説明。スマホでは「操作」でたたむ。
+ */
+.toolbar2 {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px;
+  padding: 8px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+.toolbar2.hide { display: none; }
+/** スタンプの段。幅いっぱいを使い、ほかのボタンと同じ段に置かない */
+.palettebar {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+.palettebar > .lbl { padding-top: 9px; }
+.palettebar.hide { display: none; }
+#palette { flex: 1; min-width: 0; }
+.tips {
+  display: flex; flex-direction: column; gap: 1px;
+  font-size: 11px; color: var(--ink-soft); line-height: 1.5;
+}
+.more { align-self: center; }
+
+/**
+ * スタンプ。**群のボタンは動かさない。**
+ * 開いた群の中身は下の段に出す。横に伸ばすと、その右にあるものが
+ * ずれて、押そうとしていたボタンが逃げる。
+ */
+#palette { display: flex; flex-direction: column; gap: 4px; }
+.ptabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.pitemsrow {
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+  min-height: 34px;           /* 開け閉めで高さが跳ねないよう先に確保する */
+  padding: 3px 5px;
+  border: 1px solid var(--rule-soft); border-radius: 3px;
+  background: var(--ground);
+}
+.pitemsrow .hint { font-size: 11px; color: var(--ink-faint); }
+
 .pgroup { display: flex; align-items: stretch; }
 .ptoggle { min-width: 0; }
 .ptoggle .pcur {
@@ -159,22 +201,9 @@ button.primary:hover { filter: brightness(1.12); }
   font-family: ui-monospace, "Consolas", monospace; font-weight: 700;
 }
 .ptoggle .caret { font-style: normal; margin-left: 3px; }
-.pgroup.open .ptoggle {
-  background: var(--accent-soft); border-color: var(--accent);
-  border-right-color: transparent; border-radius: 3px 0 0 3px;
-}
 .pgroup.open .ptoggle .pcur { color: var(--accent); }
-.pitems {
-  display: flex; align-items: center; gap: 4px;
-  max-width: 0; opacity: 0; overflow: hidden; padding: 0;
-  transition: max-width .22s ease, opacity .16s ease, padding .22s ease;
-}
-.pgroup.open .pitems {
-  max-width: 900px; opacity: 1; padding: 0 5px;
-  border: 1px solid var(--accent); border-left: 0; border-radius: 0 3px 3px 0;
-  background: var(--surface);
-}
-@media (prefers-reduced-motion: reduce) { .pitems { transition: none; } }
+/* 群の見出し。開いているものだけ色を変える */
+.pgroup.open .ptoggle { background: var(--accent-soft); border-color: var(--accent); }
 .stamp {
   min-width: 34px; padding: 3px 7px;
   font-family: ui-monospace, "Consolas", monospace; font-weight: 700;
@@ -476,6 +505,36 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /* 背景色は既定で印刷されない。土日祝や灰色が消えると表の意味が変わる */
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+/**
+ * 狭い画面。指で押せる大きさにし、押す場所が動かないようにする。
+ * ボタンを詰めるより、押し間違えないことを優先する。
+ */
+@media (max-width: 760px) {
+  .toolbar, .toolbar2 { padding: 7px 10px; gap: 6px 10px; }
+  .toolbar .lbl, .toolbar2 .lbl { display: none; }   /* 見出しは場所を食うだけ */
+  .stamp { min-width: 40px; min-height: 40px; }      /* 指で押せる大きさ */
+  .stamp.wide { min-width: 52px; }
+  .toolbar button, .toolbar2 button { min-height: 36px; padding: 0 10px; }
+  .tips { display: none; }                            /* 説明は狭い画面では隠す */
+  .palettebar { padding: 7px 10px; }
+  .palettebar > .lbl { display: none; }
+  /* タブは折り返さず横に流す。3段に折り返すと表が画面から消える */
+  .tabs { flex-wrap: nowrap; overflow-x: auto; }
+  .tabs button { flex: none; }
+  /* 1段目は折り返して全部見せる。横に隠れると押せないボタンができる */
+  .toolbar { flex-wrap: wrap; }
+  .toolbar button { font-size: 12px; padding: 0 9px; }
+  .toolbar .group { flex-wrap: wrap; }
+  #storeSel { max-width: 130px; }
+  #yy { width: 66px !important; }
+  #mm { width: 48px !important; }
+  .ptabs, .pitemsrow { flex-wrap: nowrap; overflow-x: auto; }
+  .pitemsrow { min-height: 46px; }
+  #palette { width: 100%; }
+  .page-head { padding: 9px 10px 6px; }
+  .page-head h1 { font-size: 20px; }
+}
+
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -486,6 +545,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <span class="note" id="quotaNote"></span>
   <span class="storename" id="storeName"></span>
   <span class="note" id="appVer" style="margin-left:auto"></span>
+  <button id="toolMore" class="more" aria-expanded="true"
+    title="下の段をたたむ">操作 ▴</button>
 </header>
 
 <nav class="tabs" id="tabs">
@@ -515,10 +576,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       <input type="number" id="mm" min="1" max="12" step="1" style="width:54px">
     </div>
     <div class="group">
-      <span class="lbl">スタンプ</span>
-      <span id="palette"></span>
-    </div>
-    <div class="group">
       <button id="autoRun" class="primary">自動生成</button>
       <button id="histNow" title="いまの状態を控えます">控えを取る</button>
       <button id="undoBtn" title="ひとつ前の控えに戻ります（Ctrl+Z）">← 戻す</button>
@@ -529,12 +586,34 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         >シフトを消す（医師以外）</button>
       <span class="note" id="undoStat"></span>
     </div>
+  </div>
+
+  <!--
+    2段目。表示の大小と、操作の説明。
+    スタンプは1段目に置くと、群を開いたときに横へ伸びて
+    ほかのボタンを押しやってしまう（位置が動くと押し間違える）。
+  -->
+  <div class="toolbar2" id="toolbar2">
     <div class="group">
       <span class="lbl">表示</span>
       <button data-zoom="28">小</button>
       <button data-zoom="34" class="on">中</button>
       <button data-zoom="42">大</button>
     </div>
+    <div class="tips">
+      <span>セルを選んでスタンプ、または <b>1</b>–<b>9</b> キー。<b>Delete</b> で消去、方向キーで移動</span>
+      <span>スタンプは群の見出しを押すと開きます。薄いものは、いま選んでいる欄には押せません</span>
+      <span><b>Ctrl+Z</b> 戻す／<b>Ctrl+Y</b> 進める</span>
+    </div>
+  </div>
+
+  <!--
+    スタンプは独立した段に置く。ほかのボタンと同じ段に置くと、
+    群を開いたときに幅が変わって、その右にあるものがずれる。
+  -->
+  <div class="palettebar" id="palettebar">
+    <span class="lbl">スタンプ</span>
+    <span id="palette"></span>
   </div>
 
   <div class="holiday-bar" id="holidayBar"></div>
@@ -545,9 +624,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <span><i style="background:#e8927c"></i>日曜</span>
     <span><i style="background:#ffd966"></i>祝日・休診</span>
     <span><i style="background:var(--outside)"></i>月外</span>
-    <span>セルを選んでスタンプ、または <b>1</b>–<b>9</b> キー（シフト記号）。<b>Delete</b> で消去、方向キーで移動。</span>
-    <span>スタンプは群の見出しを押すと横に開きます。薄いものは、いま選んでいる欄には押せません。</span>
-    <span><b>Ctrl+Z</b> で戻す、<b>Ctrl+Y</b> で進める。</span>
     <span><i style="background:repeating-linear-gradient(45deg,transparent 0 3px,var(--warn) 3px 4px)"></i>記号未定（公休枠を超えたぶん。有休・夏休を割り当ててください）</span>
   </div>
   <!--
@@ -3472,12 +3548,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       openGroup = stamp.kind === 'clear' ? null : stamp.kind;
     }
 
+    /**
+     * 上の段は群のボタンだけ。**ここは開け閉めで動かさない。**
+     * 横に伸びる作りだったころは、群を開くと右にあるボタンがずれて、
+     * 押そうとしていたものが逃げていた。
+     */
+    const tabs = el('div', 'ptabs');
     groups.forEach(g => {
       if (!g.items.length) return;
       const box = el('span', 'pgroup');
       box.dataset.kind = g.kind;
-
-      // スタンプと同じ .stamp を着せる。作りが同じなら大きさも必ず揃う
       const tog = el('button', 'stamp ptoggle');
       tog.appendChild(el('span', 'pcur', '·'));
       const capt = el('small', '', g.label);
@@ -3488,19 +3568,20 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         syncPaletteOpen();
       });
       box.appendChild(tog);
-
-      const items = el('span', 'pitems');
-      g.items.forEach(it => items.appendChild(stampButton(g.kind, it)));
-      box.appendChild(items);
-      host.appendChild(box);
+      tabs.appendChild(box);
     });
-
     // 消去は使う頻度が高いので畳まない
-    host.appendChild(stampButton('clear', { value: '', face: '×', sub: '消去' }));
+    tabs.appendChild(stampButton('clear', { value: '', face: '×', sub: '消去' }));
+    host.appendChild(tabs);
+
+    // 下の段は、開いている群の中身だけ
+    const row = el('div', 'pitemsrow');
+    row.id = 'pitemsRow';
+    host.appendChild(row);
 
     syncPaletteOpen();
-    updatePaletteState();
   }
+
 
   /**
    * 群の開閉を反映する。作り直さずクラスだけ付け替えるので、
@@ -3515,6 +3596,18 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const tog = box.querySelector('.ptoggle');
       if (tog) tog.title = (on ? '閉じる' : '開く') + '（' + box.dataset.kind + '）';
     });
+
+    // 開いている群の中身を下の段に出す。高さは CSS で確保してあるので跳ねない
+    const row = $('pitemsRow');
+    if (!row) return;
+    row.textContent = '';
+    const g = paletteGroups().find(x => x.kind === openGroup);
+    if (!g || !g.items.length) {
+      row.appendChild(el('span', 'hint', '上の見出しを押すとスタンプが出ます'));
+    } else {
+      g.items.forEach(it => row.appendChild(stampButton(g.kind, it)));
+    }
+    updatePaletteState();
   }
 
   /**
@@ -4197,6 +4290,29 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   });
 
   // Ctrl+P の直前にも測る。注記を書き足したぶんで溢れることがある
+  /**
+   * 2段目のたたみ。**狭い画面では既定でたたむ。**
+   * スマホだと1段目のボタンだけで画面が埋まり、表が見えなくなる。
+   * 開け閉めは覚えておく（毎回開き直すのは手間）。
+   */
+  const MORE_KEY = 'shiftgrid.toolbar2.v1';
+  function syncMore_(open) {
+    $('toolbar2').classList.toggle('hide', !open);
+    $('palettebar').classList.toggle('hide', !open);
+    $('toolMore').textContent = '操作 ' + (open ? '▴' : '▾');
+    $('toolMore').setAttribute('aria-expanded', String(open));
+    $('toolMore').title = open ? '下の段をたたむ' : '下の段を開く';
+    try { localStorage.setItem(MORE_KEY, open ? '1' : '0'); } catch (e) { /* 使えなくてよい */ }
+  }
+  (function initMore_() {
+    let saved = null;
+    try { saved = localStorage.getItem(MORE_KEY); } catch (e) { /* 使えなくてよい */ }
+    const narrow = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
+    syncMore_(saved === null ? !narrow : saved === '1');
+  })();
+  $('toolMore').addEventListener('click', () =>
+    syncMore_($('toolbar2').classList.contains('hide')));
+
   window.addEventListener('beforeprint', fitPrint_);
 
   $('monthMemo').addEventListener('input', () => {
