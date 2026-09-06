@@ -28,3 +28,8 @@ build/
 archive/*.json
 prototype/*.json
 *.export.json
+
+# 実物のシフト表（実名が入る）
+*.xlsx
+*.xls
+*.pdf
