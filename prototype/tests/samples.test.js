@@ -70,7 +70,7 @@ const longest = (pred, cols) => {
 
 const staffFiles = fs.readdirSync('prototype/samples')
   .filter(f => (f.startsWith('staff-') || f.startsWith('setup-')) && f.endsWith('.json'));
-const doc = JSON.parse(fs.readFileSync('prototype/samples/doctor-shift-2026-10.json', 'utf8')).shift;
+const doc = JSON.parse(fs.readFileSync('prototype/samples/doctor-01-standard.json', 'utf8')).shift;
 
 let bad = 0;
 staffFiles.forEach(f => {
