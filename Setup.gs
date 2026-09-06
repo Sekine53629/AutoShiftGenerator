@@ -77,7 +77,22 @@ function setupKindHelperColumn() {
  * 移植元: SS_PharmFormula（MATCH 配列渡しをやめた版）
  */
 function buildPharmCountFormula_(colLetter, gridTop, gridBottom) {
-  return notImplemented_(MODULE_SETUP, 'buildPharmCountFormula_', 2); // TODO(P2)
+  const kindCol = toColumnLetter(LAYOUT.COL_KIND_WORK);
+  const kindRange = `$${kindCol}$${gridTop}:$${kindCol}$${gridBottom}`;
+  const dayRange = `${colLetter}${gridTop}:${colLetter}${gridBottom}`;
+  return '=' + WORK_SYMS.map(function (sym) {
+    return `COUNTIFS(${kindRange},"${KIND.PHARM}",${dayRange},"${workSymCriteria_(sym)}")`;
+  }).join('+');
+}
+
+/**
+ * 出勤記号を COUNTIF / COUNTIFS の条件式にする。
+ * WORK_SYM_PREFIX_MATCH が true なら末尾に `*` を付け、
+ * 「▲佐藤典昭」のような記号＋氏名の複合テキストも数える。
+ * Engine.matchWorkSym と同じ規則にすること。
+ */
+function workSymCriteria_(sym) {
+  return WORK_SYM_PREFIX_MATCH ? `${sym}*` : sym;
 }
 
 /**
@@ -95,24 +110,63 @@ function setupAggregateColumnFormulas() {
   return notImplemented_(MODULE_SETUP, 'setupAggregateColumnFormulas', 2); // TODO(P2)
 }
 
-/** COUNTIF の和を組む。移植元: SS_CountFormula */
-function buildCountifSumFormula_(row, symbols) {
-  return notImplemented_(MODULE_SETUP, 'buildCountifSumFormula_', 2); // TODO(P2)
+/**
+ * COUNTIF の和を組む。数える記号が0個なら '=0'（'=' だけでは壊れる）。
+ * 移植元: SS_CountFormula
+ */
+function buildCountifSumFormula_(row, symbols, asWorkSyms) {
+  if (!symbols || symbols.length === 0) return '=0';
+  const first = toColumnLetter(LAYOUT.COL_FIRST);
+  const last = toColumnLetter(LAYOUT.COL_LAST);
+  const range = `${first}${row}:${last}${row}`;
+  return '=' + symbols
+    .map(function (s) {
+      // 休み記号は完全一致のまま。緩めると「公休」が「公休(半)」なども拾い、
+      // 公休ノルマの数え方が Engine.isPaidOff とずれる
+      return `COUNTIF(${range},"${asWorkSyms ? workSymCriteria_(s) : s}")`;
+    })
+    .join('+');
 }
 
-/** 5診出勤（混雑日の出勤回数）の SUMPRODUCT。移植元: SS_BusyDayFormula */
+/**
+ * 5診出勤（混雑日の出勤回数）。移植元: SS_BusyDayFormula
+ *
+ * 仕様書 §5.4 は SUMPRODUCT だが、COUNTIFS にした。理由は2つ。
+ *   1. 先頭一致（WORK_SYM_PREFIX_MATCH）を条件式で書ける。
+ *      SUMPRODUCT の中で LEFT を配列に効かせる書き方は Sheets では挙動が読みにくい
+ *   2. 医師数行と入力行はどちらも 1 行 × 31 列なので COUNTIFS の形が揃う
+ */
 function buildBusyDayFormula_(row, docRow) {
-  return notImplemented_(MODULE_SETUP, 'buildBusyDayFormula_', 2); // TODO(P2)
+  const first = toColumnLetter(LAYOUT.COL_FIRST);
+  const last = toColumnLetter(LAYOUT.COL_LAST);
+  const docRange = `$${first}$${docRow}:$${last}$${docRow}`;
+  const dayRange = `${first}${row}:${last}${row}`;
+  return '=' + WORK_SYMS.map(function (sym) {
+    return `COUNTIFS(${docRange},${DOC_BUSY_N},${dayRange},"${workSymCriteria_(sym)}")`;
+  }).join('+');
 }
 
-/** 休み記号をノルマ対象/外に振り分ける。Engine.isPaidOff と同じ規則。移植元: SS_OffSymsByQuota */
+/**
+ * 休み記号をノルマ対象/外に振り分ける。Engine.isPaidOff と同じ規則を使う
+ * （設定 L11 に「有休」とだけ書けば「有休※」も外れる、という約束を守るため）。
+ * 移植元: SS_OffSymsByQuota
+ * @param {string} paidSyms 設定 L11 の値（カンマ区切り）
+ * @param {boolean} wantQuota true ならノルマ対象（AH）/ false ならノルマ外（AI）
+ * @return {string[]}
+ */
 function splitOffSymbolsByQuota_(paidSyms, wantQuota) {
-  return notImplemented_(MODULE_SETUP, 'splitOffSymbolsByQuota_', 2); // TODO(P2)
+  return SYM.OFF_ALL.filter(function (sym) {
+    return isPaidOff(sym, paidSyms) !== wantQuota;
+  });
 }
 
-/** マクロが書いた見出しか（上書きしてよいか）。移植元: SS_HeadIsOurs */
+/**
+ * マクロが書いた見出しか（上書きしてよいか）。空欄も上書き可とみなす。
+ * これ以外は手書きとみなして触らない。移植元: SS_HeadIsOurs
+ */
 function isOurHeading_(value) {
-  return notImplemented_(MODULE_SETUP, 'isOurHeading_', 2); // TODO(P2)
+  const v = String(value || '').trim();
+  return v === '' || SETUP_KNOWN_HEADS.indexOf(v) >= 0;
 }
 
 /** 見出しを空欄のときだけ補う。移植元: SS_FillHeading */

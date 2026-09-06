@@ -6,8 +6,9 @@ credentials*.json
 client_secret*.json
 .clasprc.json
 
-# clasp
+# clasp（環境ごとの切り替え用の変種もまとめて除外する）
 .clasp.json
+.clasp.*.json
 
 # OS
 .DS_Store
