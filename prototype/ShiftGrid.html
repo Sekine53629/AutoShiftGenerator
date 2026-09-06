@@ -1242,6 +1242,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         // 「○早番は受付で処方入力、▲遅番はピッキング」という役割分担に合う
         earlyN: 1, midN: 1, clerkEarlyN: 1,
         /**
+         * ▲遅番に**最低これだけは残す**人数。余った人もここへ流れるので、
+         * たいていはこれより多くなる。設定した数ぴったりにはしない。
+         *
+         * 閉局まで残る人は代わりが利かない（締め作業）。1人だと、
+         * その人が休んだ日に代わりを立てられない。やや余裕を持たせて
+         * 薬剤師2・事務1 を既定にする。
+         */
+        lateMinN: 2, clerkLateMinN: 1,
+        /**
          * 開いているあいだ、薬剤師が何人いれば回るか。
          * 頭数ではなく**時間帯で見る。** 記号ごとに勤務時間が違うので、
          * その日の人数が足りていても開局直後だけ1人になることがある
@@ -1360,6 +1369,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (db.rules.docRows === undefined) db.rules.docRows = seed.rules.docRows;
     if (db.rules.busyDocN === undefined) db.rules.busyDocN = seed.rules.busyDocN;
     if (db.rules.minOnDuty === undefined) db.rules.minOnDuty = seed.rules.minOnDuty;
+    if (db.rules.lateMinN === undefined) db.rules.lateMinN = seed.rules.lateMinN;
+    if (db.rules.clerkLateMinN === undefined) {
+      db.rules.clerkLateMinN = seed.rules.clerkLateMinN;
+    }
     if (typeof db.memoDefault !== 'string') db.memoDefault = seed.memoDefault;
     fixOldValues_(db, seed);
     // 真偽値ひとつだった頃の設定を3択に移す
@@ -2601,13 +2614,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     for (let c = 0; c < DAY_COLS; c++) {
       if (!days[c].inMonth || isClosed(days[c])) continue;
-      let on = 0, closer = 0;
+      let on = 0, closer = 0, late = 0;
+      const lateSym = byOrder(DB.patterns).filter(p => p.work).map(p => p.sym).pop();
       ROWS.forEach(row => {
         if (row.kind !== 'staff' || row.role === 'clerk') return;
         if (!isWork(get(row, c))) return;
         on++;
+        if (get(row, c) === lateSym) late++;
         if (row.staff && row.staff.canClose) closer++;
       });
+      // 締め作業は代わりが利かない。最低人数に届かない日は黙って通さない
+      const lateMin = Math.max(1, Number(r.lateMinN) || 1);
+      if (lateSym && late < lateMin && late < on) {
+        msgs.push(days[c].day + '日：' + lateSym + ' が ' + late
+          + ' 人（最低 ' + lateMin + ' 人）。その日の出勤は ' + on + ' 人です');
+      }
       // 頭数が足りていても、時間帯によっては薄いことがある。
       // 実物は記号ごとに勤務時間が30分ずつずれており、開局直後は早番しかいない
       const cov = coverageOf_(c);
@@ -2816,17 +2837,19 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const fill = work[work.length - 1];       // 余った人はここ（遅番）
 
     /**
-     * 当てる順。**遅半が先、早番が後。**
+     * 当てる順。余りはどちらも遅番に流れるので、ここに遅番は入らない。
      *
-     * 早番に要るのは開局を覆う1人だけで、それ以上増やす理由が無い。
-     * 実物も R8.8月で ○40 / ●47 / ▲120 と、早番がいちばん少ない。
-     *
+     * **薬剤師は 遅半 → 早番。** 早番に要るのは開局を覆う1人だけで、
+     * それ以上増やす理由が無い。実物も R8.8月で ○40 / ●47 / ▲120。
      * 以前は minOnDuty（同時にいてほしい薬剤師）をそのまま早番の人数にしていた。
      * 既定の2人が毎日早番に入り、遅半より多くなっていた。minOnDuty は
-     * 「その時間帯に何人いてほしいか」であって、「何人を早番にするか」ではない。
-     * 遅半は開局の30分後に来るので、早番を積み増さなくても日中は覆える。
+     * 「その時間帯に何人いてほしいか」であって「何人を早番にするか」ではない。
+     *
+     * **事務は 早番 → 遅半。** 事務の早番は受付で処方入力という中身のある役目で、
+     * 削る相手ではない。実物も事務の遅半は0で、早番と遅番だけを使っている。
      */
-    const order = work.slice(0, -1).reverse();
+    const orderOf = kind => kind === 'clerk'
+      ? work.slice(0, -1) : work.slice(0, -1).reverse();
 
     /** 早番に必ず1人は残す。開局に誰もいない日は作れない（薬剤師のみ） */
     const EARLY_FLOOR = 1;
@@ -2875,52 +2898,79 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
           .forEach(row => { const v = get(row, c); already[v] = (already[v] || 0) + 1; });
 
         const want = Object.assign({}, need);
-        let coveredOpen = false;   // 遅半だけで開局を覆えるか（薬剤師の枝で決まる）
-        if (kind === 'clerk' && r.clerkEarlyN !== undefined) {
-          want[work[0]] = Math.max(0, Number(r.clerkEarlyN) || 0);
-        } else if (kind === 'pharm') {
-          /**
-           * 開局を覆う早番。**1人でよい。**
-           *
-           * 遅半が開局に間に合う時間割なら、それも要らない
-           * （実物は 早番10:00 / 遅半10:30 で、開局10:00 に間に合わない）。
-           */
-          const openAt = minOf_(days[c].from);
-          const midAt = work[1]
-            ? minOf_((DB.patterns.find(x => x.sym === work[1]) || {}).start) : null;
-          coveredOpen = midAt !== null && openAt !== null && midAt <= openAt;
-          if (!coveredOpen) {
-            want[work[0]] = Math.max(want[work[0]] || 0,
-              Math.min(EARLY_FLOOR, free.length));
-          }
+        const order = orderOf(kind);
 
-          /**
-           * **閉局まで残る人を必ず1人は空けておく。ここは最後に効かせる。**
-           * 早番と遅半で全員を使い切ると遅番が0人になり、遅半が上がったあとの
-           * 時間帯が無人になる。30分でも締め作業ができない日は作れない。
-           *
-           * **削る順は当てる順の逆＝早番から。** 早番は優先度がいちばん低い。
-           * ただし開局の1人（EARLY_FLOOR）は最後まで残す。
-           * そこまで削っても入らなければ、遅半を削る。
-           * それでも入らない日は、開局か閉局のどちらかを諦めるしかない。
-           * 閉局を採る（締め作業は代わりが利かない）。表の下に薄い時間帯として出る。
-           */
-          if (free.filter(row => can_(row, fill)).length > 0) {
-            const room = Math.max(0, free.length - 1);
-            const floorOf = x => (x === work[0] && !coveredOpen) ? EARLY_FLOOR : 0;
-            const sum = () => order.reduce((t, x) => t + (want[x] || 0), 0);
-            const trim = keepFloor => {
-              order.slice().reverse().forEach(x => {
-                const over = sum() - room;
-                if (over <= 0) return;
-                const floor = keepFloor ? floorOf(x) : 0;
-                const cut = Math.min(Math.max(0, (want[x] || 0) - floor), over);
-                want[x] = (want[x] || 0) - cut;
-              });
-            };
-            trim(true);      // まず床を守って削る
-            trim(false);     // それでも入らなければ床も割る
+        /**
+         * 開局を覆う早番。**1人でよい。**
+         * 遅半が開局に間に合う時間割なら、それも要らない
+         * （実物は 早番10:00 / 遅半10:30 で、開局10:00 に間に合わない）。
+         */
+        const openAt = minOf_(days[c].from);
+        const midAt = work[1]
+          ? minOf_((DB.patterns.find(x => x.sym === work[1]) || {}).start) : null;
+        const coveredOpen = midAt !== null && openAt !== null && midAt <= openAt;
+        if (kind === 'clerk') {
+          // 事務の早番は設定どおり。開局を覆うのは薬剤師の役目
+          if (r.clerkEarlyN !== undefined) {
+            want[work[0]] = Math.max(0, Number(r.clerkEarlyN) || 0);
           }
+        } else if (!coveredOpen) {
+          want[work[0]] = Math.max(want[work[0]] || 0, Math.min(EARLY_FLOOR, free.length));
+        }
+
+        /**
+         * **閉局まで残る人を先に空けておく。ここは最後に効かせる。**
+         *
+         * 早番と遅半で全員を使い切ると遅番が0人になり、遅半が上がったあとの
+         * 時間帯が無人になる。30分でも締め作業ができない日は作れない。
+         *
+         * 空ける人数は最低 lateMinN（事務は clerkLateMinN）。
+         * 締め作業は代わりが利かないので、1人だとその人が休んだ日に詰む。
+         * 余った人もここへ流れるので、たいていはこれより多くなる。
+         *
+         * **削る順は当てる順の逆＝早番から。** 早番は優先度がいちばん低い。
+         * ただし開局の1人（EARLY_FLOOR）は最後まで残す。
+         * そこまで削っても入らなければ遅半を削り、それでも入らなければ
+         * 開局の1人も割る。**閉局を優先する**（表の下に薄い時間帯として出る）。
+         */
+        const canFill = free.filter(row => can_(row, fill)).length;
+        if (canFill > 0) {
+          const min2 = Number(kind === 'clerk' ? r.clerkLateMinN : r.lateMinN);
+          /**
+           * 遅番に空ける人数。設定より人が少ない日は、設定のほうが折れる。
+           *
+           * **先に早番のぶんを取り置く。** 設定した遅番の数を優先して
+           * 全員を遅番にすると、開局に誰もいない日ができる。
+           *   薬剤師 … 開局の1人（EARLY_FLOOR）
+           *   事務   … 早番の定員（clerkEarlyN）まるごと。事務の早番は
+           *            受付で処方入力という中身のある役目で、削る相手ではない。
+           *            実物も事務は ○15 / ▲5 と早番が主
+           *
+           * 遅番を必ず1人残すのは**薬剤師だけ。** 締め作業は薬剤師の仕事で、
+           * 事務が1人しか出ない日にその人を遅番へ回すと受付が空く。
+           */
+          const hardMin = kind === 'clerk' ? 0 : 1;
+          const keepEarly = kind === 'clerk'
+            ? Math.min(want[work[0]] || 0, free.length)
+            : ((!coveredOpen && free.length > 1) ? EARLY_FLOOR : 0);
+          const lateWant = Math.min(canFill,
+            Math.max(hardMin, min2 || hardMin),
+            Math.max(hardMin, free.length - keepEarly));
+          const room = Math.max(0, free.length - lateWant);
+          const floorOf = x =>
+            (kind === 'pharm' && x === work[0] && !coveredOpen) ? EARLY_FLOOR : 0;
+          const sum = () => order.reduce((t, x) => t + (want[x] || 0), 0);
+          const trim = keepFloor => {
+            order.slice().reverse().forEach(x => {
+              const over = sum() - room;
+              if (over <= 0) return;
+              const floor = keepFloor ? floorOf(x) : 0;
+              const cut = Math.min(Math.max(0, (want[x] || 0) - floor), over);
+              want[x] = (want[x] || 0) - cut;
+            });
+          };
+          trim(true);      // まず床を守って削る
+          trim(false);     // それでも入らなければ床も割る
         }
         const left = new Set(free);
 
@@ -3709,15 +3759,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'earlyN', label: '○早番', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'midN',   label: '●遅半', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'clerkEarlyN', label: '事務員の○早番', type: 'num', unit: '人/日', min: 0, max: 6 },
-      { note: '▲遅番の数は設定しません。**早番と遅半を配った残りが全員 遅番**になります。'
-             + '実物もそうで、R8.8月は ▲120 / ●47 / ○40 と遅番が最多でした。' },
+      { key: 'lateMinN', label: '▲遅番（最低）', type: 'num', unit: '人/日', min: 1, max: 6 },
+      { key: 'clerkLateMinN', label: '事務員の▲遅番（最低）',
+        type: 'num', unit: '人/日', min: 1, max: 6 },
+      { note: '▲遅番は**最低の人数**です。ぴったりにはしません。'
+             + '早番と遅半を配った残りは全員 遅番になるので、たいていはこれより多くなります。'
+             + '実物も R8.8月は ▲120 / ●47 / ○40 と遅番が最多でした。' },
+      { note: '**優先度は 遅番 → 遅半 → 早番。** 人が足りない日は早番から削り、'
+             + '閉局まで残る人を先に確保します。締め作業は代わりが利きません。'
+             + '早番は開局の1人だけは必ず残します。' },
       { note: '使える記号は社員マスタで人ごとに決めます。その人が使えない記号は当てません。' },
       { key: 'minOnDuty', label: '同時にいてほしい薬剤師', type: 'num', unit: '人', min: 1, max: 6 },
       { note: '**頭数ではなく時間帯で見ます。** 記号ごとに勤務時間がずれているので、'
              + 'その日の出勤が足りていても開局直後だけ薄くなることがあります。'
              + '例: 早番10:00〜／遅半10:30〜／遅番11:00〜 なら、'
              + '早番が1人だと 10:00〜10:30 は1人です。' },
-      { note: 'この人数を満たせるだけ早番を置きます。それでも薄い日は表の下に出します。' }
+      { note: 'ここは**警告に使うだけ**で、早番の人数は増やしません。'
+             + '薄い時間帯が出た日は表の下に出します。' }
     ]},
     { title: '曜日別下限の扱い', items: [
       { key: 'weekdayFloor', label: '店舗営業マスタの曜日別下限を', type: 'select',

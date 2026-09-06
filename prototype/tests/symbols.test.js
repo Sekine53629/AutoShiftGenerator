@@ -287,6 +287,56 @@ ok('早番の均等さは保たれる', () => {
     '早番が偏っている: ' + JSON.stringify(n));
 });
 
+console.log('■ 閉局まで残る人を先に確保する（遅番の最低人数）');
+
+// 締め作業は代わりが利かない。遅番が1人だと、その人が休んだ日に詰む。
+// やや余裕を持たせて 薬剤師2・事務1 を既定にしている。
+// 余った人も遅番へ流れるので、たいていはこれより多くなる。
+
+ok('遅番は最低の人数を必ず満たす', () => {
+  const five = [{ syms: ALL }, { syms: ALL }, { syms: ALL }, { syms: ALL }, { syms: ALL }];
+  const r = run(five, { earlyN: 1, midN: 1, lateMinN: 2 }, 20);
+  r.byDay.forEach((d, c) => {
+    assert.ok((d['▲'] || 0) >= 2, (c + 1) + '日目の遅番が ' + (d['▲'] || 0) + ' 人');
+  });
+});
+
+ok('遅番の最低を上げると、遅半から先に減る（早番は最後）', () => {
+  const four = [{ syms: ALL }, { syms: ALL }, { syms: ALL }, { syms: ALL }];
+  const a = run(four, { earlyN: 1, midN: 2, lateMinN: 1 }, 10);
+  const b = run(four, { earlyN: 1, midN: 2, lateMinN: 3 }, 10);
+  assert.strictEqual(b.byDay[0]['○'] || 0, 1, '早番が削られた');
+  assert.ok((b.byDay[0]['●'] || 0) < (a.byDay[0]['●'] || 0), '遅半が減っていない');
+  assert.ok((b.byDay[0]['▲'] || 0) >= 3, '遅番が最低を満たしていない');
+});
+
+ok('遅番の最低が人数を超えても、開局の1人は残す', () => {
+  // 3人しか出ない日に遅番5人を求めても、開局に誰もいない日は作らない
+  const off = [[], [], [], [0], [0]];
+  const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }],
+    { earlyN: 1, midN: 1, lateMinN: 5 }, 10, off);
+  assert.strictEqual(r.byDay[0]['○'] || 0, 1, '開局に誰もいない');
+  assert.strictEqual(r.byDay[0]['▲'] || 0, 2, '残りが遅番になっていない');
+});
+
+ok('事務は事務の最低で数える（薬剤師の数に巻き込まれない）', () => {
+  const rows = [{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                { syms: ALL, role: 'clerk' }, { syms: ALL, role: 'clerk' }];
+  const r = run(rows, { earlyN: 1, midN: 1, clerkEarlyN: 1,
+                        lateMinN: 2, clerkLateMinN: 1 }, 10);
+  // 事務2人 → 早番1・遅番1
+  const clerkLate = r.per.slice(3).reduce((t, p) => t + (p.count['▲'] || 0), 0);
+  const clerkEarly = r.per.slice(3).reduce((t, p) => t + (p.count['○'] || 0), 0);
+  assert.strictEqual(clerkEarly, 10, '事務の早番が毎日1人でない: ' + clerkEarly);
+  assert.strictEqual(clerkLate, 10, '事務の遅番が毎日1人でない: ' + clerkLate);
+});
+
+ok('設定が無い古いデータでも動く（最低1人）', () => {
+  const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL }], { earlyN: 1, midN: 1 }, 10);
+  r.byDay.forEach(d => assert.ok((d['▲'] || 0) >= 1, '遅番が0人の日がある'));
+});
+
 console.log('■ 時間帯の薄さ');
 
 // 記号ごとに勤務時間が30分ずつずれているので、頭数が足りていても
