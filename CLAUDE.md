@@ -16,33 +16,52 @@ formula incompatibilities, and the trap checklist (§10).
 
 ---
 
-## The port is a port, not a rewrite
+## This stopped being a port in 2026-09
 
-The placement algorithm must produce the **same output as the VBA version for the
-same input**. Do not "improve" it while porting.
+It began as a port. It is now a rewrite, driven by 13 months of the real roster
+(`docs/REAL-SHIFT-ANALYSIS.md`). The following deliberately differ from the VBA
+version — do not "fix" them back:
 
-- If a ported step disagrees with the VBA version, treat it as a bug in the port.
-- Improvements are a separate change, made after the port is verified.
-- When a judgement call is needed, read the VBA source as the source of truth:
-  `GitHub/VBA/Auto_Shift_Generator/src/*.bas` — **read-only**. Never modify it
-  (Tier 1: no cross-project modification).
+- Placement is managed **week by week**, not day by day.
+- 公休 lands **exactly on quota**. Anything beyond it uses 有休 / 夏休.
+- The **weekday floor is not used** to set required headcount. Headcount comes from
+  the doctor count. The floor is a stand-in for days with no doctor entered
+  (`rules.weekdayFloor`, default `off`).
+- Default 連続出勤上限 is **4 days**, not 3 (4-day runs are 41% of the real data).
+- 医師名欄 is **variable** (3–10 rows, default 6), not fixed at 5.
 
-Every function carries a `移植元:` line in its JSDoc naming the VBA procedure it
-came from. Keep it accurate when you implement or rename.
+**The bar for "correct" is the real roster, not the VBA output.** When a step
+disagrees with the VBA version, check it against `docs/REAL-SHIFT-ANALYSIS.md`
+first; only treat it as a porting bug if the real data does not settle it.
+
+The VBA source stays useful as a reference for *intent* and for the parts nobody
+has re-derived yet: `GitHub/VBA/Auto_Shift_Generator/src/*.bas` — **read-only**.
+Never modify it (Tier 1: no cross-project modification).
+
+Keep the `移植元:` line in a function's JSDoc where it is still true. For code that
+no longer traces to a VBA procedure, say what it is derived from instead
+(a section of the spec, or a finding in the analysis doc).
 
 ---
 
 ## Hard rules for this codebase
 
-### `Engine.gs` never touches `SpreadsheetApp`
+### The placement engine never touches `SpreadsheetApp`
 
-The placement engine is a pure function: arrays in, arrays out. This is what makes
-the port testable and what keeps it inside the 6-minute limit. The VBA version read
+The engine is a pure function: arrays in, arrays out. That is what makes it
+testable and what keeps it inside the 6-minute limit. The VBA version read
 `mGrid.Cells(i,j).Value` mid-process in five places (§8.3-1) — those all become
-reads of the `existing[][]` array captured up front.
+reads of an array captured up front.
 
 If you find yourself needing a sheet value inside the engine, the value belongs in
-`input` instead.
+the input instead.
+
+**Where the engine lives:** in the browser, inside `prototype/ShiftGrid.html`.
+The deployment plan (`docs/DEPLOY-PLAN.md`) keeps it there and gives the server
+only reading, writing and access control. `Engine.gs` and `ShiftAuto.gs` are
+therefore **not being implemented** — their stubs stand as a record of the spec,
+not as work to do. If a server-side scheduled run is ever needed, that decision
+gets revisited then.
 
 ### Read and write in whole ranges, once
 
@@ -122,13 +141,17 @@ personal data in it.
 
 ---
 
-## Verifying the port (phase 3)
+## Verifying it
 
-Because the engine is pure, correctness can be checked mechanically:
+Because the engine is pure, correctness is checked mechanically — but **against the
+real roster, not against the VBA output**:
 
-1. Run the VBA version on real (anonymised) data, dump `mPlan` / `mSymb` to JSON.
-2. Feed the same input to `runEngine()` and diff `plan` / `symbol`.
-3. Any difference is a porting bug — except `CB_CHAIN_MAX_PASS`, the one limit this
-   port adds that the VBA version does not have (documented in README).
+1. `node prototype/tests/*.test.js` — 9 suites, no spreadsheet needed.
+2. Feed a real month's input (masters + doctor roster) and compare the generated
+   sheet with what the store actually ran that month.
+3. Differences are judged against `docs/REAL-SHIFT-ANALYSIS.md`. The measured
+   relationships are the yardstick: 薬剤師 ≈ 0.612 × 医師 + 1.984, 公休 exactly on
+   quota, 4-day runs normal.
 
-Do not skip this. It is the only practical way to know the port is right.
+Do not skip step 1. The fixtures under `prototype/samples/` exist for it, and
+`dispatch.test.js` runs 13 doctor patterns × 3 dispatch levels in one go.
