@@ -45,11 +45,44 @@ function getExportRange_(sheet, layout) {
 }
 
 /**
- * 既定のファイル名。VBA 版の命名に合わせる。
+ * 西暦の年を令和の2桁表記にする。2026 → '08'。
+ *
+ * ★ 令和固有。元号が変わったら CONFIG.WAREKI_BASE を直す。自動追従はできない。
+ * 令和元年（2019）より前は和暦が変わるので、扱わずに例外にする。
+ */
+function warekiYear_(year) {
+  const n = Number(year) - CONFIG.WAREKI_BASE;
+  if (!(n >= 1)) {
+    throw new Error('[warekiYear_] 令和元年より前は扱えません: ' + year);
+  }
+  return String(n).padStart(2, '0');
+}
+
+/**
+ * 既定のファイル名（拡張子は付けない）。
+ *
+ *   さくら薬局北口店R08.09月シフト
+ *
+ * 実物の運用に合わせた形。ひな型は CONFIG.EXPORT_NAME が持ち、
+ * 店舗名は設定シートから来る（ロジックに店名を書かない — Tier 1）。
+ *
  * 移植元: XP_DefaultName
  */
-function buildExportFileName_(sheet, layout) {
-  return notImplemented_(MODULE_EXPORT, 'buildExportFileName_', 7); // TODO(P7)
+function buildExportFileName_(store, year, month) {
+  try {
+    const name = String(store || '').trim();
+    const m = Number(month);
+    if (!(m >= 1 && m <= 12)) {
+      throw new Error('月が不正です: ' + month);
+    }
+    return CONFIG.EXPORT_NAME
+      .replace('{store}', name)
+      .replace('{wa}', warekiYear_(year))
+      .replace('{mm}', String(m).padStart(2, '0'));
+  } catch (error) {
+    console.error(`[buildExportFileName_] ${error.message}\nStack: ${error.stack}`);
+    throw error;
+  }
 }
 
 /**

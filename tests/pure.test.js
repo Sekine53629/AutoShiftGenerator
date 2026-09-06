@@ -1676,6 +1676,41 @@ test('日ごとの薬剤師出勤数を数える', function () {
   assert.strictEqual(counts[1], 1, '2日目は1人');
 });
 
+test('出力ファイル名が実物の命名に合う', function () {
+  // さくら薬局北口店R08.09月シフト.pdf の形。店名はテストでも出さない
+  assert.strictEqual(
+    sandbox.buildExportFileName_('X薬局Y店', 2026, 9), 'X薬局Y店R08.09月シフト',
+    '和暦2桁・月2桁のゼロ詰め');
+  assert.strictEqual(
+    sandbox.buildExportFileName_('X薬局Y店', 2026, 12), 'X薬局Y店R08.12月シフト');
+  assert.strictEqual(
+    sandbox.buildExportFileName_('X薬局Y店', 2019, 1), 'X薬局Y店R01.01月シフト',
+    '令和元年は R01');
+  assert.strictEqual(
+    sandbox.buildExportFileName_('  X薬局Y店 ', 2026, 9), 'X薬局Y店R08.09月シフト',
+    '店名の前後の空白は落とす');
+});
+
+test('出力ファイル名は扱えない年月をそのまま通さない', function () {
+  // 投げる前に console.error へ出す作りなので、テスト中だけ黙らせる
+  const real = sandbox.console.error;
+  sandbox.console.error = function () {};
+  try {
+    assert.throws(function () { sandbox.buildExportFileName_('X', 2018, 1); },
+      /令和元年より前/, '令和より前は和暦が変わるので通さない');
+    assert.throws(function () { sandbox.buildExportFileName_('X', 2026, 0); }, /月が不正/);
+    assert.throws(function () { sandbox.buildExportFileName_('X', 2026, 13); }, /月が不正/);
+  } finally {
+    sandbox.console.error = real;
+  }
+});
+
+test('warekiYear_ は令和の年を2桁で返す', function () {
+  assert.strictEqual(sandbox.warekiYear_(2019), '01');
+  assert.strictEqual(sandbox.warekiYear_(2026), '08');
+  assert.strictEqual(sandbox.warekiYear_(2028), '10', '2桁になっても切らない');
+});
+
 // ---- 結果 -------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

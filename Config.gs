@@ -42,6 +42,22 @@ const CONFIG = Object.freeze({
   HOLIDAY_CSV_URL: 'https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv',
 
   /**
+   * 出力ファイル名（PDF / xlsx 共通）。実物の運用に合わせる。
+   *
+   *   さくら薬局北口店R08.09月シフト.pdf
+   *
+   * {store} 店舗名（設定シートが正。ここに書かない）
+   * {wa}    和暦の年。2桁ゼロ詰め（2026年 → 08）
+   * {mm}    月。2桁ゼロ詰め（9月 → 09）
+   *
+   * ★ 和暦は令和固有の計算（西暦 − 2018）。元号が変わったら WAREKI_BASE を直す。
+   *   自動では追従できない。
+   */
+  EXPORT_NAME: '{store}R{wa}.{mm}月シフト',
+  /** 令和の基準年。令和元年 = 2019 なので 2018 を引く */
+  WAREKI_BASE: 2018,
+
+  /**
    * 管理者への通知先 / PDF の保存先。
    * 値はコードに書かず、スクリプトプロパティに置く（キー名だけをここに持つ）。
    */
