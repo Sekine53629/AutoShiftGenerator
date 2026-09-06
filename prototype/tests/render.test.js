@@ -273,39 +273,68 @@ check(keys().join(' ') === 'doc1|2026-09|1 memo|2026-08 s001|2026-09|1',
   '両方押すと、今月は注記だけが残る', keys().join(' '));
 
 console.log('');
-console.log('■ 印刷を1枚に収める倍率');
+console.log('■ 印刷の倍率と行の高さ');
 
-// 行数は人数と医師欄の行数で変わる。刷るたびに測って縮める。
-// 画面の寸法で測ると1.7倍高く見積もり、必要以上に縮む（実際そうなっていた）。
+// **倍率は横幅に合わせる。** 高さで倍率を下げると幅も一緒に痩せて、
+// 紙の右側が大きく余る。高さは行を詰めて合わせる。
 const fitRun = new Function([
-  L('  const PRINT_W ='), L('  const PRINT_H ='), L('  const PRINT_MIN_ZOOM ='),
-  'const PRINT_SIZES = {};',
-  'let printZoom = 1; let W = 0, H = 0;',
+  L('  const PRINT_W ='), L('  const PRINT_H ='),
+  L('  const PRINT_MIN_ZOOM ='), L('  const PRINT_CELL_MIN ='),
+  "const PRINT_SIZES = { '--cell-h': '15px' };",
+  'let printZoom = 1; let W = 0, H = 0; let CELL = null;',
+  // 印刷指定の写しは DOM が要る。ここでは着せずに素通りさせる
+  'function printMetrics_(){}',
   'const document = { documentElement: { style: {',
-  '  setProperty(){}, removeProperty(){} } } };',
-  'const $ = () => ({ scrollWidth: W, scrollHeight: H, offsetHeight: 0 });',
+  '  setProperty(k, v){ if (k === "--cell-h") { CELL = parseFloat(v);',
+  '    H = H * (CELL / 15); } },',
+  '  removeProperty(){} } } };',
+  'const $ = () => ({ scrollWidth: W, get scrollHeight(){ return H; } });',
   'document.querySelector = () => ({ offsetHeight: 0 });',
   grab('fitPrint_'),
-  'return { set: (w,h) => { W=w; H=h; }, fitPrint_, zoom: () => printZoom };',
+  'return { set: (w,h) => { W=w; H=h; CELL=null; }, fitPrint_,',
+  '         zoom: () => printZoom, cell: () => CELL };',
 ].join('\n'))();
 
-fitRun.set(1078, 400);          // 幅ぴったり・高さに余裕
+fitRun.set(1078, 400);
 check(fitRun.fitPrint_() === 1, '入りきるときは縮めない', String(fitRun.fitPrint_()));
 
 fitRun.set(1078, 900);          // 高さが1.4倍
-const z2 = fitRun.fitPrint_();
-check(z2 > 0.7 && z2 < 0.75, '高さで縮む', z2.toFixed(3));
+fitRun.fitPrint_();
+check(fitRun.zoom() === 1, '高さが余っても倍率は下げない（幅が痩せる）',
+  String(fitRun.zoom()));
+check(fitRun.cell() !== null && fitRun.cell() < 15,
+  '行を詰めて高さを合わせる', String(fitRun.cell()));
 
 fitRun.set(1600, 400);          // 幅が超過
 const z3 = fitRun.fitPrint_();
-check(z3 > 0.68 && z3 < 0.7, '幅でも縮む', z3.toFixed(3));
+check(z3 > 0.68 && z3 < 0.7, '幅が超えたときだけ倍率を下げる', z3.toFixed(3));
 
-fitRun.set(1078, 300);          // うんと小さい
+fitRun.set(1078, 300);
 check(fitRun.fitPrint_() === 1, '拡大はしない', String(fitRun.fitPrint_()));
 
-fitRun.set(1078, 4000);         // 極端
-check(fitRun.fitPrint_() < 0.2, '素の倍率はそのまま返す');
-check(fitRun.zoom() === 0.5, '実際に当てる倍率は下限で止める', String(fitRun.zoom()));
+fitRun.set(1078, 4000);         // 行が極端に多い
+fitRun.fitPrint_();
+check(fitRun.cell() >= 9, '行の高さは下限で止める', String(fitRun.cell()));
+check(fitRun.zoom() < 1, '詰めきれないときは倍率も下げる', String(fitRun.zoom()));
+check(fitRun.zoom() >= 0.5, '倍率の下限は守る', String(fitRun.zoom()));
+
+// 画面の見た目のまま測ると外す。注記は画面では入力欄、紙では 7pt の本文。
+// 実測で 244px も多く見積もり、要らない縮小がかかっていた。
+{
+  const fp = grab('fitPrint_');
+  check(/printMetrics_\(true\)/.test(fp) && fp.indexOf('printMetrics_(true)')
+        < fp.indexOf('scrollWidth'),
+    '測る前に印刷用の見た目を着せている');
+  check((fp.match(/printMetrics_\(false\)/g) || []).length >= 2,
+    '測り終えたら脱ぐ（早く返る道も含めて）');
+  const pm = grab('printMetrics_');
+  check(/\/print\/\.test/.test(pm), '@media print の指定を写している');
+  check(/zoom/.test(pm) && /replace/.test(pm),
+    '倍率だけは写さない（これから決めるので）');
+  // 印刷の寸法は一箇所からしか出ない。二重に書くと片方だけ直して食い違う
+  check(!/@media print\{:root\{[^}]*--cell-h:\s*\d/.test(src.replace(/\s+/g, '')),
+    '印刷の寸法を CSS に直書きしていない');
+}
 
 console.log('');
 console.log('■ document から探さずに書けているか（未挿入でも効くこと）');

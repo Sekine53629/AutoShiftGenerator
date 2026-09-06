@@ -546,7 +546,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     --ink: #000; --ink-soft: #222; --ink-faint: #444;
     --rule: #666; --rule-soft: #999;
   }
-  /* 表の寸法は PRINT_SIZES（JS）が入れる。測るときと刷るときで同じ値を使う */
+  /* 表の寸法は applyPrintSizes_（JS）が入れる。行の高さと列の幅は fitPrint_ が決める */
   /* 画面の色づけは紙に持ち込まない。読みにくいうえインクを食う */
   :root {
     --ground: #fff; --surface: #fff; --band: #eceff1; --agg: #f5f5f5;
@@ -2328,17 +2328,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   }
 
   /**
-   * 印刷を1枚に収める倍率を決める。
-   *
-   * 用紙は A4 横。余白は実物に合わせて 上下 1.9cm / 左 0.6cm / 右 0
-   * （docs/OUTPUT-FORMAT.md §6）。刷れる範囲は
-   *   幅  297 − 6      = 291mm ≒ 1100px（96dpi）
-   *   高さ 210 − 19×2  = 172mm ≒  650px
-   *
-   * 行数は人数と医師欄の行数で変わる。11名なら入るが15名だと溢れるので、
-   * 刷るたびに測って縮める。**拡大はしない**（1枚に満たないときは等倍）。
-   */
-  /**
    * 印刷したときの表の寸法。**測定にも印刷にもこの値を使う。**
    *
    * 画面の寸法（26px セル）のまま測ると、実際より1.7倍高く見積もって
@@ -2350,8 +2339,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const PRINT_SIZES = {
     '--cell-w': '26px', '--cell-h': '15px', '--name-w': '80px', '--agg-w': '32px'
   };
+  /** fitPrint_ が計算した寸法。無ければ PRINT_SIZES を使う */
+  const PRINT_FITTED = { '--cell-w': '--print-cell-w', '--cell-h': '--print-cell-h' };
   (function applyPrintSizes_() {
-    const body = Object.keys(PRINT_SIZES).map(k => k + ':' + PRINT_SIZES[k]).join(';');
+    const body = Object.keys(PRINT_SIZES).map(k => k + ':' + (PRINT_FITTED[k]
+      ? 'var(' + PRINT_FITTED[k] + ',' + PRINT_SIZES[k] + ')'
+      : PRINT_SIZES[k])).join(';');
     const st = document.createElement('style');
     st.textContent = '@media print{:root{' + body + '}}';
     document.head.appendChild(st);
@@ -2361,24 +2354,138 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const PRINT_H = 650;
   /** これより小さいと紙で読めない。下回るときは1枚に収めるのを諦める */
   const PRINT_MIN_ZOOM = 0.5;
+  /** 行の高さの下限。これ以下に詰めると記号が潰れる */
+  const PRINT_CELL_MIN = 9;
   let printZoom = 1;
+
+  /**
+   * 印刷用の指定を、測るあいだだけ画面に着せる。
+   *
+   * 画面の見た目のまま測ると外す。注記は画面では入力欄、紙では 7pt の本文。
+   * 実際、表以外の高さを 244px も多く見積もり、要らない縮小がかかっていた。
+   * @media print をそのまま書き写すので、印刷指定を直せば測る側も一緒に直る。
+   */
+  let measureStyle = null;
+  function printMetrics_(on) {
+    const root = document.documentElement;
+    if (!root.classList || !document.styleSheets) return;   // 測れない環境
+    if (!measureStyle) {
+      const scope = sel => sel.split(',').map(t => {
+        t = t.trim();
+        return (t === ':root' || t === 'html') ? 'html.measuring' : 'html.measuring ' + t;
+      }).join(',');
+      let css = '';
+      Array.from(document.styleSheets).forEach(sheet => {
+        let rules;
+        try { rules = sheet.cssRules; } catch (e) { return; }   // 他所の CSS は読めない
+        Array.from(rules || []).forEach(r => {
+          const mq = r.conditionText || (r.media && r.media.mediaText) || '';
+          if (!/print/.test(mq)) return;
+          Array.from(r.cssRules || []).forEach(q => {
+            if (!q.selectorText) return;
+            // zoom はここではかけない。倍率はこれから決める
+            const body = q.style.cssText.replace(/zoom\s*:[^;]*;?/g, '');
+            if (body.trim()) css += scope(q.selectorText) + '{' + body + '}\n';
+          });
+        });
+      });
+      measureStyle = document.createElement('style');
+      measureStyle.textContent = css;
+      document.head.appendChild(measureStyle);
+    }
+    root.classList.toggle('measuring', !!on);
+  }
+
+  /**
+   * 印刷の倍率と行の高さを決める。
+   *
+   * **倍率は横幅に合わせる。** 高さで倍率を下げると幅も一緒に痩せて、
+   * 紙の右側が大きく余る。以前はそうなっていた（15人で0.75倍、右に25%の余白）。
+   *
+   * 高さがはみ出すぶんは、倍率ではなく**行の高さ**で詰める。
+   * 行を詰めても横幅は変わらないので、表は紙いっぱいのまま入る。
+   *
+   * 行を詰めきれないほど行数が多いときだけ、最後に倍率を下げる。
+   */
   function fitPrint_() {
     const grid = $('grid');
     const head = document.querySelector('.page-head');
     const note = document.querySelector('.printnote');
     if (!grid) return 1;
-    // 印刷の寸法にしてから測る。画面の寸法で測ると高く見積もりすぎる
+
     const root = document.documentElement;
-    Object.keys(PRINT_SIZES).forEach(k => root.style.setProperty(k, PRINT_SIZES[k]));
+    const set = o => Object.keys(o).forEach(k => root.style.setProperty(k, o[k]));
+    const clear = () => Object.keys(PRINT_SIZES)
+      .forEach(k => root.style.removeProperty(k));
+
+    // 印刷の見た目にしてから測る。画面の寸法で測ると高く見積もりすぎる
+    printMetrics_(true);
+    set(PRINT_SIZES);
     const w = grid.scrollWidth;
-    const h = (head ? head.offsetHeight : 0) + grid.scrollHeight
+    const gridH = grid.scrollHeight;
+    const other = (head ? head.offsetHeight : 0)
       + (note ? note.offsetHeight : 0) + 12;   // 12px は行間の余裕
-    Object.keys(PRINT_SIZES).forEach(k => root.style.removeProperty(k));
-    if (!w || !h) return 1;
-    const raw = Math.min(1, PRINT_W / w, PRINT_H / h);
-    printZoom = Math.max(PRINT_MIN_ZOOM, raw);
-    document.documentElement.style.setProperty('--print-zoom', printZoom.toFixed(3));
-    return raw;
+    if (!w || !gridH) { clear(); printMetrics_(false); return 1; }
+
+    // 1. まず横幅に合わせる
+    let z = Math.min(1, PRINT_W / w);
+
+    // 2. その倍率で入る高さに、行を詰めて合わせる。
+    //    表の高さは行の高さに比例しない（罫線、文字の入る見出し行、最小高さ）。
+    //    比で当てると外すので、2点測って直線に当てはめる。
+    const baseH = parseFloat(PRINT_SIZES['--cell-h']);
+    const room = PRINT_H / z - other;             // 表に使える高さ（倍率をかける前）
+    let cellH = baseH;
+    if (gridH > room) {
+      set({ '--cell-h': PRINT_CELL_MIN + 'px' });
+      const minGridH = grid.scrollHeight;
+      // h = a*cellH + b
+      const a = (gridH - minGridH) / (baseH - PRINT_CELL_MIN);
+      cellH = a > 0
+        ? (room - (minGridH - a * PRINT_CELL_MIN)) / a
+        : PRINT_CELL_MIN;
+      cellH = Math.max(PRINT_CELL_MIN, Math.min(baseH, cellH));
+      set({ '--cell-h': cellH.toFixed(2) + 'px' });
+      // 当てはめの誤差を1回だけ詰める（小数の丸めで1〜2px はみ出す）
+      for (let i = 0; i < 4 && grid.scrollHeight > room && cellH > PRINT_CELL_MIN; i++) {
+        cellH = Math.max(PRINT_CELL_MIN, cellH - 0.5);
+        set({ '--cell-h': cellH.toFixed(2) + 'px' });
+      }
+    }
+    const fitH = grid.scrollHeight + other;
+
+    // 3. 行を詰めても入らないときだけ倍率を下げる
+    if (fitH * z > PRINT_H) z = Math.min(z, PRINT_H / fitH);
+    z = Math.max(PRINT_MIN_ZOOM, z);
+
+    // 4. 高さのために倍率を下げたぶん、日付の列を広げて横幅を使い切る。
+    //    列の幅は高さに響かない（記号は1〜2文字）ので、ここは広げるだけ得。
+    const baseW = parseFloat(PRINT_SIZES['--cell-w']);
+    let cellW = baseW;
+    if (z < 1 && w * z < PRINT_W) {
+      set({ '--cell-w': (baseW + 10) + 'px' });
+      const wideW = grid.scrollWidth;
+      const a = (wideW - w) / 10;                 // 列1pxあたり表が何px広がるか
+      if (a > 0) {
+        cellW = Math.max(baseW, Math.min(baseW * 2, baseW + (PRINT_W / z - w) / a));
+        set({ '--cell-w': cellW.toFixed(2) + 'px' });
+        // 当てはめの誤差で紙からはみ出さないよう、狭める側だけ詰める
+        for (let i = 0; i < 6 && grid.scrollWidth * z > PRINT_W && cellW > baseW; i++) {
+          cellW = Math.max(baseW, cellW - 0.5);
+          set({ '--cell-w': cellW.toFixed(2) + 'px' });
+        }
+      } else {
+        cellW = baseW;
+      }
+    }
+    clear();
+    printMetrics_(false);
+
+    printZoom = z;
+    root.style.setProperty('--print-zoom', printZoom.toFixed(3));
+    root.style.setProperty('--print-cell-h', cellH.toFixed(2) + 'px');
+    root.style.setProperty('--print-cell-w', cellW.toFixed(2) + 'px');
+    return z;
   }
 
   /* ═══ ルール違反の洗い出し ═════════════════════════════
