@@ -398,7 +398,15 @@ tr.aggrow .nm { font-weight: 700; }
   display: inline-block; flex: none;
 }
 .pn-memo { flex: 1; min-width: 0; }
-.pn-memo label { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
+.pn-memo label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--ink-soft); margin-bottom: 3px;
+}
+/* 欄の見出しに添えるボタン。押せると分かる程度に控えめにする */
+.linkish {
+  font-size: 11px; padding: 1px 7px; min-height: 0;
+  color: var(--ink-soft); background: transparent;
+}
 .pn-memo textarea {
   width: 100%; font: inherit; font-size: 12px; line-height: 1.7;
   padding: 6px 8px; border: 1px solid var(--rule-soft); border-radius: 3px;
@@ -691,7 +699,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <div class="printnote">
     <div class="pn-legend" id="pnLegend"></div>
     <div class="pn-memo">
-      <label for="monthMemo">この月の注記（印刷に出ます）</label>
+      <label for="monthMemo">この月の注記（印刷に出ます）
+        <button id="memoReset" class="linkish"
+          title="備考マスタの「注記の既定」を読み直します">既定に戻す</button>
+      </label>
       <textarea id="monthMemo" rows="5" spellcheck="false"
         placeholder="【休憩について】早番薬剤師→13時〜14時（薬剤師4名体制のときのみ、薬剤師3名の日は14時〜15時）&#10;【医事メンバー】○早番は受付で処方入力、▲遅番はピッキング、午後から交代&#10;【1on1日程】…"></textarea>
       <div class="pn-print" id="monthMemoPrint"></div>
@@ -846,6 +857,18 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   </p>
   <div class="mtwrap"><table class="mt" id="mtMark"></table></div>
   <div class="mtfoot"><button data-add="mark">行を追加</button></div>
+
+  <h2 style="margin-top:26px">注記の既定</h2>
+  <p class="lead">
+    シフト表の下に出る注記の、はじめの文面です。<b>毎月ほとんど同じ</b>なので、
+    ここに置いておき、月ごとに変わるところ（1on1 の日程など）だけ書き換えます。
+    月の欄をまだ触っていなければ、この文面が出ます。
+  </p>
+  <textarea id="memoDefault" rows="6" spellcheck="false"
+    style="width:100%;font:inherit;font-size:12px;line-height:1.7;padding:7px 9px;
+           border:1px solid var(--rule-soft);border-radius:3px;
+           background:var(--surface);color:var(--ink);resize:vertical"></textarea>
+  <p class="note" id="memoDefaultStat"></p>
 </div></section>
 
 <section class="panel" data-panel="leave"><div class="sheet">
@@ -1124,6 +1147,20 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         { id: 'mk4', label: '重要',         color: '#ff0000', desc: '', order: 4 }
       ],
 
+      /**
+       * 注記の既定。**毎月ほとんど同じ**なので、月ごとに一から書かせない。
+       * 月の欄がまだ触られていなければ、これを出す。
+       * 月ごとに変わるのは 1on1 の日程くらいで、そこだけ書き換える。
+       */
+      memoDefault:
+        '【休憩について】早番→13時〜14時（薬剤師4名体制のときのみ、'
+        + '薬剤師3名の日は14時〜15時）／その他メンバー→14時〜15時\n'
+        + '【医事メンバー】○早番は受付で処方入力、▲遅番はピッキング、'
+        + '午後から交代。▲→薬局に残り14時〜15時受付担当\n'
+        + '薬品発注担当（土曜日と祝日の前日は発注作業なし）\n'
+        + '備品発注日（週1）\n'
+        + '【1on1日程】',
+
       notes: [
         { id: 'n1', text: '銀行', desc: '銀行対応の日', order: 1 },
         { id: 'n2', text: '棚卸', desc: '棚卸の日',     order: 2 },
@@ -1284,6 +1321,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (db.rules.docRows === undefined) db.rules.docRows = seed.rules.docRows;
     if (db.rules.busyDocN === undefined) db.rules.busyDocN = seed.rules.busyDocN;
     if (db.rules.minOnDuty === undefined) db.rules.minOnDuty = seed.rules.minOnDuty;
+    if (typeof db.memoDefault !== 'string') db.memoDefault = seed.memoDefault;
     fixOldValues_(db, seed);
     // 真偽値ひとつだった頃の設定を3択に移す
     if (db.rules.floorOnlyWhenNoDoctor !== undefined) {
@@ -2158,6 +2196,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    * 印刷に出る凡例。シフトパターンマスタから作る。
    * 実物は「○　早　10:00〜19:00」の形で3つ並べている。
    */
+  /** 注記の既定を画面に出す */
+  function renderMemoDefault() {
+    const box = $('memoDefault');
+    if (!box) return;
+    box.value = DB.memoDefault || '';
+  }
+
   function renderPrintNote() {
     const box = $('pnLegend');
     box.textContent = '';
@@ -2189,7 +2234,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       box.appendChild(row);
     }
 
-    const memo = values.get(memoKey()) || '';
+    /**
+     * 月の欄がまだ触られていなければ既定を出す。**空にしたのとは違う。**
+     * 消す操作と、一度も触っていない状態を同じに扱うと、
+     * 消したそばから既定が戻ってきてしまう。
+     */
+    const memo = values.has(memoKey()) ? values.get(memoKey()) : (DB.memoDefault || '');
     $('monthMemo').value = memo;
     $('monthMemoPrint').textContent = memo;
   }
@@ -4272,7 +4322,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 一部だけ貼れるようにする（医師マスタだけ入れ替える、など）。
     // 全部を要求すると、試したいものだけ差し替えることができない
     const KEYS = ['stores', 'hours', 'closures', 'holidays', 'demand',
-                  'staff', 'doctors', 'patterns', 'notes', 'leave', 'rules', 'marks'];
+                  'staff', 'doctors', 'patterns', 'notes', 'leave', 'rules', 'marks',
+                  'memoDefault'];
     const present = master ? KEYS.filter(k => master[k] !== undefined) : [];
     if (!present.length && !parsed.shift) {
       dataStat('中身が見つかりません。' + KEYS.join(' / ') + ' か shift を含めてください。');
@@ -4289,6 +4340,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       : master.schemaVersion;
     migrateDb_(DB);        // 古い版の書き出しを貼られても動くようにする
     if (present.indexOf('stores') >= 0) syncActiveStore();
+    renderMemoDefault();
     save();
     // 社員が入れ替わるとセルのキー（社員ID）が合わなくなるので入力を捨てる。
     // それ以外は、貼られた行だけを入れ替える（下の shift の処理で行ごとに消す）
@@ -4438,9 +4490,27 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   window.addEventListener('beforeprint', fitPrint_);
 
+  $('memoDefault').addEventListener('input', () => {
+    DB.memoDefault = $('memoDefault').value;
+    save();
+    // すでに触っている月の文面は変えない。書いたものを上書きしない
+    $('memoDefaultStat').textContent =
+      'この文面は、まだ注記を触っていない月に出ます。'
+      + '書き換えた月はそのままです（「既定に戻す」で読み直せます）。';
+    renderPrintNote();
+  });
+
+  arm($('memoReset'), 'もう一度押すと読み直し', () => {
+    markEdited_();
+    values.delete(memoKey());     // 「触っていない」状態に戻す
+    renderPrintNote();
+    saveCells();
+  });
+
   $('monthMemo').addEventListener('input', () => {
     const v = $('monthMemo').value;
-    if (v) values.set(memoKey(), v); else values.delete(memoKey());
+    // 空にしたときも記録する。消さないと既定が戻ってきてしまう
+    values.set(memoKey(), v);
     $('monthMemoPrint').textContent = v;
     markEdited_();
     saveCells();
@@ -4485,6 +4555,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   Object.keys(COLS).forEach(renderMaster);
   renderRules();
+  renderMemoDefault();
 
   // **前回の続きから開く。** 保存してあるシフトを先に読み戻す。
   // これが無かったころは、再読み込みのたびに autoGenerate() が走って

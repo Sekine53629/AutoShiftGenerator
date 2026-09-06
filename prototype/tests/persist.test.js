@@ -180,5 +180,53 @@ ok('マスタの保存も、失敗を黙って捨てない', () => {
   assert.ok(/dbPersist = false/.test(save), 'save が失敗を握りつぶしている');
 });
 
+console.log('■ 注記の既定');
+
+// 注記は毎月ほとんど同じなので、既定を置いて月ごとに書き換える。
+// 「まだ触っていない」と「空にした」を見分けないと、消したそばから既定が戻る。
+const memoRun = (() => {
+  const src2 = src;
+  const grabMemo = () => {
+    const a = src2.indexOf("const memo = values.has(memoKey())");
+    return src2.slice(a, src2.indexOf(';', a) + 1);
+  };
+  return new Function([
+    'const values = new Map();',
+    'let curYm = "2026-10";',
+    'const DB = { memoDefault: "きほんの文面" };',
+    'const memoKey = () => "memo|" + curYm;',
+    'function read() { ' + grabMemo() + ' return memo; }',
+    'function write(v) { values.set(memoKey(), v); }',
+    'function reset() { values.delete(memoKey()); }',
+    'return { read, write, reset, month: v => { curYm = v; }, values };',
+  ].join('\n'))();
+})();
+
+ok('触っていない月は既定が出る', () => {
+  assert.strictEqual(memoRun.read(), 'きほんの文面');
+});
+
+ok('書き換えたらその文面が出る', () => {
+  memoRun.write('この月だけの文面');
+  assert.strictEqual(memoRun.read(), 'この月だけの文面');
+});
+
+ok('別の月は既定のまま', () => {
+  memoRun.month('2026-11');
+  assert.strictEqual(memoRun.read(), 'きほんの文面');
+  memoRun.month('2026-10');
+  assert.strictEqual(memoRun.read(), 'この月だけの文面', '元の月の文面が消えた');
+});
+
+ok('空にしたら既定は戻らない', () => {
+  memoRun.write('');
+  assert.strictEqual(memoRun.read(), '', '消したのに既定が戻ってきた');
+});
+
+ok('既定に戻すと読み直す', () => {
+  memoRun.reset();
+  assert.strictEqual(memoRun.read(), 'きほんの文面');
+});
+
 console.log(fail ? '\n■ ' + fail + ' 件 NG' : '\n■ すべて OK');
 process.exit(fail ? 1 : 0);
