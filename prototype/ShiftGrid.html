@@ -541,17 +541,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   margin: 1.9cm 0 1.9cm 0.6cm;
 }
 @media print {
-  /* 紙は黒で刷る。画面の淡い色をそのまま刷ると読めない */
+  /**
+   * 紙は黒と白で刷る。画面の淡い色も、店舗色も、暗い画面の色も持ち込まない。
+   * 読みにくいうえインクを食う。
+   *
+   * **!important が要る。** 店舗色は applyStoreColor_ が :root の
+   * インライン style に入れるので、ふつうの指定では勝てない。
+   * 暗い画面のまま刷ると、黒地に黒文字の紙が出る。
+   */
   :root {
-    --ink: #000; --ink-soft: #222; --ink-faint: #444;
-    --rule: #666; --rule-soft: #999;
+    --ink: #000 !important; --ink-soft: #222 !important; --ink-faint: #444 !important;
+    --rule: #666 !important; --rule-soft: #999 !important;
+    --ground: #fff !important; --surface: #fff !important;
+    --band: #eceff1 !important; --agg: #f5f5f5 !important;
+    --outside: #f0f0f0 !important;
+    --na: #d0cece !important;      /* 出られない曜日。実物と同じ灰 */
   }
   /* 表の寸法は applyPrintSizes_（JS）が入れる。行の高さと列の幅は fitPrint_ が決める */
-  /* 画面の色づけは紙に持ち込まない。読みにくいうえインクを食う */
-  :root {
-    --ground: #fff; --surface: #fff; --band: #eceff1; --agg: #f5f5f5;
-    --outside: #f0f0f0;
-  }
   #grid td, #grid th, .page-head, .printnote { color: #000; }
   /* 0 を薄くする画面用の見せ方は、紙では消えてしまう */
   #grid td.zero, #grid .agcol { color: #000 !important; opacity: 1 !important; }
@@ -680,6 +686,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       <button id="clearStaff" title="開いている月のスタッフ・派遣・事務・備考・色の印を消します。医師名欄は残ります"
         >シフトを消す（医師以外）</button>
       <span class="note" id="undoStat"></span>
+    </div>
+    <div class="group">
+      <span class="lbl">出力</span>
+      <button id="outPdf"
+        title="印刷画面を開きます。保存先に「PDF に保存」を選んでください">PDF</button>
+      <button id="outXlsx"
+        title="開いているスプレッドシートに、新しいシートとして書き出します（Google に繋がっていないときは .xlsx で保存します）"
+        >スプレッドシート</button>
+      <span class="note" id="outStat"></span>
     </div>
   </div>
 
@@ -1018,7 +1033,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    * 配った控えと手元のものが同じか、これが無いと分からない。
    * コードを変えたら必ず上げること（GAS 側の CONFIG.APP_VERSION と同じ考え方）。
    */
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
   const STORE_KEY = 'shiftgrid.db.v1';      // マスタ
   const CELLS_KEY = 'shiftgrid.cells.v1';   // シフトの中身（月ごとの注記も含む）
   /** 月ごとの注記のキー。'memo|yyyy-mm' で values に同居させる */
@@ -4759,6 +4774,480 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       }
     } catch (e) { /* 使えない環境では何もしない */ }
   })();
+
+  /* ═══ 出力（PDF・Excel）═════════════════════════════════
+     紙に出すのが最後の仕事なので、ここは画面の見た目をそのまま写す。
+     色も寸法も、**印刷したときの値**を読む（printMetrics_ を着せて測る）。
+     画面のままの色を写すと、Excel と PDF で別の色になる。 */
+
+  /** 出力の様子。押したのに何も起きない、を作らない */
+  function outStat(text) {
+    const el2 = $('outStat');
+    if (el2) el2.textContent = text || '';
+  }
+
+  /**
+   * PDF は「印刷」で出す。ブラウザの印刷画面で「PDFに保存」を選ぶ。
+   *
+   * 自前で PDF を組む道もあるが、日本語の埋め込みフォントが要る。
+   * 1ファイルで配る作りなので、フォントを抱えると数MBになる。
+   * 印刷経路なら fitPrint_ の倍率もそのまま効く。
+   *
+   * 保存名はブラウザが document.title から作る。刷るあいだだけ差し替える。
+   */
+  function exportPdf() {
+    const y = Number($('yy').value), m = Number($('mm').value);
+    const name = exportFileName_(y, m);
+    const keep = document.title;
+    if (name) document.title = name;
+    const restore = () => { document.title = keep; };
+    window.addEventListener('afterprint', restore, { once: true });
+    // afterprint が来ない環境（古い Safari）でも必ず戻す
+    setTimeout(restore, 60000);
+    try {
+      window.print();
+      outStat(name
+        ? '印刷画面で「PDF に保存」を選んでください。保存名: ' + name + '.pdf'
+        : '印刷画面を開きました');
+    } catch (e) {
+      restore();
+      outStat('印刷画面を開けませんでした: ' + e.message);
+    }
+  }
+
+  /* ── zip（.xlsx の入れ物）──────────────────────────────
+     xlsx は XML を集めた zip。圧縮せずに詰める（store）。
+     Excel は無圧縮でも開く。deflate を自前で書くより確かで、
+     1か月ぶんなら大きさも問題にならない。 */
+
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[i] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function crc32_(bytes) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  const utf8_ = s => new TextEncoder().encode(s);
+
+  /**
+   * 無圧縮 zip を組む。files は [{ name, data(Uint8Array) }]。
+   * 日時は 1980-01-01 固定。中身が同じなら同じバイト列になり、
+   * 出力が変わっていないことを確かめられる。
+   */
+  function zipStore_(files) {
+    const parts = [];
+    const central = [];
+    let offset = 0;
+    const u16 = v => [v & 0xFF, (v >>> 8) & 0xFF];
+    const u32 = v => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
+
+    files.forEach(f => {
+      const name = utf8_(f.name);
+      const crc = crc32_(f.data);
+      const head = [].concat(
+        u32(0x04034b50), u16(20), u16(0x0800), u16(0),   // 0x0800: 名前は UTF-8
+        u16(0), u16(0x0021),                             // 時刻・日付（1980-01-01）
+        u32(crc), u32(f.data.length), u32(f.data.length),
+        u16(name.length), u16(0));
+      parts.push(new Uint8Array(head), name, f.data);
+      central.push([].concat(
+        u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0),
+        u16(0), u16(0x0021),
+        u32(crc), u32(f.data.length), u32(f.data.length),
+        u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset)));
+      central.push(name);
+      offset += head.length + name.length + f.data.length;
+    });
+
+    const cd = [];
+    central.forEach(c => (Array.isArray(c) ? c : Array.from(c)).forEach(b => cd.push(b)));
+    const eocd = [].concat(
+      u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length),
+      u32(cd.length), u32(offset), u16(0));
+
+    let total = offset + cd.length + eocd.length;
+    const out = new Uint8Array(total);
+    let at = 0;
+    parts.forEach(p => { out.set(p, at); at += p.length; });
+    out.set(new Uint8Array(cd), at); at += cd.length;
+    out.set(new Uint8Array(eocd), at);
+    return out;
+  }
+
+  const xmlEsc_ = s => String(s === undefined || s === null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  /** 0 -> A, 26 -> AA。列番号は0から数える */
+  function colName_(i) {
+    let s = '';
+    for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+      s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+    }
+    return s;
+  }
+
+  /* ── 見た目を読む ─────────────────────────────────────── */
+
+  /** 計算後の背景色を #rrggbb で返す。塗っていなければ null */
+  function bgHex_(node) {
+    const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/
+      .exec(getComputedStyle(node).backgroundColor || '');
+    if (!m) return null;
+    if (m[4] !== undefined && Number(m[4]) === 0) return null;    // 透明
+    const hex = [1, 2, 3].map(i => Number(m[i]).toString(16).padStart(2, '0')).join('');
+    return hex === 'ffffff' ? null : '#' + hex;                   // 白は塗らない
+  }
+
+  const cellText_ = td => {
+    const inp = td.querySelector('input');
+    if (inp) return inp.value;
+    const v = td.querySelector('.v');
+    return (v ? v.textContent : td.textContent) || '';
+  };
+
+  /**
+   * 画面の表を、値と色の格子にする。
+   *
+   * **DOM から読む。** 集計は recalc が画面に書いた値がすべてで、
+   * ここで数え直すと、直したときに片方だけ古くなる。
+   */
+  function sheetModel_() {
+    const grid = $('grid');
+    const rows = [];
+    printMetrics_(true);       // 刷るときの色で測る。画面の色を写すと PDF と食い違う
+    try {
+      Array.from(grid.querySelectorAll('tr')).forEach(tr => {
+        const cls = tr.className || '';
+        const kind = /r-date/.test(cls) ? 'date'
+          : /r-dow/.test(cls) ? 'dow'
+          : /r-repeat/.test(cls) ? 'date'
+          : /bandrow/.test(cls) ? 'band'
+          : /aggrow/.test(cls) ? 'agg' : 'body';
+        const cells = [];
+        Array.from(tr.children).forEach(td => {
+          const span = Number(td.getAttribute('colspan') || 1);
+          const text = cellText_(td).trim();
+          const isNum = /agcol|num/.test(td.className) && /^-?\d+$/.test(text);
+          cells.push({
+            v: text,
+            num: isNum,
+            bg: bgHex_(td),
+            name: /\bnm\b/.test(td.className),
+            span: span
+          });
+          for (let k = 1; k < span; k++) cells.push(null);   // 結合の続き
+        });
+        rows.push({ kind: kind, cells: cells });
+      });
+    } finally {
+      printMetrics_(false);
+    }
+
+    const y = Number($('yy').value), m = Number($('mm').value);
+    return {
+      title: $('sheetTitle').textContent.trim(),
+      quota: $('quotaNote').textContent.trim(),
+      store: $('storeName').textContent.trim(),
+      // 記号の凡例は文で、色の凡例は見本セルで出す。
+      // 色を文字で「緑」と書いても、配られた人には照合できない
+      legend: Array.from($('pnLegend').children)
+        .filter(n => !/mkrow/.test(n.className || ''))
+        .map(n => n.textContent.trim()).filter(Boolean),
+      marks: byOrder(DB.marks || []).filter(k => k.label)
+        .map(k => ({ color: k.color, label: k.label + (k.desc ? '（' + k.desc + '）' : '') })),
+      memo: String($('monthMemo').value || '').split(/\r?\n/).filter(t => t.trim()),
+      cols: (rows[0] ? rows[0].cells.length : 1),
+      dayCols: DAY_COLS,          // どこから集計列かをサーバが列幅に使う
+      storeId: activeStore,       // 誰の店の表かは、サーバ側で改めて確かめる
+      year: y, month: m,
+      rows: rows
+    };
+  }
+
+  /* ── xlsx を組む ──────────────────────────────────────── */
+
+  /**
+   * 字体は実物の計測に合わせる（docs/OUTPUT-FORMAT.md §3）。
+   * 日付行だけ Arial、曜日行だけ ＭＳ Ｐゴシック、ほかは游ゴシック。
+   */
+  const XL_FONTS = [
+    { name: '游ゴシック', sz: 11, b: 1 },     // 0 本文
+    { name: '游ゴシック', sz: 28, b: 1 },     // 1 表題
+    { name: '游ゴシック', sz: 10, b: 1 },     // 2 公休告知
+    { name: 'Arial', sz: 13, b: 1 },          // 3 日付行
+    { name: 'ＭＳ Ｐゴシック', sz: 11, b: 1 }, // 4 曜日行
+    { name: '游ゴシック', sz: 11, b: 0 },     // 5 集計の見出し
+    { name: '游ゴシック', sz: 9, b: 0 }       // 6 凡例・注記
+  ];
+
+  /** 実物の列幅（文字数単位）。§1 */
+  const XL_W_NAME = 12.4, XL_W_DAY = 5.5, XL_W_AGG = 6.6;
+
+  function buildXlsx_(mo) {
+    // 使った (字体, 色, 罫線, 寄せ) の組だけを styles.xml に出す
+    const fills = ['none', 'gray125'];        // 0,1 は予約席。Excel の決まり
+    const styles = [];
+    const seen = {};
+    const styleId = (font, bg, border, left) => {
+      let fi = 0;
+      if (bg) {
+        fi = fills.indexOf(bg);
+        if (fi < 0) { fills.push(bg); fi = fills.length - 1; }
+      }
+      const k = font + '/' + fi + '/' + (border ? 1 : 0) + '/' + (left ? 1 : 0);
+      if (seen[k] === undefined) {
+        seen[k] = styles.length;
+        styles.push({ font: font, fill: fi, border: border ? 1 : 0, left: !!left });
+      }
+      return seen[k];
+    };
+    styleId(0, null, false, false);           // 既定（s=0）は罫線なしの本文
+
+    const sheetRows = [];
+    let rowNo = 0;
+    const merges = [];
+    const put = (cells, ht) => {
+      rowNo++;
+      sheetRows.push({ n: rowNo, ht: ht, cells: cells });
+      return rowNo;
+    };
+    const C = (v, opt) => {
+      const o = opt || {};
+      return { v: v, num: !!o.num, s: styleId(o.font || 0, o.bg || null, o.border, o.left) };
+    };
+
+    // 1行目: 表題（A1:C1）・公休告知（D1:F1）・店名（G1:J1）。§5
+    const head1 = [C(mo.title, { font: 1 }), null, null,
+                   C(mo.quota, { font: 2 }), null, null,
+                   C(mo.store, { font: 2 }), null, null, null];
+    const r1 = put(head1, 48);
+    merges.push('A' + r1 + ':C' + r1, 'D' + r1 + ':F' + r1, 'G' + r1 + ':J' + r1);
+    put([], 6);                               // 表題と表のあいだを空ける
+
+    mo.rows.forEach(row => {
+      const font = row.kind === 'date' ? 3 : row.kind === 'dow' ? 4
+        : row.kind === 'agg' ? 5 : 0;
+      const cells = row.cells.map(c => {
+        if (!c) return null;                  // 結合の続き
+        // 集計の見出し（○早番 など）は日付行に同居する。字体は本文側
+        const f = (row.kind === 'date' && /[^\d]/.test(c.v) && c.v) ? 5 : font;
+        return C(c.v, {
+          font: c.name ? 0 : f,
+          bg: c.bg,
+          border: true,
+          left: false,
+          num: c.num
+        });
+      });
+      const at = put(cells, 18);
+      // 帯（薬剤師・派遣・事務・備考）は氏名欄から右端まで結合する
+      if (row.kind === 'band') {
+        merges.push('A' + at + ':' + colName_(mo.cols - 1) + at);
+      }
+    });
+
+    put([], 6);
+    mo.legend.forEach(t => put([C(t, { font: 6, left: true })], 14));
+    // 色の凡例。A に見本セル、隣に意味。実物も色だけのセルを置いている（§4）
+    mo.marks.forEach(k => {
+      const at = put([C('', { bg: k.color, border: true }),
+                      C(k.label, { font: 6, left: true })], 14);
+      merges.push('B' + at + ':J' + at);
+    });
+    mo.memo.forEach(t => put([C(t, { font: 6, left: true })], 14));
+
+    /* ── XML ── */
+    const sheetXml = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+      '<sheetPr><pageSetUpPr fitToPage="0"/></sheetPr>',
+      '<sheetViews><sheetView tabSelected="1" workbookViewId="0" showGridLines="0">',
+      '<pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/>',
+      '</sheetView></sheetViews>',
+      '<sheetFormatPr defaultRowHeight="18"/>',
+      '<cols>',
+      '<col min="1" max="1" width="' + XL_W_NAME + '" customWidth="1"/>',
+      '<col min="2" max="' + (1 + DAY_COLS) + '" width="' + XL_W_DAY + '" customWidth="1"/>',
+      '<col min="' + (2 + DAY_COLS) + '" max="' + mo.cols + '" width="' + XL_W_AGG
+        + '" customWidth="1"/>',
+      '</cols><sheetData>'
+    ];
+    sheetRows.forEach(r => {
+      const inner = r.cells.map((c, i) => {
+        if (!c || (c.v === '' && !c.s)) return '';
+        const ref = colName_(i) + r.n;
+        if (c.num) {
+          return '<c r="' + ref + '" s="' + c.s + '"><v>' + xmlEsc_(c.v) + '</v></c>';
+        }
+        if (c.v === '') return '<c r="' + ref + '" s="' + c.s + '"/>';
+        return '<c r="' + ref + '" s="' + c.s + '" t="inlineStr"><is><t xml:space="preserve">'
+          + xmlEsc_(c.v) + '</t></is></c>';
+      }).join('');
+      sheetXml.push('<row r="' + r.n + '"'
+        + (r.ht ? ' ht="' + r.ht + '" customHeight="1"' : '') + '>' + inner + '</row>');
+    });
+    sheetXml.push('</sheetData>');
+    if (merges.length) {
+      sheetXml.push('<mergeCells count="' + merges.length + '">'
+        + merges.map(m => '<mergeCell ref="' + m + '"/>').join('') + '</mergeCells>');
+    }
+    // 印刷設定は実物の計測どおり（§6）。右余白 0 で横1枚に詰める
+    sheetXml.push('<printOptions/>',
+      '<pageMargins left="0.236" right="0" top="0.748" bottom="0.748"'
+      + ' header="0.315" footer="0.315"/>',
+      '<pageSetup paperSize="9" scale="61" orientation="landscape"/>',
+      '</worksheet>');
+
+    const stylesXml = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+      '<fonts count="' + XL_FONTS.length + '">',
+      XL_FONTS.map(f => '<font>' + (f.b ? '<b/>' : '') + '<sz val="' + f.sz + '"/>'
+        + '<name val="' + xmlEsc_(f.name) + '"/></font>').join(''),
+      '</fonts>',
+      '<fills count="' + fills.length + '">',
+      fills.map(f => (f === 'none' || f === 'gray125')
+        ? '<fill><patternFill patternType="' + f + '"/></fill>'
+        : '<fill><patternFill patternType="solid"><fgColor rgb="FF'
+          + f.slice(1).toUpperCase() + '"/><bgColor indexed="64"/></patternFill></fill>')
+        .join(''),
+      '</fills>',
+      '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>',
+      '<border><left style="thin"><color rgb="FF808080"/></left>',
+      '<right style="thin"><color rgb="FF808080"/></right>',
+      '<top style="thin"><color rgb="FF808080"/></top>',
+      '<bottom style="thin"><color rgb="FF808080"/></bottom><diagonal/></border></borders>',
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>',
+      '<cellXfs count="' + styles.length + '">',
+      styles.map(s => '<xf numFmtId="0" fontId="' + s.font + '" fillId="' + s.fill
+        + '" borderId="' + s.border + '" xfId="0" applyFont="1" applyFill="1"'
+        + ' applyBorder="1" applyAlignment="1">'
+        // 実物はすべて横も縦も中央。氏名列も中央（§3）
+        + '<alignment horizontal="' + (s.left ? 'left' : 'center')
+        + '" vertical="center"/></xf>').join(''),
+      '</cellXfs>',
+      '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>',
+      '</styleSheet>'
+    ];
+
+    const sheetName = 'R' + (mo.year - WAREKI_BASE) + '.' + mo.month + '月';
+    const files = [
+      { name: '[Content_Types].xml', text: [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+        '<Default Extension="xml" ContentType="application/xml"/>',
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>',
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>',
+        '</Types>'].join('') },
+      { name: '_rels/.rels', text: [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>',
+        '</Relationships>'].join('') },
+      { name: 'xl/workbook.xml', text: [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"',
+        ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
+        '<sheets><sheet name="' + xmlEsc_(sheetName) + '" sheetId="1" r:id="rId1"/></sheets>',
+        '</workbook>'].join('') },
+      { name: 'xl/_rels/workbook.xml.rels', text: [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>',
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>',
+        '</Relationships>'].join('') },
+      { name: 'xl/styles.xml', text: stylesXml.join('') },
+      { name: 'xl/worksheets/sheet1.xml', text: sheetXml.join('') }
+    ];
+    return zipStore_(files.map(f => ({ name: f.name, data: utf8_(f.text) })));
+  }
+
+  /**
+   * 保存させる。**枠の中（iframe）では download が効かないことがある。**
+   * 効かなかったときに黙って終わると、保存できたと思われてしまう。
+   */
+  function saveBlob_(name, bytes, mime) {
+    const blob = new Blob([bytes], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+  }
+
+  /** Web アプリとして開かれているか。単体の HTML では Google に繋がらない */
+  const onServer = () => !!(window.google && google.script && google.script.run);
+
+  /**
+   * スプレッドシートへ出力する。**新しいシートを挿す。**
+   * 既にある表は触らない。作り直しても、前に配ったものが残る。
+   */
+  function exportSheet() {
+    let model;
+    try {
+      model = sheetModel_();
+    } catch (e) {
+      console.error('[exportSheet] ' + e.message + ' / ' + e.stack);
+      outStat('表を読み取れませんでした: ' + e.message);
+      return;
+    }
+    if (!onServer()) { exportXlsx_(model); return; }   // 単体で開いているとき
+
+    outStat('スプレッドシートに書き出しています…');
+    $('outXlsx').disabled = true;
+    google.script.run
+      .withSuccessHandler(res => {
+        $('outXlsx').disabled = false;
+        outStat('シート「' + (res && res.sheetName) + '」を追加しました'
+          + (res && res.url ? '（' + res.url + '）' : ''));
+      })
+      .withFailureHandler(err => {
+        $('outXlsx').disabled = false;
+        // 何が起きたかを必ず出す。黙って終わると、出せたと思われる
+        outStat('書き出せませんでした: ' + (err && err.message ? err.message : err));
+      })
+      .apiExportToSheet(model);
+  }
+
+  /**
+   * Google に繋がっていないときの控え。.xlsx で保存する。
+   * スプレッドシートには、この .xlsx をそのまま読み込める。
+   */
+  function exportXlsx_(model) {
+    const y = Number($('yy').value), m = Number($('mm').value);
+    const name = exportFileName_(y, m, 'xlsx') || 'シフト.xlsx';
+    try {
+      const bytes = buildXlsx_(model || sheetModel_());
+      saveBlob_(name, bytes,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      outStat('Google に繋がっていないので .xlsx で保存しました: ' + name + '（'
+        + Math.round(bytes.length / 1024).toLocaleString() + ' KB）。'
+        + 'スプレッドシートに読み込めます。'
+        + 'ダウンロードが始まらないときは、ブラウザの保存許可を確認してください');
+    } catch (e) {
+      console.error('[exportXlsx_] ' + e.message + ' / ' + e.stack);
+      outStat('書き出せませんでした: ' + e.message);
+    }
+  }
+
+  $('outPdf').addEventListener('click', exportPdf);
+  $('outXlsx').addEventListener('click', exportSheet);
 
   /* ═══ 起動 ═════════════════════════════════════════════ */
   const now = new Date();

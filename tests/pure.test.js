@@ -1934,6 +1934,207 @@ test('年月日は範囲外を黙って丸めない', function () {
   assert.throws(function () { sandbox.requireDay_(2026, 9, 0); }, /はありません/);
 });
 
+// ---- スプレッドシートへの出力 -----------------------------------------
+//
+// 実際にシートへ書く唯一の道なので、偽のシートを当てて、
+// 「何回・どこへ・何を」書いたかを見る。
+// セル単位で書いていないこと（Tier 2/3）と、数式を無効化していること
+// （画面から来た "=IMPORTRANGE(...)" がそのまま数式になるのを止める）が要点。
+
+// 実行ログも同じブックに書くので、シートごとに別々に記録する。
+// 1つにまとめると、ログの書き込みが出力の回数に混ざる
+function fakeSpreadsheet() {
+  const bySheet = {};
+  const order = [];
+  function makeSheet(name) {
+    const calls = { setValues: 0, setBackgrounds: 0, merges: [], widths: [], heights: 0 };
+    const range = {
+      setValues: function (v) { calls.values = v; calls.setValues++; return range; },
+      setBackgrounds: function (v) { calls.backs = v; calls.setBackgrounds++; return range; },
+      setFontWeights: function (v) { calls.weights = v; return range; },
+      setFontFamilies: function (v) { calls.families = v; return range; },
+      setFontSizes: function (v) { calls.sizes = v; return range; },
+      setHorizontalAlignment: function (v) { calls.hAlign = v; return range; },
+      setVerticalAlignment: function (v) { calls.vAlign = v; return range; },
+      setBorder: function () { calls.border = true; return range; },
+      setValue: function () { return range; },
+      merge: function () { return range; },
+      getValues: function () { return [[]]; },
+    };
+    const sheet = {
+      getName: function () { return name; },
+      getSheetId: function () { return 123; },
+      getLastRow: function () { return 0; },
+      getLastColumn: function () { return 0; },
+      getMaxRows: function () { return 1000; },
+      appendRow: function () { return sheet; },
+      getRange: function (r, c, n, w) {
+        if (n === 1) calls.merges.push([r, c, w]);        // 結合に使う1行の範囲
+        else if (n) calls.box = [r, c, n, w];
+        return range;
+      },
+      setRowHeight: function () { calls.heights++; return sheet; },
+      setRowHeights: function (r, n) { calls.heights++; calls.hRows =
+        (calls.hRows || 0) + n; return sheet; },
+      setColumnWidth: function (c, px) { calls.widths.push([c, 1, px]); return sheet; },
+      setColumnWidths: function (c, n, px) { calls.widths.push([c, n, px]); return sheet; },
+      setHiddenGridlines: function () { return sheet; },
+      setFrozenRows: function (n) { calls.frozen = n; return sheet; },
+      deleteRows: function () { return sheet; },
+    };
+    bySheet[name] = { sheet: sheet, calls: calls };
+    order.push(name);
+    return sheet;
+  }
+  const ss = {
+    getUrl: function () { return 'https://example.invalid/ss'; },
+    getNumSheets: function () { return order.length; },
+    getSheetByName: function (n) { return bySheet[n] ? bySheet[n].sheet : null; },
+    insertSheet: function (n) { return makeSheet(n); },
+  };
+  return {
+    ss: ss,
+    get sheets() { return order.filter(function (n) { return /シフト/.test(n); }); },
+    callsFor: function (n) { return bySheet[n].calls; },
+  };
+}
+
+function withFakeSs(fn) {
+  const fake = fakeSpreadsheet();
+  const keep = sandbox.SpreadsheetApp.getActive;
+  sandbox.SpreadsheetApp.getActive = function () { return fake.ss; };
+  try {
+    const out = fn(fake);
+    return { out: out, fake: fake, calls: fake.callsFor(out.sheetName) };
+  } finally { sandbox.SpreadsheetApp.getActive = keep; }
+}
+
+const cellOf = function (v, o) {
+  return Object.assign({ v: v, num: false, bg: null, name: false, span: 1 }, o);
+};
+const MODEL_OUT = {
+  title: 'R8.8月',
+  quota: '土日公休10回',
+  store: 'さくら薬局北口店',
+  legend: ['○早番　10:00〜19:00'],
+  marks: [{ color: '#a9d18e', label: '薬品発注担当' }],
+  memo: ['【休憩について】13時〜14時'],
+  cols: 5, dayCols: 3,
+  year: 2026, month: 8,
+  rows: [
+    { kind: 'date', cells: [cellOf('医師名', { name: true }), cellOf('1', { bg: '#b8c6da' }),
+                            cellOf('2'), cellOf('3'), cellOf('公休')] },
+    { kind: 'band', cells: [cellOf('薬剤師', { name: true, span: 5 }), null, null, null, null] },
+    { kind: 'body', cells: [cellOf('薬剤師 1', { name: true }), cellOf('公休'),
+                            cellOf('○', { bg: '#a9d18e' }), cellOf(''), cellOf('11', { num: true })] },
+  ],
+};
+
+test('出力は範囲ごとに1回だけ書く（セル単位で回さない）', function () {
+  const r = withFakeSs(function () { return sandbox.exportModelToSheet_(MODEL_OUT); });
+  assert.strictEqual(r.calls.setValues, 1, '値の書き込みが1回でない');
+  assert.strictEqual(r.calls.setBackgrounds, 1, '色の書き込みが1回でない');
+  // 38列×40行をセル単位で回すと 1,500 往復になり、6分の制限に触れる
+  assert.deepStrictEqual(r.calls.box.slice(0, 2), [1, 1], '左上から書いていない');
+  assert.strictEqual(r.calls.box[3], 5, '列数が合わない');
+});
+
+test('新しいシートを挿す。既にある表は触らない', function () {
+  const r = withFakeSs(function () { return sandbox.exportModelToSheet_(MODEL_OUT); });
+  assert.strictEqual(r.fake.sheets.length, 1, 'シートを1枚だけ作る');
+  assert.strictEqual(r.fake.sheets[0], 'さくら薬局北口店R08.08月シフト',
+    'ファイル名の規則と同じ名前になっていない');
+  assert.strictEqual(r.out.sheetName, r.fake.sheets[0]);
+  assert.ok(/#gid=/.test(r.out.url), 'シートの URL を返していない');
+});
+
+test('同じ月を2回出しても、前のシートを消さない', function () {
+  const fake = fakeSpreadsheet();
+  const keep = sandbox.SpreadsheetApp.getActive;
+  sandbox.SpreadsheetApp.getActive = function () { return fake.ss; };
+  try {
+    sandbox.exportModelToSheet_(MODEL_OUT);
+    sandbox.exportModelToSheet_(MODEL_OUT);
+  } finally { sandbox.SpreadsheetApp.getActive = keep; }
+  // 配ったあとに作り直すことがある。上書きすると、どちらを配ったか分からなくなる
+  assert.deepStrictEqual(fake.sheets,
+    ['さくら薬局北口店R08.08月シフト', 'さくら薬局北口店R08.08月シフト (2)']);
+});
+
+test('画面から来た文字列は、シートで数式にならない', function () {
+  const evil = JSON.parse(JSON.stringify(MODEL_OUT));
+  evil.rows[2].cells[1].v = '=IMPORTRANGE("他所のブック","A1")';
+  evil.rows[2].cells[3].v = '@SUM(A1)';
+  evil.memo = ['=1+1'];
+  const r = withFakeSs(function () { return sandbox.exportModelToSheet_(evil); });
+  const flat = [].concat.apply([], r.calls.values).map(String);
+  flat.forEach(function (v) {
+    assert.ok(!/^[=+@]/.test(v), '数式として入る値が残っている: ' + v);
+  });
+  // 消すのではなく無効化する。中身は読めるままにしておく
+  assert.ok(flat.indexOf('\'=IMPORTRANGE("他所のブック","A1")') >= 0,
+    '中身まで消してしまっている');
+});
+
+test('画面で付いていた色が、そのままシートの塗りになる', function () {
+  const r = withFakeSs(function () { return sandbox.exportModelToSheet_(MODEL_OUT); });
+  const flat = [].concat.apply([], r.calls.backs);
+  assert.ok(flat.indexOf('#b8c6da') >= 0, '土曜の色が落ちている');
+  assert.ok(flat.indexOf('#a9d18e') >= 0, '色の印が落ちている');
+});
+
+test('列幅は日付列と集計列で分ける（実物の計測どおり）', function () {
+  const r = withFakeSs(function () { return sandbox.exportModelToSheet_(MODEL_OUT); });
+  const w = r.calls.widths;
+  assert.strictEqual(w.length, 3, '氏名・日付・集計の3回で済ませていない');
+  assert.deepStrictEqual(w[0].slice(0, 2), [1, 1], '氏名列');
+  assert.deepStrictEqual(w[1].slice(0, 2), [2, 3], '日付列（dayCols ぶん）');
+  assert.deepStrictEqual(w[2].slice(0, 2), [5, 1], '集計列');
+  assert.ok(w[1][2] < w[0][2], '日付列が氏名列より広い');
+});
+
+test('区分の帯は右端まで結合する', function () {
+  const r = withFakeSs(function () { return sandbox.exportModelToSheet_(MODEL_OUT); });
+  const wide = r.calls.merges.filter(function (m) { return m[2] === 5; });
+  assert.ok(wide.length >= 1, '帯が右端まで結合されていない');
+});
+
+test('凡例の色は、色だけのセルで出す', function () {
+  const r = withFakeSs(function () { return sandbox.exportModelToSheet_(MODEL_OUT); });
+  const rows = r.calls.values;
+  const i = rows.findIndex(function (row) { return row[1] === '薬品発注担当'; });
+  assert.ok(i >= 0, '色の凡例が出ていない');
+  assert.strictEqual(rows[i][0], '', '見本セルに文字を入れている');
+  assert.strictEqual(r.calls.backs[i][0], '#a9d18e', '見本セルが塗られていない');
+});
+
+test('表が空でも落ちない', function () {
+  const empty = Object.assign({}, MODEL_OUT, { rows: [], legend: [], marks: [], memo: [] });
+  const r = withFakeSs(function () { return sandbox.exportModelToSheet_(empty); });
+  assert.ok(r.out.rows >= 1, '行が1つも無い');
+});
+
+test('中身の無い指示は断る', function () {
+  quiet(function () {
+    assert.throws(function () { sandbox.exportModelToSheet_(null); }, /表の中身がありません/);
+    assert.throws(function () { sandbox.exportModelToSheet_({}); }, /表の中身がありません/);
+  });
+});
+
+test('行の高さは、同じ値が続くところをまとめて渡す', function () {
+  const r = withFakeSs(function () { return sandbox.exportModelToSheet_(MODEL_OUT); });
+  // 1行ずつ呼ぶと 40 往復になる。ほとんどの行は同じ高さ
+  assert.ok(r.calls.heights < r.out.rows,
+    '行ごとに呼んでいる（' + r.calls.heights + ' 回 / ' + r.out.rows + ' 行）');
+  assert.strictEqual(r.calls.hRows, r.out.rows, '高さを入れ損ねた行がある');
+});
+
+test('列幅と行高の換算', function () {
+  assert.strictEqual(sandbox.exportColPx_(5.5), 44);     // 日付列
+  assert.strictEqual(sandbox.exportColPx_(12.4), 92);    // 氏名列
+  assert.strictEqual(sandbox.exportRowPx_(18), 24);      // 既定の行高
+});
+
 // ---- 結果 -------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

@@ -36,7 +36,7 @@ const CONFIG = Object.freeze({
    * 「直したのに反映されない」の切り分けがこれ無しでは付かない。
    * コードを変えたら必ず上げること。
    */
-  APP_VERSION: '2026-09-05d',
+  APP_VERSION: '2026-09-06a',
 
   /** 内閣府 祝日 CSV（Shift_JIS） */
   HOLIDAY_CSV_URL: 'https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv',
@@ -56,6 +56,29 @@ const CONFIG = Object.freeze({
   EXPORT_NAME: '{store}R{wa}.{mm}月シフト',
   /** 令和の基準年。令和元年 = 2019 なので 2018 を引く */
   WAREKI_BASE: 2018,
+
+  /**
+   * 出力するシートの見た目。**実物のブックを測った値**
+   *   （docs/OUTPUT-FORMAT.md §1〜§3。原本の xl/styles.xml を直読みして取った）
+   *
+   * 日付行だけ Arial、曜日行だけ ＭＳ Ｐゴシック、ほかは游ゴシック。
+   * 揃っていないが、実物がそうなっているのでそのまま写す。
+   *
+   * 列幅は Excel の文字数単位、行高と文字はポイント。px への換算は Export.gs。
+   */
+  EXPORT_FORMAT: Object.freeze({
+    FONT_BODY: '游ゴシック',
+    FONT_DATE: 'Arial',
+    FONT_DOW: 'ＭＳ Ｐゴシック',
+    PT_TITLE: 28,        // 表題（A1）
+    PT_NOTE: 10,         // 公休告知・凡例・注記
+    PT_BODY: 11,         // 本文
+    PT_ROW: 18,          // 行の高さ
+    W_NAME: 12.4,        // 氏名列
+    W_DAY: 5.5,          // 日付列
+    W_AGG: 6.6,          // 集計列
+    RULE_COLOR: '#808080'
+  }),
 
   /**
    * 管理者への通知先 / PDF の保存先。

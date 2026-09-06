@@ -540,6 +540,33 @@ function apiCreateSheet(year, month) {
 }
 
 /**
+ * 画面で組んだ表を、新しいシートにして返す。
+ *
+ * 画面から来る値は**中身が何であれ信用しない**。
+ * とくに `=` で始まる文字列は、シートに置いた瞬間に数式になる
+ * （`=IMPORTRANGE(...)` を書かれると他所のデータを引かせられる）。
+ * 通り道は exportModelToSheet_ 1本で、そこで cellSafe_ に通している。
+ *
+ * TODO(P5): 誰が出したかの検証。Auth.gs は揃っているが、
+ *   社員マスタ（email / 権限 / 担当店舗）の読み手がまだ無いので繋げていない。
+ *   apiSaveCells も同じ状態なので、そちらと一緒に入れる。
+ *   なお、この関数が書くのは**開いているスプレッドシート内の新しいシート**で、
+ *   既にある表は触らない。持ち出しにはならない。
+ *
+ * @param {Object} model 画面の表（ShiftGrid の sheetModel_ が返す形）
+ * @return {{sheetName:string, url:string, rows:number, cols:number}}
+ */
+function apiExportToSheet(model) {
+  try {
+    return exportModelToSheet_(model);
+  } catch (error) {
+    logError(MODULE_WEBAPP, 'apiExportToSheet', error,
+      `store=${model && model.store}; ym=${model && model.year}-${model && model.month}`);
+    throw error;
+  }
+}
+
+/**
  * 自動作成を Web アプリから走らせる。
  * 配置エンジン（フェーズ3）が未実装なので、いまは理由を返すだけ。
  */
