@@ -625,6 +625,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   .page-head h1 { font-size: 20px; }
 }
 
+/* 保存の状態。黙って失敗しているのがいちばん困るので、常に一言出す */
+.syncbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 12px; font-size: 12px;
+  background: var(--agg); color: var(--ink-soft);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.syncbar.warn { background: var(--warn-bg); color: var(--ink); }
+.syncbar button { min-height: 26px; padding: 0 9px; font-size: 12px; }
+@media print { .syncbar { display: none !important; } }
+
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -643,6 +654,14 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <button id="toolMore" class="more" aria-expanded="true"
     title="下の段をたたむ">操作 ▴</button>
 </header>
+
+<div class="syncbar" id="syncBar" hidden>
+  <span id="syncMsg"></span>
+  <button id="syncFix" hidden
+    title="自分の編集を捨てて、サーバの内容にそろえます">読み直す</button>
+  <button id="syncTake" hidden
+    title="相手の編集を上書きして、自分の内容で保存します">自分の内容で保存</button>
+</div>
 
 <nav class="tabs" id="tabs">
   <button class="tabbtn on" data-tab="grid">シフト表</button>
@@ -1472,6 +1491,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       // 画面は動かすが、保存できていないことは必ず出す（checkRules が拾う）
       dbPersist = false;
     }
+    // サーバへ送るのは、この端末に書けたあと。**送れなくても保存は成立している**ので、
+    // ここでの失敗を dbPersist に混ぜない（混ぜると「保存できていません」が出続ける）
+    try { syncTouchDb(); } catch (e) { console.error('[save] ' + e.message); }
   }
 
   /**
@@ -1487,11 +1509,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       values.forEach((v, k) => { if (v) o[k] = v; });
       localStorage.setItem(CELLS_KEY, JSON.stringify(o));
       cellsPersist = true;
-      return true;
     } catch (e) {
       cellsPersist = false;
       return false;
     }
+    // サーバへは、この端末に書けたあとで送る（失敗しても保存は成立している）
+    try { syncTouchMonth(); } catch (e) { console.error('[saveCells] ' + e.message); }
+    return true;
   }
 
   /** 保存してあるシフトを読み戻す。@return {number} 読めた件数 */
@@ -4240,13 +4264,18 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     renderGrid();
     renderHistory();
   });
-  ['yy', 'mm'].forEach(id => $(id).addEventListener('change', renderGrid));
+  // 保存の単位は「店舗 × 年月」。切り替えたら、その月をサーバから読み直す
+  ['yy', 'mm'].forEach(id => $(id).addEventListener('change', () => {
+    renderGrid();
+    syncLoadMonth();
+  }));
   $('storeSel').addEventListener('change', () => {
     activeStore = $('storeSel').value;
     renderMaster('store');      // 「表示」の印を付け替える
     renderMaster('hours');
     renderMaster('closure');
     refreshAll();
+    syncLoadMonth();
   });
 
   /* ═══ 編集履歴 ═════════════════════════════════════════
@@ -5317,9 +5346,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     setTimeout(() => URL.revokeObjectURL(url), 20000);
   }
 
-  /** Web アプリとして開かれているか。単体の HTML では Google に繋がらない */
-  const onServer = () => !!(window.google && google.script && google.script.run);
-
   /**
    * スプレッドシートへ出力する。**新しいシートを挿す。**
    * 既にある表は触らない。作り直しても、前に配ったものが残る。
@@ -5372,8 +5398,297 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
   }
 
+  $('syncFix').addEventListener('click', syncTakeServer);
+  $('syncTake').addEventListener('click', syncForceMine);
+
   $('outPdf').addEventListener('click', exportPdf);
   $('outXlsx').addEventListener('click', exportSheet);
+
+  /* ═══ 複数の PC から編集する ═══════════════════════════
+     単体の HTML として開いているときは、これまでどおりブラウザの中だけで動く。
+     Web アプリとして配られているときは、保存先がサーバ（Store.gs）になる。
+
+     【版で衝突を見る】
+       読んだときの版（rev）を覚えておき、保存のときに一緒に送る。
+       サーバは今の版と突き合わせ、違っていたら**書かずに**今の中身を返す。
+       誰かの編集を黙って消すより、画面に出して選ばせる。
+
+     【月ごとに分ける】
+       保存の単位は「店舗 × 年月」。別の月を触っている人とはぶつからない。
+       マスタは全店で1つなので、そちらは全員で共有する。 */
+
+  /** 保存を送るまでの待ち。打つたびに送ると往復が増える */
+  const SYNC_DEBOUNCE_MS = 1500;
+  /** ほかの人の保存を見に行く間隔 */
+  const SYNC_POLL_MS = 30000;
+
+  const SYNC = {
+    on: false,          // サーバに繋がっているか
+    dbRev: 0,           // 読んだときのマスタの版
+    monthRev: 0,        // 読んだときの月の版
+    monthKey: '',       // その版が指す '店舗|年月'
+    busy: false,        // いま往復している
+    applying: false,    // サーバの内容を画面へ入れている最中（保存を呼ばない）
+    dbWait: null,       // 保存待ちのタイマ
+    monthWait: null,
+    conflict: null,     // 衝突の中身。解決するまで保存しない
+    note: ''            // 画面に出す一言
+  };
+
+  const onServer = () => !!(window.google && google.script && google.script.run);
+  const syncKey_ = () => activeStore + '|' + curYm;
+
+  /** サーバを呼ぶ。google.script.run はコールバックなので Promise に包む */
+  function callServer_(name, args) {
+    return new Promise((resolve, reject) => {
+      if (!onServer()) { reject(new Error('サーバに繋がっていません')); return; }
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(err => reject(err instanceof Error ? err : new Error(String(err))))
+        [name].apply(null, args || []);
+    });
+  }
+
+  /** 状態を画面に出す。黙って失敗しているのがいちばん困る */
+  function syncNote_(text, kind) {
+    SYNC.note = text || '';
+    const bar = $('syncBar');
+    if (!bar) return;
+    bar.hidden = !SYNC.on && !text;
+    bar.className = 'syncbar' + (kind ? ' ' + kind : '');
+    $('syncMsg').textContent = text || '';
+    $('syncFix').hidden = !SYNC.conflict;
+    $('syncTake').hidden = !SYNC.conflict;
+  }
+
+  const hhmm_ = () => {
+    const d = new Date();
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  };
+
+  /** いま開いている月のセルだけを取り出す */
+  function monthCells_() {
+    const out = {};
+    const tail = '|' + curYm;
+    values.forEach((v, k) => {
+      if (!v) return;
+      const p = k.split('|');
+      if (p.length === 3 && p[1] === curYm) out[k] = v;        // 記号・色の印
+      else if (k === 'memo' + tail) out[k] = v;                 // その月の注記
+    });
+    return out;
+  }
+
+  /**
+   * サーバから来た月の中身を画面に入れる。
+   * **いま開いている月ぶんを先に消してから入れる。** 足すだけだと、
+   * 向こうで消された記号がこちらに残る。
+   */
+  function applyMonth_(cells) {
+    SYNC.applying = true;
+    try {
+      Array.from(values.keys()).forEach(k => {
+        const p = k.split('|');
+        if ((p.length === 3 && p[1] === curYm) || k === 'memo|' + curYm) values.delete(k);
+      });
+      Object.keys(cells || {}).forEach(k => {
+        const okCell = /^[^|]+\|\d{4}-\d{2}\|\d{1,2}$/.test(k);
+        const okMemo = /^memo\|\d{4}-\d{2}$/.test(k);
+        if ((okCell || okMemo) && cells[k]) values.set(k, String(cells[k]));
+      });
+      renderGrid();
+    } finally {
+      SYNC.applying = false;
+    }
+  }
+
+  /** 衝突を画面に出す。解決するまで自動保存を止める */
+  function syncConflict_(what, got) {
+    SYNC.conflict = { what: what, got: got };
+    const who = (got && got.updatedBy) ? got.updatedBy.split('@')[0] : 'ほかの人';
+    const at = (got && got.updatedAt) ? new Date(got.updatedAt) : null;
+    syncNote_('⚠ ' + who + ' が'
+      + (at ? ' ' + ('0' + at.getHours()).slice(-2) + ':'
+              + ('0' + at.getMinutes()).slice(-2) + ' に' : '')
+      + (what === 'db' ? 'マスタ' : 'この月') + 'を保存しています。'
+      + 'どちらを残すか選んでください', 'warn');
+  }
+
+  /* ── マスタ ─────────────────────────────────────────── */
+
+  function syncTouchDb() {
+    if (!SYNC.on || SYNC.applying || SYNC.conflict) return;
+    clearTimeout(SYNC.dbWait);
+    // **控えを null に戻してから送る。** 残したままだと、
+    // 「保存待ちがある」と見なされて、ほかの人の保存を一度も取り込まなくなる
+    SYNC.dbWait = setTimeout(() => { SYNC.dbWait = null; syncPushDb_(); },
+      SYNC_DEBOUNCE_MS);
+  }
+
+  function syncPushDb_(force) {
+    if (!SYNC.on) return Promise.resolve();
+    syncNote_('保存しています…');
+    return callServer_('apiDbSave', [SYNC.dbRev, DB, !!force])
+      .then(res => {
+        if (res && res.ok) {
+          SYNC.dbRev = res.rev;
+          SYNC.conflict = null;
+          syncNote_('保存しました ' + hhmm_());
+        } else {
+          syncConflict_('db', res && res.conflict);
+        }
+      })
+      .catch(e => syncNote_('保存できませんでした: ' + e.message, 'warn'));
+  }
+
+  /* ── その月のシフト ──────────────────────────────────── */
+
+  function syncTouchMonth() {
+    if (!SYNC.on || SYNC.applying || SYNC.conflict) return;
+    clearTimeout(SYNC.monthWait);
+    SYNC.monthWait = setTimeout(() => { SYNC.monthWait = null; syncPushMonth_(); },
+      SYNC_DEBOUNCE_MS);
+  }
+
+  function syncPushMonth_(force) {
+    if (!SYNC.on) return Promise.resolve();
+    // 版は「その店・その月」に紐づく。月を切り替えた直後に古い版で書かない
+    if (SYNC.monthKey !== syncKey_()) return syncLoadMonth();
+    const store = activeStore, ym = curYm, cells = monthCells_();
+    syncNote_('保存しています…');
+    return callServer_('apiMonthSave', [store, ym, SYNC.monthRev, cells, !!force])
+      .then(res => {
+        if (SYNC.monthKey !== store + '|' + ym) return;    // 待つ間に月が変わった
+        if (res && res.ok) {
+          SYNC.monthRev = res.rev;
+          SYNC.conflict = null;
+          syncNote_('保存しました ' + hhmm_());
+        } else {
+          syncConflict_('month', res && res.conflict);
+        }
+      })
+      .catch(e => syncNote_('保存できませんでした: ' + e.message, 'warn'));
+  }
+
+  /** その月をサーバから読み直す。月・店舗を変えたときにも呼ぶ */
+  function syncLoadMonth() {
+    if (!SYNC.on) return Promise.resolve(0);
+    const store = activeStore, ym = curYm;
+    syncNote_('読み込んでいます…');
+    return callServer_('apiMonthLoad', [store, ym])
+      .then(res => {
+        if (activeStore !== store || curYm !== ym) return 0;  // 待つ間に変わった
+        SYNC.monthRev = (res && res.rev) || 0;
+        SYNC.monthKey = store + '|' + ym;
+        SYNC.conflict = null;
+        const n = res && res.data ? Object.keys(res.data).length : 0;
+        if (n) applyMonth_(res.data);
+        syncNote_(n ? '読み込みました（' + n + ' 件）' : 'この月はまだ空です');
+        return n;
+      })
+      .catch(e => { syncNote_('読み込めませんでした: ' + e.message, 'warn'); return 0; });
+  }
+
+  /* ── ほかの人の保存を拾う ────────────────────────────── */
+
+  /**
+   * 定期的に版だけ見に行く。上がっていたら読み直す。
+   *
+   * **こちらに保存待ちがあるときは読み直さない。** 入力中に上書きすると、
+   * 打っている途中の内容が消える。
+   */
+  function syncPoll_() {
+    if (!SYNC.on || SYNC.busy || SYNC.conflict) return;
+    if (SYNC.dbWait || SYNC.monthWait) return;
+    if (SYNC.monthKey !== syncKey_()) return;
+    const store = activeStore, ym = curYm;
+    SYNC.busy = true;
+    callServer_('apiMonthLoad', [store, ym])
+      .then(res => {
+        SYNC.busy = false;
+        if (activeStore !== store || curYm !== ym) return;
+        const rev = (res && res.rev) || 0;
+        if (rev === SYNC.monthRev) return;
+        SYNC.monthRev = rev;
+        applyMonth_((res && res.data) || {});
+        const who = (res && res.updatedBy) ? res.updatedBy.split('@')[0] : 'ほかの人';
+        syncNote_(who + ' の保存を取り込みました ' + hhmm_());
+      })
+      .catch(() => { SYNC.busy = false; });   // 一時的な失敗は次の回で拾う
+  }
+
+  /* ── 起動 ───────────────────────────────────────────── */
+
+  /**
+   * サーバから読み込んで始める。
+   * **まだ何も無ければ、いま手元にあるものを最初の1件として上げる。**
+   * 空のサーバに合わせて手元を消すと、移行のときに全部失う。
+   */
+  function syncBoot() {
+    if (!onServer()) return Promise.resolve(false);
+    SYNC.on = true;
+    syncNote_('読み込んでいます…');
+    return callServer_('apiDbLoad', [])
+      .then(res => {
+        SYNC.dbRev = (res && res.rev) || 0;
+        if (res && res.data && res.data.staff && res.data.rules) {
+          DB = migrateDb_(res.data);
+          activeStore = (DB.stores && DB.stores[0]) ? DB.stores[0].id : activeStore;
+          Object.keys(COLS).forEach(renderMaster);
+          renderRules();
+          renderMemoDefault();
+          refreshAll();
+        } else {
+          return syncPushDb_();          // 空のサーバ。手元のマスタを載せる
+        }
+      })
+      .then(() => syncLoadMonth())
+      .then(() => {
+        setInterval(syncPoll_, SYNC_POLL_MS);
+        return true;
+      })
+      .catch(e => {
+        SYNC.on = false;
+        syncNote_('サーバに繋がりません。この端末の中だけで動きます（'
+          + e.message + '）', 'warn');
+        return false;
+      });
+  }
+
+  /** 「読み直す」— 自分の編集を捨てて、サーバの内容にそろえる */
+  function syncTakeServer() {
+    const c = SYNC.conflict;
+    if (!c) return;
+    SYNC.conflict = null;
+    if (c.what === 'db') {
+      SYNC.dbRev = (c.got && c.got.rev) || 0;
+      if (c.got && c.got.data) {
+        DB = migrateDb_(c.got.data);
+        Object.keys(COLS).forEach(renderMaster);
+        renderRules();
+        renderMemoDefault();
+        refreshAll();
+      }
+      syncNote_('サーバの内容にそろえました ' + hhmm_());
+    } else {
+      syncLoadMonth();
+    }
+  }
+
+  /** 「自分の内容で保存」— 相手の編集を上書きする。押した人の判断 */
+  function syncForceMine() {
+    const c = SYNC.conflict;
+    if (!c) return;
+    const what = c.what;
+    SYNC.conflict = null;
+    if (what === 'db') {
+      SYNC.dbRev = (c.got && c.got.rev) || 0;
+      syncPushDb_(true);
+    } else {
+      SYNC.monthRev = (c.got && c.got.rev) || 0;
+      syncPushMonth_(true);
+    }
+  }
 
   /* ═══ 起動 ═════════════════════════════════════════════ */
   const now = new Date();
@@ -5391,7 +5706,18 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   // 作り直された表が出るので、入力が消えたことに気づけなかった。
   const restored = loadCells();
   refreshAll();
-  if (!restored) {
+
+  /**
+   * Web アプリとして開かれていれば、サーバの内容で始める。
+   * **自動生成はサーバの読み込みが終わってから決める。** 先に走らせると、
+   * ほかの人が作った表を、こちらで作り直したもので上書きしてしまう。
+   */
+  if (onServer()) {
+    $('syncBar').hidden = false;
+    syncBoot().then(okServer => {
+      if (!okServer && !restored) autoGenerate();
+    });
+  } else if (!restored) {
     autoGenerate();   // 初めて開いたとき。空の表では集計も色も確かめられない
   }
   fillDataBox(false);   // 書き出し欄は最初から埋めておく（空のまま保存されるのを防ぐ）

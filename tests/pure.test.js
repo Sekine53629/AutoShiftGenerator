@@ -45,6 +45,11 @@ const sandbox = {
   DriveApp: {},
   ScriptApp: {},
   HtmlService: {},
+  LockService: {
+    getScriptLock: function () {
+      return { tryLock: function () { return true; }, releaseLock: function () {} };
+    },
+  },
 };
 vm.createContext(sandbox);
 
@@ -2133,6 +2138,191 @@ test('列幅と行高の換算', function () {
   assert.strictEqual(sandbox.exportColPx_(5.5), 44);     // 日付列
   assert.strictEqual(sandbox.exportColPx_(12.4), 92);    // 氏名列
   assert.strictEqual(sandbox.exportRowPx_(18), 24);      // 既定の行高
+});
+
+// ---- 複数の PC から編集する（Store.gs）--------------------------------
+//
+// 保存は Drive の JSON ファイル。読んだときの版（rev）と今の版を突き合わせ、
+// 違っていたら書かない。ここが緩いと、2人目の保存で1人目の編集が消える。
+
+function fakeDrive() {
+  const files = {};        // name -> 中身の文字列
+  const mk = name => ({
+    getBlob: () => ({ getDataAsString: () => files[name] }),
+    setContent: t => { files[name] = t; },
+    getId: () => 'id-' + name,
+  });
+  const folder = {
+    getId: () => 'folder-1',
+    getFilesByName: name => {
+      let done = !(name in files);
+      return { hasNext: () => !done, next: () => { done = true; return mk(name); } };
+    },
+    createFile: (name, text) => { files[name] = text; return mk(name); },
+  };
+  return { files: files, folder: folder };
+}
+
+function withDrive(fn) {
+  const d = fakeDrive();
+  const props = {};
+  const keepDrive = sandbox.DriveApp;
+  const keepProps = sandbox.PropertiesService;
+  const keepLock = sandbox.LockService;
+  const keepSession = sandbox.Session;
+  sandbox.DriveApp = {
+    createFolder: () => d.folder,
+    getFolderById: id => (id === 'folder-1' ? d.folder : (() => { throw new Error('無い'); })()),
+  };
+  sandbox.PropertiesService = {
+    getScriptProperties: () => ({
+      getProperty: k => (k in props ? props[k] : null),
+      setProperty: (k, v) => { props[k] = v; },
+    }),
+    getDocumentProperties: () => ({ getProperty: () => null }),
+  };
+  sandbox.LockService = {
+    getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }),
+  };
+  sandbox.Session = { getActiveUser: () => ({ getEmail: () => 'a@example.com' }) };
+  try { return { out: fn(d), drive: d }; }
+  finally {
+    sandbox.DriveApp = keepDrive;
+    sandbox.PropertiesService = keepProps;
+    sandbox.LockService = keepLock;
+    sandbox.Session = keepSession;
+  }
+}
+
+test('まだ無いファイルは rev 0 と null', function () {
+  const r = withDrive(function () { return sandbox.storeRead_('masters.json'); });
+  assert.strictEqual(r.out.rev, 0);
+  assert.strictEqual(r.out.data, null);
+});
+
+test('書いたものが読み戻せる。版は1つ上がる', function () {
+  withDrive(function () {
+    const w = sandbox.storeWrite_('masters.json', 0, { staff: [1, 2] }, false);
+    assert.strictEqual(w.ok, true);
+    assert.strictEqual(w.rev, 1);
+    const r = sandbox.storeRead_('masters.json');
+    assert.strictEqual(r.rev, 1);
+    assert.deepStrictEqual(Array.from(r.data.staff), [1, 2]);
+    assert.strictEqual(r.updatedBy, 'a@example.com');
+    assert.ok(r.updatedAt, '時刻が入っていない');
+  });
+});
+
+test('古い版で書こうとしたら、書かずに今の中身を返す', function () {
+  withDrive(function () {
+    sandbox.storeWrite_('m.json', 0, { v: 'A さんの編集' }, false);   // rev 1
+    // B さんは rev 0 のときに読んでいた
+    const w = sandbox.storeWrite_('m.json', 0, { v: 'B さんの編集' }, false);
+    assert.strictEqual(w.ok, false, '上書きしてしまった');
+    assert.strictEqual(w.rev, 1);
+    assert.strictEqual(w.conflict.data.v, 'A さんの編集', '今の中身を返していない');
+    assert.strictEqual(w.conflict.updatedBy, 'a@example.com', '誰の編集か返していない');
+    // 中身は A さんのまま
+    assert.strictEqual(sandbox.storeRead_('m.json').data.v, 'A さんの編集');
+  });
+});
+
+test('force を付けたときだけ上書きする', function () {
+  withDrive(function () {
+    sandbox.storeWrite_('m.json', 0, { v: 'A' }, false);
+    const w = sandbox.storeWrite_('m.json', 0, { v: 'B' }, true);
+    assert.strictEqual(w.ok, true);
+    assert.strictEqual(w.rev, 2, '版は進める（次の人がまた衝突を検知できる）');
+    assert.strictEqual(sandbox.storeRead_('m.json').data.v, 'B');
+  });
+});
+
+test('続けて書けば版が積み上がる', function () {
+  withDrive(function () {
+    let rev = 0;
+    for (let i = 0; i < 5; i++) rev = sandbox.storeWrite_('m.json', rev, { i: i }, false).rev;
+    assert.strictEqual(rev, 5);
+    assert.strictEqual(sandbox.storeRead_('m.json').data.i, 4);
+  });
+});
+
+test('壊れたファイルを「無い」扱いにしない', function () {
+  // 「無い」として扱うと、次の保存で中身を消してしまう
+  quiet(function () {
+    withDrive(function (d) {
+      d.files['m.json'] = '{壊れている';
+      assert.throws(function () { sandbox.storeRead_('m.json'); }, /JSON として読めません/);
+    });
+  });
+});
+
+test('保存の単位は 店舗×年月。別の月とはぶつからない', function () {
+  assert.strictEqual(sandbox.storeCellsFile_('st1', '2026-10'), 'cells-st1-2026-10.json');
+  assert.notStrictEqual(sandbox.storeCellsFile_('st1', '2026-10'),
+    sandbox.storeCellsFile_('st1', '2026-11'));
+  assert.notStrictEqual(sandbox.storeCellsFile_('st1', '2026-10'),
+    sandbox.storeCellsFile_('st2', '2026-10'));
+});
+
+test('画面から来た店舗 ID と年月は、そのままファイル名にしない', function () {
+  // '../' や '/' を通すと、フォルダの外を指せてしまう
+  quiet(function () {
+    ['../secret', 'st1/../x', 'st 1', '', 'a'.repeat(50)].forEach(function (bad) {
+      assert.throws(function () { sandbox.storeCellsFile_(bad, '2026-10'); },
+        /店舗 ID が不正/, '通してしまった: ' + bad);
+    });
+    ['2026-1', '26-10', '2026/10', '', '2026-10-01'].forEach(function (bad) {
+      assert.throws(function () { sandbox.storeCellsFile_('st1', bad); },
+        /年月が不正/, '通してしまった: ' + bad);
+    });
+  });
+});
+
+test('ロックを取れなければ書かない', function () {
+  quiet(function () {
+    const d = fakeDrive();
+    const keep = [sandbox.DriveApp, sandbox.PropertiesService, sandbox.LockService];
+    sandbox.DriveApp = { createFolder: () => d.folder, getFolderById: () => d.folder };
+    sandbox.PropertiesService = {
+      getScriptProperties: () => ({ getProperty: () => null, setProperty: () => {} }),
+      getDocumentProperties: () => ({ getProperty: () => null }),
+    };
+    sandbox.LockService = {
+      getScriptLock: () => ({ tryLock: () => false, releaseLock: () => {} }),
+    };
+    try {
+      assert.throws(function () { sandbox.storeWrite_('m.json', 0, { v: 1 }, false); },
+        /待てませんでした/);
+      assert.strictEqual(Object.keys(d.files).length, 0, '書いてしまった');
+    } finally {
+      sandbox.DriveApp = keep[0];
+      sandbox.PropertiesService = keep[1];
+      sandbox.LockService = keep[2];
+    }
+  });
+});
+
+test('マスタの形が違えば断る', function () {
+  quiet(function () {
+    withDrive(function () {
+      assert.throws(function () { sandbox.apiDbSave(0, null, false); }, /形が違います/);
+      assert.throws(function () { sandbox.apiDbSave(0, [1, 2], false); }, /形が違います/);
+      assert.throws(function () { sandbox.apiMonthSave('st1', '2026-10', 0, 'x', false); },
+        /形が違います/);
+    });
+  });
+});
+
+test('API はそのまま読み書きに繋がっている', function () {
+  withDrive(function () {
+    const w = sandbox.apiMonthSave('st1', '2026-10', 0, { 's1|2026-10|1': '○' }, false);
+    assert.strictEqual(w.ok, true);
+    const r = sandbox.apiMonthLoad('st1', '2026-10');
+    assert.strictEqual(r.data['s1|2026-10|1'], '○');
+    assert.strictEqual(r.rev, 1);
+    // 別の月は空のまま
+    assert.strictEqual(sandbox.apiMonthLoad('st1', '2026-11').rev, 0);
+  });
 });
 
 // ---- 結果 -------------------------------------------------------------

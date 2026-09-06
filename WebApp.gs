@@ -539,6 +539,78 @@ function apiCreateSheet(year, month) {
   }
 }
 
+/* ================================================================
+ *  複数の PC から編集する（保存は Store.gs）
+ *
+ *  画面は「読んだときの版（rev）」を覚えておき、保存のときに一緒に送る。
+ *  サーバは今の版と突き合わせ、**違っていたら書かずに今の中身を返す。**
+ *  誰かの編集を黙って消さないための約束（docs/DEPLOY-PLAN.md）。
+ * ================================================================ */
+
+/**
+ * マスタを読む。まだ何も無ければ rev 0 と null。
+ * @return {{rev:number, data:Object|null, updatedAt:string, updatedBy:string}}
+ */
+function apiDbLoad() {
+  try {
+    return storeRead_(STORE_DB_FILE);
+  } catch (error) {
+    logError(MODULE_WEBAPP, 'apiDbLoad', error, '');
+    throw error;
+  }
+}
+
+/**
+ * マスタを書く。rev が合わなければ書かずに衝突を返す。
+ * @param {number} baseRev 読んだときの版
+ * @param {Object} db 画面のマスタ
+ * @param {boolean} force 画面で「自分の内容で上書き」を選んだときだけ true
+ */
+function apiDbSave(baseRev, db, force) {
+  try {
+    if (!db || typeof db !== 'object' || Array.isArray(db)) {
+      throw new Error('マスタの形が違います');
+    }
+    return storeWrite_(STORE_DB_FILE, baseRev, db, !!force);
+  } catch (error) {
+    logError(MODULE_WEBAPP, 'apiDbSave', error, `baseRev=${baseRev}`);
+    throw error;
+  }
+}
+
+/**
+ * その店の、その月のシフトを読む。
+ * @param {string} storeId 店舗 ID
+ * @param {string} ym 'yyyy-mm'
+ */
+function apiMonthLoad(storeId, ym) {
+  try {
+    return storeRead_(storeCellsFile_(storeId, ym));
+  } catch (error) {
+    logError(MODULE_WEBAPP, 'apiMonthLoad', error, `store=${storeId}; ym=${ym}`);
+    throw error;
+  }
+}
+
+/**
+ * その店の、その月のシフトを書く。
+ *
+ * 中身は '<行キー>|日' → 記号 の平たい object。
+ * **月ごとにファイルを分けてある**ので、別の月を触っている人とはぶつからない。
+ */
+function apiMonthSave(storeId, ym, baseRev, cells, force) {
+  try {
+    if (!cells || typeof cells !== 'object' || Array.isArray(cells)) {
+      throw new Error('シフトの形が違います');
+    }
+    return storeWrite_(storeCellsFile_(storeId, ym), baseRev, cells, !!force);
+  } catch (error) {
+    logError(MODULE_WEBAPP, 'apiMonthSave', error,
+      `store=${storeId}; ym=${ym}; baseRev=${baseRev}`);
+    throw error;
+  }
+}
+
 /**
  * 画面で組んだ表を、新しいシートにして返す。
  *
