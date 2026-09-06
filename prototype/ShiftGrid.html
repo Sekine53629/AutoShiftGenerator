@@ -313,6 +313,25 @@ th.shut, td.shut { color: var(--ink-soft) !important; }
   color: var(--ink-soft); border-bottom: 1px solid var(--rule);
 }
 .bandrow .nm { background: var(--band); }
+/**
+ * 区分の見出し（医師名・薬剤師・派遣薬剤師・事務・備考）。
+ *
+ * 日付行に載せているもの（医師名・薬剤師）と、帯に置いているもの
+ * （派遣薬剤師・事務・備考）で見え方が違っていた。同じ意味のものは
+ * 同じ見え方にする。
+ *
+ * ここは #grid td,th（font-weight 400）より後に置く。
+ * 詳細度が同じなので、先に書くと負ける。
+ */
+#grid .r-repeat > .nm,
+#grid thead .r-date > .nm,
+#grid .bandrow > .nm,
+#grid .bandrow > th {
+  background: var(--band) !important;
+  font-family: "Yu Gothic UI", "Meiryo", sans-serif;
+  font-size: 10px; font-weight: 700; letter-spacing: .16em;
+  color: var(--ink-soft);
+}
 
 td.cell { cursor: cell; }
 td.cell.sel { box-shadow: inset 0 0 0 2px var(--accent); }
@@ -1871,6 +1890,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       }
 
       if (row.kind === 'repeat') {
+        tr.className = 'r-repeat';
         tr.appendChild(el('th', 'nm', row.label || ''));
         headCells('th', d => String(d.day)).forEach(c => tr.appendChild(c));
         AGG_COLS.forEach((a, i) =>
