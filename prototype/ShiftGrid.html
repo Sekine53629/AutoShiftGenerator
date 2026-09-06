@@ -2083,8 +2083,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (!span.length) return { min: 0, at: days[c].from };
 
     // 変化する時刻だけを見ればよい
+    /**
+     * 人数が変わるのは、誰かが来た時刻と、誰かが帰った時刻。
+     * **帰った時刻を見ないと閉局側の穴に気づけない。**
+     * 遅半が19:30に上がったあと、遅番が誰もいなければ 19:30〜20:00 は0人になる。
+     * 締め作業ができないので、これは見逃してはいけない。
+     */
     const marks = [open];
-    span.forEach(x => { if (x[0] > open && x[0] < close) marks.push(x[0]); });
+    span.forEach(x => {
+      if (x[0] > open && x[0] < close) marks.push(x[0]);   // 来た時刻
+      if (x[1] > open && x[1] < close) marks.push(x[1]);   // 帰った時刻
+    });
     let best = { min: 99, at: '' };
     marks.forEach(t => {
       const n2 = span.filter(x => x[0] <= t && x[1] > t).length;
@@ -2518,11 +2527,31 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
            * 早番だけで揃える必要はない。
            */
           const openAt = minOf_(days[c].from);
-          const midAt = work[1] ? minOf_((DB.patterns.find(x => x.sym === work[1]) || {}).start) : null;
+          const midAt = work[1]
+            ? minOf_((DB.patterns.find(x => x.sym === work[1]) || {}).start) : null;
           const covered = midAt !== null && openAt !== null && midAt <= openAt;
           const needOpen = Math.max(1, Number(r.minOnDuty) || 1);
           if (!covered) {
             want[work[0]] = Math.max(want[work[0]] || 0, Math.min(needOpen, free.length));
+          }
+
+          /**
+           * **閉局まで残る人を必ず1人は空けておく。ここは最後に効かせる。**
+           * 早番と遅半で全員を使い切ると遅番が0人になり、遅半が上がったあとの
+           * 時間帯が無人になる。30分でも締め作業ができない日は作れない。
+           *
+           * 減らす順は後ろから。遅半を先に削り、それでも足りなければ早番を削る。
+           * 早番を先に削ると開局が薄くなり、直したい相手が入れ替わる。
+           */
+          if (free.filter(row => can_(row, fill)).length > 0) {
+            const room = Math.max(0, free.length - 1);
+            const others = work.filter(x => x !== fill);
+            let sum = others.reduce((t, x) => t + (want[x] || 0), 0);
+            for (let i = others.length - 1; i >= 0 && sum > room; i--) {
+              const cut = Math.min(want[others[i]] || 0, sum - room);
+              want[others[i]] = (want[others[i]] || 0) - cut;
+              sum -= cut;
+            }
           }
         }
         const left = new Set(free);

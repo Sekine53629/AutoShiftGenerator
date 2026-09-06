@@ -228,13 +228,15 @@ ok('minOnDuty 1 なら早番は1人のまま', () => {
   r.byDay.forEach(d => assert.strictEqual(d['○'] || 0, 1));
 });
 
-ok('出勤が少ない日は、いる人数で頭打ちにする', () => {
-  // 2人しか出ない日。早番2人にすると遅番が0になるが、それでよい
+ok('出勤が少ない日でも、締めの1人は必ず残す', () => {
+  // 2人しか出ない日。minOnDuty 3 でも早番2人にはしない。
+  // 全員を早番にすると遅番が0になり、遅半が上がったあとが無人になる
   const off = [[], [], [0], [0], [0]];
   const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
                  { syms: ALL }, { syms: ALL }],
     { earlyN: 1, midN: 1, minOnDuty: 3 }, 10, off);
-  assert.strictEqual((r.byDay[0]['○'] || 0), 2, '出ている2人を超えて置かない');
+  assert.strictEqual(r.byDay[0]['▲'] || 0, 1, '閉局まで残る人がいない');
+  assert.strictEqual((r.byDay[0]['○'] || 0) + (r.byDay[0]['●'] || 0), 1);
 });
 
 ok('早番の均等さは保たれる', () => {
@@ -293,9 +295,36 @@ ok('誰も出ていない日は0人', () => {
   assert.strictEqual(cov.coverageOf_(0).min, 0);
 });
 
-ok('時刻が読めない記号は、開いているあいだ居るものとして数える', () => {
+ok('知らない記号は数えない', () => {
   cov.set(['○', '×']);          // × はマスタに無い記号
-  assert.strictEqual(cov.coverageOf_(0).min, 1, '知らない記号は数えない');
+  const r = cov.coverageOf_(0);
+  assert.strictEqual(r.min, 0, '早番が19:00に上がったあと誰もいない');
+  assert.strictEqual(r.at, '19:00');
+});
+
+console.log('■ 閉局まで残る人');
+
+ok('遅番が0人の日は、閉局前が無人になると分かる', () => {
+  // 早番10:00-19:00 と 遅半10:30-19:30 だけ。閉局は20:00
+  cov.set(['○', '●', '●']);
+  const r = cov.coverageOf_(0);
+  assert.strictEqual(r.min, 0, '19:30〜20:00 が無人なのに気づいていない');
+  assert.strictEqual(r.at, '19:30', '締め作業ができない時間帯');
+});
+
+ok('遅番が1人いれば閉局まで埋まる', () => {
+  cov.set(['○', '●', '▲']);
+  assert.ok(cov.coverageOf_(0).min >= 1);
+});
+
+ok('自動生成は遅番を0人にしない', () => {
+  // 遅半を2人にしても、締めの1人は残る
+  const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }],
+    { earlyN: 1, midN: 2, minOnDuty: 2 }, 20);
+  r.byDay.forEach((d, c) => {
+    assert.ok((d['▲'] || 0) >= 1, (c + 1) + '日目の遅番が0人');
+  });
 });
 
 console.log(fail ? '\n■ ' + fail + ' 件 NG' : '\n■ すべて OK');
