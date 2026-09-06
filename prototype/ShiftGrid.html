@@ -71,6 +71,7 @@
   --ground: #16191d; --surface: #1e2227; --ink: #e6e9ec; --ink-soft: #a3acb6;
   --ink-faint: #77818c; --rule: #4a535d; --rule-soft: #333a42; --band: #272c33;
   --agg: #2a2823; --outside: #212429; --accent: #6fb5c4; --accent-ink: #10262b;
+  --na: #3a3a38;   /* 端末の設定に従う側には入れてあった。手で暗いを選ぶと抜けていた */
   --accent-soft: #23383d; --danger: #f2857c; --warn: #f0c86a; --warn-bg: #33301f;
 }
 
@@ -403,6 +404,14 @@ tr.aggrow .nm { font-weight: 700; }
 .pn-legend { white-space: normal; }
 .pn-legend .mkrow { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 2px; }
 .pn-legend .mkline { display: inline-flex; align-items: center; gap: 4px; }
+/* 店舗マスタの見本の色 */
+.swatches { display: inline-flex; flex-wrap: wrap; gap: 3px; margin-right: 8px; }
+.swatches .sw {
+  width: 18px; height: 18px; min-height: 0; padding: 0;
+  border: 1px solid var(--rule); border-radius: 3px; cursor: pointer;
+}
+.swatches .sw:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .pn-legend .sw {
   width: 13px; height: 11px; border: 1px solid var(--rule); font-style: normal;
   display: inline-block; flex: none;
@@ -538,11 +547,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     --rule: #666; --rule-soft: #999;
   }
   /* 表の寸法は PRINT_SIZES（JS）が入れる。測るときと刷るときで同じ値を使う */
+  /* 画面の色づけは紙に持ち込まない。読みにくいうえインクを食う */
+  :root {
+    --ground: #fff; --surface: #fff; --band: #eceff1; --agg: #f5f5f5;
+    --outside: #f0f0f0;
+  }
   #grid td, #grid th, .page-head, .printnote { color: #000; }
   /* 0 を薄くする画面用の見せ方は、紙では消えてしまう */
   #grid td.zero, #grid .agcol { color: #000 !important; opacity: 1 !important; }
   .toolbar, .toolbar2, .palettebar, .legend, .holiday-bar, .tabs, #gridWarn,
-  .panel:not(.on), #appVer, #toolMore { display: none !important; }
+  .panel:not(.on), #appVer, #toolMore, #themeSel { display: none !important; }
   /* 注記は入力欄ではなく本文として刷る */
   .pn-memo label, .pn-memo textarea { display: none !important; }
   .pn-print { display: block !important; }
@@ -3329,6 +3343,20 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const wrap = el('div', 'field');
       const ip = document.createElement('input');
       ip.type = 'color';
+      // 見本から選べるようにする。自由に選ぶと、地と帯の差が出ない色になりやすい
+      if (master === 'store') {
+        const box = el('span', 'swatches');
+        STORE_COLORS.forEach(sc => {
+          const b = el('button', 'sw');
+          b.style.background = sc.v;
+          b.title = sc.label + '（' + sc.v + '）';
+          b.addEventListener('click', () => {
+            rec[col.key] = sc.v; ip.value = sc.v; commit();
+          });
+          box.appendChild(b);
+        });
+        wrap.appendChild(box);
+      }
       ip.value = /^#[0-9a-f]{6}$/i.test(rec[col.key] || '') ? rec[col.key] : '#ffd966';
       ip.style.width = '44px';
       ip.style.height = '24px';
@@ -4448,37 +4476,106 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (mq.addEventListener) mq.addEventListener('change', onChange);
   }
 
+  /** 見本の色。店舗マスタで選べる。色相をばらして、隣り合っても見分けが付くようにする */
+  const STORE_COLORS = Object.freeze([
+    { v: '#2f6f7e', label: '藍' },
+    { v: '#2f5d9e', label: '群青' },
+    { v: '#6b4fa0', label: '紫' },
+    { v: '#a63d6b', label: '梅' },
+    { v: '#b5462f', label: '朱' },
+    { v: '#a35a1e', label: '橙' },
+    { v: '#4f7a34', label: '苔' },
+    { v: '#1f6b52', label: '松' },
+    { v: '#3a4a63', label: '鉄紺' },
+    { v: '#4a4a4a', label: '墨' },
+  ]);
+
+  /** #rrggbb → { h, s, l }。h は 0-360、s と l は 0-1 */
+  function hexToHsl_(hex) {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    const l = (mx + mn) / 2;
+    const d = mx - mn;
+    if (!d) return { h: 0, s: 0, l: l };
+    const sat = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    let h;
+    if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0));
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    return { h: h * 60, s: sat, l: l };
+  }
+
+  const hsl_ = (h, s, l) =>
+    'hsl(' + Math.round(h) + ' ' + Math.round(Math.max(0, Math.min(1, s)) * 100)
+    + '% ' + Math.round(Math.max(0, Math.min(1, l)) * 100) + '%)';
+
+  /** いま暗い画面かどうか */
+  function isDark_() {
+    const t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return !!(window.matchMedia
+      && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  }
+
   /**
-   * 店舗の色を差し色に流す。**どの店の表を開いているか**を色で分かるようにする。
+   * 店舗の色から画面の色を組み立てる。
+   *
+   * **どの店の表を開いているか**を色で分かるようにする。
    * 店舗を切り替えて作るとき、見出しの文字だけだと取り違える。
    *
-   * 帳票の色（土日祝）は取り決めなので触らない。変えると表の意味が変わる。
+   *   地      いちばん淡い。ページの背景
+   *   面      表やパネルの下地。地より明るい（暗い画面では地より明るい灰）
+   *   帯      見出しの列と区分の行。地より少しだけ濃い
+   *   差し色  ボタン。いちばん濃い
+   *
+   * **帳票の色（土日祝・出られない曜日の灰）は触らない。**
+   * 取り決めなので、変えると表の意味が変わる。
    */
   function applyStoreColor_() {
     const st = DB.stores.find(t => t.id === activeStore) || {};
     const root = document.documentElement.style;
+    const KEYS = ['--ground', '--surface', '--band', '--agg', '--rule', '--rule-soft',
+                  '--accent', '--accent-soft', '--accent-ink', '--outside'];
     if (!/^#[0-9a-f]{6}$/i.test(st.color || '')) {
-      root.removeProperty('--accent');
-      root.removeProperty('--accent-soft');
-      root.removeProperty('--accent-ink');
+      KEYS.forEach(k => root.removeProperty(k));   // 色を空にしたら既定へ戻す
       return;
     }
-    const r = parseInt(st.color.slice(1, 3), 16);
-    const g = parseInt(st.color.slice(3, 5), 16);
-    const b = parseInt(st.color.slice(5, 7), 16);
-    root.setProperty('--accent', st.color);
-    // 明るさで文字色を決める。濃い差し色に濃い文字を載せると読めない
-    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    root.setProperty('--accent-ink', lum > 0.6 ? '#111418' : '#ffffff');
-    // 淡い側は、暗い画面では暗く、明るい画面では明るく寄せる
-    const dark = document.documentElement.getAttribute('data-theme') === 'dark'
-      || (!document.documentElement.getAttribute('data-theme')
-          && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    const mix = (c, t) => Math.round(c + (t - c) * 0.82);
-    root.setProperty('--accent-soft', dark
-      ? 'rgb(' + mix(r, 0) + ',' + mix(g, 0) + ',' + mix(b, 0) + ')'
-      : 'rgb(' + mix(r, 255) + ',' + mix(g, 255) + ',' + mix(b, 255) + ')');
+    const c = hexToHsl_(st.color);
+    const h = c.h;
+    // 彩度が低い色（墨など）でも、地の色づきが分かる程度には残す
+    const s = Math.max(0.10, Math.min(0.55, c.s));
+
+    if (isDark_()) {
+      root.setProperty('--ground', hsl_(h, s * 0.30, 0.085));
+      root.setProperty('--surface', hsl_(h, s * 0.26, 0.125));
+      root.setProperty('--band', hsl_(h, s * 0.30, 0.185));
+      root.setProperty('--agg', hsl_(h, s * 0.22, 0.155));
+      root.setProperty('--outside', hsl_(h, s * 0.20, 0.135));
+      root.setProperty('--rule', hsl_(h, s * 0.22, 0.34));
+      root.setProperty('--rule-soft', hsl_(h, s * 0.20, 0.24));
+      // 暗い地には明るい差し色。暗いまま載せると沈んで読めない
+      root.setProperty('--accent', hsl_(h, Math.max(0.35, s), 0.62));
+      root.setProperty('--accent-soft', hsl_(h, s * 0.55, 0.22));
+      root.setProperty('--accent-ink', hsl_(h, 0.30, 0.10));
+    } else {
+      root.setProperty('--ground', hsl_(h, s * 0.42, 0.965));
+      root.setProperty('--surface', hsl_(h, s * 0.30, 0.995));
+      root.setProperty('--band', hsl_(h, s * 0.40, 0.915));
+      root.setProperty('--agg', hsl_(h, s * 0.28, 0.945));
+      root.setProperty('--outside', hsl_(h, s * 0.20, 0.935));
+      root.setProperty('--rule', hsl_(h, s * 0.24, 0.70));
+      root.setProperty('--rule-soft', hsl_(h, s * 0.28, 0.86));
+      // 明るい地には濃い差し色。薄いまま載せると白文字が読めない
+      root.setProperty('--accent', hsl_(h, Math.max(0.35, s), Math.min(0.42, c.l)));
+      root.setProperty('--accent-soft', hsl_(h, s * 0.55, 0.90));
+      root.setProperty('--accent-ink', '#ffffff');
+    }
   }
+
 
   const MORE_KEY = 'shiftgrid.toolbar2.v1';
   function syncMore_(open) {
