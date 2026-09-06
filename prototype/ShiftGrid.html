@@ -1251,6 +1251,14 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
          */
         lateMinN: 2, clerkLateMinN: 1,
         /**
+         * 事務の●遅半。**既定 0。**
+         *
+         * 薬剤師の midN が事務にも効いていて、事務が毎日2人 遅半に
+         * 入っていた。実物の事務は ○15 / ●0 / ▲5 で、遅半を使っていない。
+         * 事務の役目（受付で処方入力）は開局からの時間に寄っている。
+         */
+        clerkMidN: 0,
+        /**
          * 開いているあいだ、薬剤師が何人いれば回るか。
          * 頭数ではなく**時間帯で見る。** 記号ごとに勤務時間が違うので、
          * その日の人数が足りていても開局直後だけ1人になることがある
@@ -1373,6 +1381,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (db.rules.clerkLateMinN === undefined) {
       db.rules.clerkLateMinN = seed.rules.clerkLateMinN;
     }
+    if (db.rules.clerkMidN === undefined) db.rules.clerkMidN = seed.rules.clerkMidN;
     if (typeof db.memoDefault !== 'string') db.memoDefault = seed.memoDefault;
     fixOldValues_(db, seed);
     // 真偽値ひとつだった頃の設定を3択に移す
@@ -2849,7 +2858,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
      * 削る相手ではない。実物も事務の遅半は0で、早番と遅番だけを使っている。
      */
     const orderOf = kind => kind === 'clerk'
-      ? work.slice(0, -1) : work.slice(0, -1).reverse();
+      ? [work[0], fill].concat(work.slice(1, -1))   // 早番 → 遅番 → 遅半
+      : work.slice(0, -1).reverse();                // 遅半 → 早番（余りは遅番）
 
     /** 早番に必ず1人は残す。開局に誰もいない日は作れない（薬剤師のみ） */
     const EARLY_FLOOR = 1;
@@ -2910,10 +2920,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
           ? minOf_((DB.patterns.find(x => x.sym === work[1]) || {}).start) : null;
         const coveredOpen = midAt !== null && openAt !== null && midAt <= openAt;
         if (kind === 'clerk') {
-          // 事務の早番は設定どおり。開局を覆うのは薬剤師の役目
+          // 事務の必要数は事務の設定から取る。薬剤師の設定を流用すると、
+          // midN を上げたときに事務まで遅半に回る
           if (r.clerkEarlyN !== undefined) {
             want[work[0]] = Math.max(0, Number(r.clerkEarlyN) || 0);
           }
+          if (work[1]) want[work[1]] = Math.max(0, Number(r.clerkMidN) || 0);
+          // 事務の遅番は定員として数える。薬剤師のように「余りが流れ込む先」では
+          // ないので、ここで人数を決めないと1人も入らない
+          want[fill] = Math.max(0, Number(r.clerkLateMinN) || 0);
+          // 開局を覆うのは薬剤師の役目。事務の早番は設定どおり
         } else if (!coveredOpen) {
           want[work[0]] = Math.max(want[work[0]] || 0, Math.min(EARLY_FLOOR, free.length));
         }
@@ -2934,7 +2950,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
          * 開局の1人も割る。**閉局を優先する**（表の下に薄い時間帯として出る）。
          */
         const canFill = free.filter(row => can_(row, fill)).length;
-        if (canFill > 0) {
+        if (kind !== 'clerk' && canFill > 0) {
           const min2 = Number(kind === 'clerk' ? r.clerkLateMinN : r.lateMinN);
           /**
            * 遅番に空ける人数。設定より人が少ない日は、設定のほうが折れる。
@@ -2974,6 +2990,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         }
         const left = new Set(free);
 
+        /**
+         * 定員のあとに人が余ったときの行き先。
+         *
+         *   薬剤師 … 遅番。閉局まで人を厚くする
+         *   事務   … **早番。** 受付で処方入力という役目が開局からの時間に寄る。
+         *            実物の事務も ○15 / ●0 / ▲5 で早番が主
+         */
+        const spill = kind === 'clerk' ? work[0] : fill;
+
         // 1. 遅番ができない人を先に片づける。この人たちは早番か遅半にしか入れない
         Array.from(left)
           .filter(row => !can_(row, fill))
@@ -2984,7 +3009,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
             // その日の必要数がまだ空いている記号を先に使う。
             // これが無いと、遅番ができない人が早番の定員を押し広げる
             const room = mine.filter(x => (want[x] || 0) - (already[x] || 0) > 0);
-            const pool = room.length ? room : mine;
+            // 定員が埋まっていたら、その種別の余りの記号へ寄せる。
+            // 使える記号の中で均等に回すと、▲を持たない事務が
+            // 早番と遅半に半分ずつ散ってしまう（実物の事務は遅半0）
+            const pool = room.length ? room
+              : (can_(row, spill) ? [spill] : mine);
             // そのうち、その月にいちばん少ないものを取る
             const sym = pool.slice().sort((x, y) =>
               (tally[row.index + '|' + x] || 0) - (tally[row.index + '|' + y] || 0)
@@ -3018,10 +3047,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         order.forEach(sym => take(sym,
           (want[sym] || 0) - (already[sym] || 0) - (sym === early ? opener : 0)));
 
-        // 3. 残りは遅番
+        // 3. 残り。余りの記号に入れる。
+        //    それが使えない人は、自分が使えるいちばん遅い記号にする
         left.forEach(row => {
           const mine = work.filter(x => can_(row, x));
-          put(row, c, can_(row, fill) ? fill : (mine[mine.length - 1] || fill));
+          if (can_(row, spill)) { put(row, c, spill); return; }
+          put(row, c, mine[mine.length - 1] || spill);
         });
       });
     }
@@ -3759,6 +3790,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'earlyN', label: '○早番', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'midN',   label: '●遅半', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'clerkEarlyN', label: '事務員の○早番', type: 'num', unit: '人/日', min: 0, max: 6 },
+      { key: 'clerkMidN', label: '事務員の●遅半', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'lateMinN', label: '▲遅番（最低）', type: 'num', unit: '人/日', min: 1, max: 6 },
       { key: 'clerkLateMinN', label: '事務員の▲遅番（最低）',
         type: 'num', unit: '人/日', min: 1, max: 6 },
@@ -3768,6 +3800,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { note: '**優先度は 遅番 → 遅半 → 早番。** 人が足りない日は早番から削り、'
              + '閉局まで残る人を先に確保します。締め作業は代わりが利きません。'
              + '早番は開局の1人だけは必ず残します。' },
+      { note: '**事務員は逆で、早番 → 遅半の順です。**受付で処方入力という役目が'
+             + '開局からの時間に寄るためで、余った事務員も早番に入ります。'
+             + '事務員を遅番に入れるには、社員マスタでその人に ▲ を持たせてください。' },
       { note: '使える記号は社員マスタで人ごとに決めます。その人が使えない記号は当てません。' },
       { key: 'minOnDuty', label: '同時にいてほしい薬剤師', type: 'num', unit: '人', min: 1, max: 6 },
       { note: '**頭数ではなく時間帯で見ます。** 記号ごとに勤務時間がずれているので、'

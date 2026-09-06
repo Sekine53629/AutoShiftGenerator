@@ -332,6 +332,55 @@ ok('事務は事務の最低で数える（薬剤師の数に巻き込まれな�
   assert.strictEqual(clerkLate, 10, '事務の遅番が毎日1人でない: ' + clerkLate);
 });
 
+ok('薬剤師の●遅半の設定は、事務に効かない', () => {
+  // midN は薬剤師の設定。事務にも効いていて、事務が毎日2人 遅半に入っていた。
+  // 実物の事務は ○15 / ●0 / ▲5 で、遅半を使っていない
+  const rows = [{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                { syms: ['○', '●'], role: 'clerk' },
+                { syms: ['○', '●'], role: 'clerk' },
+                { syms: ['○', '●'], role: 'clerk' }];
+  const r = run(rows, { earlyN: 1, midN: 3, clerkEarlyN: 1, clerkMidN: 0,
+                        lateMinN: 2, clerkLateMinN: 1 }, 10);
+  const mid = r.per.slice(3).reduce((t, p) => t + (p.count['●'] || 0), 0);
+  assert.strictEqual(mid, 0, '事務が遅半に回っている: ' + mid);
+});
+
+ok('▲を持たない事務は、余っても早番になる（遅半に流れない）', () => {
+  // 事務の役目は受付で処方入力で、開局からの時間に寄る。
+  // 「使えるいちばん遅い記号」に落とすと、全員が遅半になっていた
+  const rows = [{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                { syms: ['○', '●'], role: 'clerk' },
+                { syms: ['○', '●'], role: 'clerk' },
+                { syms: ['○', '●'], role: 'clerk' }];
+  const r = run(rows, { earlyN: 1, midN: 1, clerkEarlyN: 1, clerkMidN: 0,
+                        lateMinN: 2, clerkLateMinN: 1 }, 10);
+  const early = r.per.slice(3).reduce((t, p) => t + (p.count['○'] || 0), 0);
+  assert.strictEqual(early, 30, '事務が早番になっていない: ' + early);
+});
+
+ok('▲を持つ事務は、設定どおり遅番に1人入る', () => {
+  const rows = [{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                { syms: ALL, role: 'clerk' }, { syms: ALL, role: 'clerk' },
+                { syms: ALL, role: 'clerk' }];
+  const r = run(rows, { earlyN: 1, midN: 1, clerkEarlyN: 1, clerkMidN: 0,
+                        lateMinN: 2, clerkLateMinN: 1 }, 10);
+  r.byDay.forEach((d, c) => {
+    const late = r.per.slice(3).filter(p => (p.dayOf['▲'] || []).indexOf(c) >= 0).length;
+    assert.strictEqual(late, 1, (c + 1) + '日目の事務の遅番が ' + late + ' 人');
+  });
+});
+
+ok('事務が1人しか出ない日は、その人を早番にする', () => {
+  // 受付が空くほうが困る。締め作業は薬剤師の仕事
+  const off = [[], [], [], [], [0], [0]];
+  const rows = [{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                { syms: ALL, role: 'clerk' }, { syms: ALL, role: 'clerk' },
+                { syms: ALL, role: 'clerk' }];
+  const r = run(rows, { earlyN: 1, midN: 1, clerkEarlyN: 1, clerkMidN: 0,
+                        lateMinN: 2, clerkLateMinN: 1 }, 10, off);
+  assert.strictEqual(r.per[3].dayOf['○'][0], 0, '1日目の事務が早番でない');
+});
+
 ok('設定が無い古いデータでも動く（最低1人）', () => {
   const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL }], { earlyN: 1, midN: 1 }, 10);
   r.byDay.forEach(d => assert.ok((d['▲'] || 0) >= 1, '遅番が0人の日がある'));
