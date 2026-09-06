@@ -30,8 +30,12 @@ const FN = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeIn
 const DOC_BLOCK = src.slice(src.indexOf('const clamp_ ='),
   src.indexOf('}', src.indexOf('function busyDocN_')) + 1);
 
+// 保存済みデータの版と、古い値の手当て。seedDb / migrateDb_ が参照する
+const MIG_BLOCK = src.slice(src.indexOf('const SCHEMA_VERSION ='),
+  src.indexOf('\n  }', src.indexOf('function fixOldValues_')) + 4);
+
 const api = new Function([
-  'const DAY_COLS=31;', DOC_BLOCK,
+  'const DAY_COLS=31;', DOC_BLOCK, MIG_BLOCK,
   'const DOW=["日","月","火","水","木","金","土"];',
   RULE, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
   src.slice(src.indexOf('const AGG_COLS'), src.indexOf('];', src.indexOf('const AGG_COLS')) + 2),
@@ -221,6 +225,66 @@ ok('知らない値が入っていたら既定に戻す', () => {
   const c = api.seedDb();
   c.rules.weekdayFloor = 'なにこれ';
   assert.strictEqual(api.migrateDb_(c).rules.weekdayFloor, 'off');
+});
+
+console.log('■ 古い保存データの手当て（schemaVersion）');
+
+// migrateDb_ は長らく「無い項目を足す」だけで、既にある古い値は直していなかった。
+// そのため初期値を直しても、一度でも使ったブラウザには反映されなかった。
+// 実際、遅半の人数（midN）が 0 のまま残り、遅半が1人も出ない状態が続いていた。
+const OLD = () => ({
+  rules: { docRows: 6, busyDocN: 5, earlyN: 1, lateN: 1, midN: 0, clerkEarlyN: 1,
+           countNationalOff: true, weekdayFloor: 'off', maxConsDefault: 4,
+           maxOffRun: 3, needCloser: true, wishMax: 3, carryOver: true },
+  patterns: [
+    { id: 'p1', sym: '○', label: '早番', start: '08:30', end: '17:30', work: true, order: 1 },
+    { id: 'p2', sym: '●', label: '遅半', start: '11:00', end: '20:00', work: true, order: 2 },
+    { id: 'p3', sym: '▲', label: '遅番', start: '12:00', end: '21:00', work: true, order: 3 },
+    { id: 'p4', sym: '公休', label: '公休', start: '', end: '', work: false, pubOff: true, order: 4 },
+  ],
+});
+// 実際の読み込みは、保存された物をそのまま migrateDb_ に渡す（版は入っていない）
+const migOld = () => api.migrateDb_(OLD());
+
+ok('遅半が0人のままだったデータを直す', () => {
+  assert.strictEqual(OLD().rules.midN, 0, '前提: 控えは 0');
+  assert.ok(migOld().rules.midN > 0, '取り込んでも 0 のまま');
+});
+
+ok('もう使わない ▲遅番の人数を消す', () => {
+  assert.strictEqual(migOld().rules.lateN, undefined,
+    '残っていると「設定したのに効かない」');
+});
+
+ok('同時にいてほしい人数を足す', () => {
+  assert.ok(migOld().rules.minOnDuty >= 1);
+});
+
+ok('記号の勤務時間を実物に合わせる', () => {
+  const p2 = migOld().patterns;
+  const f = sym => p2.find(x => x.sym === sym);
+  assert.strictEqual(f('○').start, '10:00', '早番が 08:30 のまま');
+  assert.strictEqual(f('○').end, '19:00', '早番が閉局の2時間半前に上がる');
+  assert.strictEqual(f('●').start, '10:30');
+  assert.strictEqual(f('▲').end, '20:00');
+});
+
+ok('手で直した時刻は触らない', () => {
+  const d = OLD();
+  d.patterns[0].start = '07:00';          // 利用者が直した
+  const m = api.migrateDb_(d);
+  assert.strictEqual(m.patterns[0].start, '07:00', '直した値を上書きした');
+  assert.strictEqual(m.patterns[0].end, '17:30', '片方だけ直っている');
+});
+
+ok('二度目の取り込みでは何もしない', () => {
+  const once = migOld();
+  once.rules.midN = 3;                    // そのあと利用者が 3 にした
+  assert.strictEqual(api.migrateDb_(once).rules.midN, 3, '3 を上書きした');
+});
+
+ok('新しく作ったデータには版が入る', () => {
+  assert.ok(Number(api.migrateDb_(api.seedDb()).schemaVersion) >= 2);
 });
 
 console.log(fail ? '\n■ ' + fail + ' 件 NG' : '\n■ すべて OK');

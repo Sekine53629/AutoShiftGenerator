@@ -23,9 +23,13 @@ const FN = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeIn
 const DOC_BLOCK = src.slice(src.indexOf('const clamp_ ='),
   src.indexOf('}', src.indexOf('function busyDocN_')) + 1);
 
+// 保存済みデータの版と、古い値の手当て。seedDb / migrateDb_ が参照する
+const MIG_BLOCK = src.slice(src.indexOf('const SCHEMA_VERSION ='),
+  src.indexOf('\n  }', src.indexOf('function fixOldValues_')) + 4);
+
 const run = new Function('staff', 'y', 'm', [
   'const DAY_COLS=31; const DOW=["日","月","火","水","木","金","土"];',
-  RULE, DOC_BLOCK, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
+  RULE, DOC_BLOCK, MIG_BLOCK, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
   upto('const dowNames_ ='), FN.map(grab).join('\n'),
   'const DB=migrateDb_(seedDb()); const activeStore="st1";',
   'DB.staff=staff; DB.rules.maxConsDefault=3;',

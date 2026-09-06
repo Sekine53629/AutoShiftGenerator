@@ -906,6 +906,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     staff.push(mk('事務 D', '事務員', '社員', 4, '', 4, ['○'], ALL, [], false, RULE_WEEKN));
 
     return {
+      schemaVersion: SCHEMA_VERSION,
       // capPharm / capClerk は「同時に何人まで店に入れるか」。
       // 需要ではなく店舗の広さ・作業台の数で決まるので、必要人数の表ではなく
       // 店舗の属性として持つ
@@ -918,13 +919,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
        * 「祝日だから休み」という決めつけがそのまま人手不足になる。
        */
       hours: [
-        { id: 'h0', storeId: 'st1', dow: 0, open: true, from: '09:00', to: '17:00', pharmMin: 2, clerkMin: 1 },
-        { id: 'h1', storeId: 'st1', dow: 1, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
-        { id: 'h2', storeId: 'st1', dow: 2, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
-        { id: 'h3', storeId: 'st1', dow: 3, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
-        { id: 'h4', storeId: 'st1', dow: 4, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
-        { id: 'h5', storeId: 'st1', dow: 5, open: true, from: '09:00', to: '19:00', pharmMin: 3, clerkMin: 1 },
-        { id: 'h6', storeId: 'st1', dow: 6, open: true, from: '09:00', to: '17:00', pharmMin: 2, clerkMin: 1 }
+        // 営業時間は記号の勤務時間と揃える。合っていないと、開店から
+        // 最初の記号が始まるまで誰もいない時間ができる。
+        // 実物は 10:00〜20:00 で、3種類の記号がそれを覆っている
+        { id: 'h0', storeId: 'st1', dow: 0, open: true, from: '10:00', to: '20:00', pharmMin: 2, clerkMin: 1 },
+        { id: 'h1', storeId: 'st1', dow: 1, open: true, from: '10:00', to: '20:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h2', storeId: 'st1', dow: 2, open: true, from: '10:00', to: '20:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h3', storeId: 'st1', dow: 3, open: true, from: '10:00', to: '20:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h4', storeId: 'st1', dow: 4, open: true, from: '10:00', to: '20:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h5', storeId: 'st1', dow: 5, open: true, from: '10:00', to: '20:00', pharmMin: 3, clerkMin: 1 },
+        { id: 'h6', storeId: 'st1', dow: 6, open: true, from: '10:00', to: '20:00', pharmMin: 2, clerkMin: 1 }
       ],
 
       /**
@@ -1071,6 +1075,64 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     return db;
   }
 
+  /**
+   * 保存済みデータの版。**上げたら fixOldValues_ に手当てを書く。**
+   *
+   * migrateDb_ は長らく「無い項目を足す」だけで、既にある古い値は直していなかった。
+   * そのため初期値を直しても、一度でも使ったブラウザには反映されなかった。
+   * 実際、遅半の人数（midN）が 0 のまま残り、遅半が1人も出ない状態が続いていた。
+   */
+  const SCHEMA_VERSION = 2;
+
+  /**
+   * 古い値を直す。**利用者が意図して入れた値は触らない。**
+   * 見分けは「そのころの初期値と完全に一致するか」で付ける。
+   * 一致すれば触られていないので直してよい。
+   */
+  function fixOldValues_(db, seed) {
+    const was = Number(db.schemaVersion) || 1;
+    if (was >= SCHEMA_VERSION) return db;
+
+    const r = db.rules || (db.rules = {});
+
+    // ▲遅番の人数は設定をやめた（早番と遅半の残りが全員 遅番）。
+    // 残っていると「設定したのに効かない」ので消す
+    delete r.lateN;
+
+    // 遅半の人数。初期値が 0 だったころのデータは遅半が1人も出ない
+    if (!(Number(r.midN) > 0)) r.midN = seed.rules.midN;
+
+    /**
+     * 記号の勤務時間。初期値が実物と違っていた
+     * （早番が 08:30〜17:30 で、閉局の2時間半前に上がる形だった）。
+     * **そのころの初期値と完全に一致するときだけ**実物に合わせる。
+     */
+    const OLD_TIMES = { '○': ['08:30', '17:30'], '●': ['11:00', '20:00'],
+                        '▲': ['12:00', '21:00'] };
+    (db.patterns || []).forEach(p2 => {
+      const o = OLD_TIMES[p2.sym];
+      if (!o || p2.start !== o[0] || p2.end !== o[1]) return;   // 触られている
+      const now = (seed.patterns || []).find(q => q.sym === p2.sym);
+      if (now) { p2.start = now.start; p2.end = now.end; }
+    });
+
+    /**
+     * 営業時間。初期値が 09:00〜19:00 / 09:00〜17:00 で、記号の勤務時間
+     * （最も早い開始が 10:00）と合っていなかった。開店から1時間、
+     * 誰もいない状態になる。**そのころの初期値と一致するときだけ**直す。
+     */
+    const OLD_HOURS = [['09:00', '17:00'], ['09:00', '19:00']];
+    (db.hours || []).forEach(h => {
+      const hit = OLD_HOURS.some(o => h.from === o[0] && h.to === o[1]);
+      if (!hit) return;                                        // 触られている
+      const now = (seed.hours || []).find(q => Number(q.dow) === Number(h.dow));
+      if (now) { h.from = now.from; h.to = now.to; }
+    });
+
+    db.schemaVersion = SCHEMA_VERSION;
+    return db;
+  }
+
   function migrateDb_(db) {
     const seed = seedDb();
 
@@ -1083,6 +1145,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     db.rules = db.rules || {};
     if (db.rules.docRows === undefined) db.rules.docRows = seed.rules.docRows;
     if (db.rules.busyDocN === undefined) db.rules.busyDocN = seed.rules.busyDocN;
+    if (db.rules.minOnDuty === undefined) db.rules.minOnDuty = seed.rules.minOnDuty;
+    fixOldValues_(db, seed);
     // 真偽値ひとつだった頃の設定を3択に移す
     if (db.rules.floorOnlyWhenNoDoctor !== undefined) {
       if (db.rules.weekdayFloor === undefined) {
@@ -2195,7 +2259,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       // 実物は記号ごとに勤務時間が30分ずつずれており、開局直後は早番しかいない
       const cov = coverageOf_(c);
       const want = Math.max(1, Number(r.minOnDuty) || 1);
-      if (cov.min < want && cov.min < on) {
+      if (cov.min === 0 && on > 0) {
+        msgs.push(days[c].day + '日：' + cov.at + ' に薬剤師が誰もいません。'
+          + '営業時間（' + days[c].from + '–' + days[c].to + '）と'
+          + '記号の勤務時間が合っていません。'
+          + '店舗営業マスタかシフトパターンマスタを直してください');
+      } else if (cov.min < want && cov.min < on) {
         msgs.push(days[c].day + '日：' + cov.at + ' に薬剤師 ' + cov.min
           + ' 人。その日の出勤は ' + on + ' 人ですが、勤務時間がずれているため'
           + 'この時間帯だけ薄くなります');
@@ -4019,13 +4088,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 一部だけ貼れるようにする（医師マスタだけ入れ替える、など）。
     // 全部を要求すると、試したいものだけ差し替えることができない
     const KEYS = ['stores', 'hours', 'closures', 'holidays', 'demand',
-                  'staff', 'doctors', 'patterns', 'notes', 'leave', 'rules'];
+                  'staff', 'doctors', 'patterns', 'notes', 'leave', 'rules', 'marks'];
     const present = master ? KEYS.filter(k => master[k] !== undefined) : [];
     if (!present.length && !parsed.shift) {
       dataStat('中身が見つかりません。' + KEYS.join(' / ') + ' か shift を含めてください。');
       return;
     }
     present.forEach(k => { DB[k] = master[k]; });
+    /**
+     * **貼られた側の版で判定する。** DB には新しい版が入っているので、
+     * そのままだと「もう手当て済み」と見なして古い値が直らない。
+     * 実際、遅半の人数が 0 のままの控えを貼っても直らなかった。
+     */
+    DB.schemaVersion = master.schemaVersion === undefined
+      ? (parsed.schemaVersion === undefined ? 1 : parsed.schemaVersion)
+      : master.schemaVersion;
     migrateDb_(DB);        // 古い版の書き出しを貼られても動くようにする
     if (present.indexOf('stores') >= 0) syncActiveStore();
     save();

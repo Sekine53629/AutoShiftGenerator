@@ -74,10 +74,14 @@ const FN = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeIn
 const DOC_BLOCK = src.slice(src.indexOf('const clamp_ ='),
   src.indexOf('}', src.indexOf('function busyDocN_')) + 1);
 
+// 保存済みデータの版と、古い値の手当て。seedDb / migrateDb_ が参照する
+const MIG_BLOCK = src.slice(src.indexOf('const SCHEMA_VERSION ='),
+  src.indexOf('\n  }', src.indexOf('function fixOldValues_')) + 4);
+
 const run = new Function('document', [
   'const DAY_COLS=31; const DOC_ROWS=5;',
   'const DOW=["日","月","火","水","木","金","土"];',
-  RULE, DOC_BLOCK, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
+  RULE, DOC_BLOCK, MIG_BLOCK, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
   src.slice(src.indexOf('const AGG_COLS'), src.indexOf('];', src.indexOf('const AGG_COLS')) + 2),
   L('  const aggHead_ ='),   // 「◯診出勤」の見出しは設定で変わるので描くときに作る
   FN.map(grab).join('\n'),
@@ -144,7 +148,7 @@ console.log('■ 出られない曜日が灰色になるか（実物と同じ扱
 // 実物のシフト表は、出られない曜日のセルを #d0cece で潰している。
 // マスタには入っているのに表からは読み取れず、空欄と見分けが付かなかった。
 const naRun = new Function('document', [
-  'const DAY_COLS=31;', DOC_BLOCK,
+  'const DAY_COLS=31;', DOC_BLOCK, MIG_BLOCK,
   'const DOW=["日","月","火","水","木","金","土"];',
   RULE, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
   src.slice(src.indexOf('const AGG_COLS'), src.indexOf('];', src.indexOf('const AGG_COLS')) + 2),
