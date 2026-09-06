@@ -22,7 +22,7 @@ const RULE_BLOCK = (() => {
 })();
 const FNS = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays',
-  'offQuotaBase', 'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_',
+  'offQuotaBase', 'offQuotaFor', 'buildWeeks', 'seamWorkedOf_', 'placeOneStaff_', 'pickWeek_',
   'needOf_', 'clerkCapOf_', 'shortage_', 'firstOverrun_', 'repairRuns_'];
 
 const harness = `
@@ -42,6 +42,7 @@ const harness = `
   const pubOffSyms = () => DB.patterns.filter(p => !p.work && p.pubOff).map(p => p.sym);
   const isPubOff = v => !!v && pubOffSyms().indexOf(v) >= 0;
 
+  let curYear_ = 0, curMonth_ = 0;
   const values = new Map();
   const get = (row, c) => values.get(row.key + '|' + c) || '';
   const setV = (row, c, v) => { if (v) values.set(row.key + '|' + c, v); else values.delete(row.key + '|' + c); };
@@ -57,6 +58,7 @@ const harness = `
 
   let days = [];
   function run(y, m) {
+    curYear_ = y; curMonth_ = m;
     days = buildDays(y, m);
     values.clear();
     autoNotes = [];

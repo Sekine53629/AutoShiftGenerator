@@ -1107,6 +1107,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    */
   const values = new Map();
   let curYm = '';
+  let curYear_ = 0, curMonth_ = 0;   // 継ぎ目の週を見るのに要る
   const cellKey = (row, c) =>
     row.key + '|' + curYm + '|' + (days[c] ? days[c].day : c + 1);
   const get = (row, c) => values.get(cellKey(row, c)) || '';
@@ -1265,6 +1266,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const y = Number($('yy').value), m = Number($('mm').value);
     if (curYm !== y + '-' + String(m).padStart(2, '0')) markEdited_();  // 月が変わったら遡りを忘れる
     curYm = y + '-' + String(m).padStart(2, '0');
+    curYear_ = y;
+    curMonth_ = m;
     days = buildDays(y, m);
     ROWS = buildRows(y, m);
     $('ymLabel').textContent = y + '年' + m + '月';
@@ -1726,6 +1729,34 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
      本番は Engine.gs が置く。ここはルールの効き方を見るためのもの。
      手順は「まず全日を出勤にして、休めない日を避けながら休みノルマを埋める」。 */
   /**
+   * 継ぎ目の週で、前月に何日出勤しているかを数える。
+   *
+   * buildWeeks() は月内だけで週を切るので、月をまたぐ週は前月ぶんと今月ぶんに
+   * 分断される。前月を見ずに今月ぶんへ上限まで詰めると、暦の1週間としては
+   * 上限を超える（週4の人が 6〜7 日になっていた）。
+   *
+   * @param {Object} staff 対象の社員
+   * @param {number} y 対象の年
+   * @param {number} m 対象の月
+   * @return {number} 前月ぶんの出勤日数
+   */
+  function seamWorkedOf_(staff, y, m) {
+    const firstDow = new Date(y, m - 1, 1).getDay();
+    if (firstDow === 0) return 0;                 // 1日が日曜なら分断されない
+    const pm = m === 1 ? 12 : m - 1;
+    const py = m === 1 ? y - 1 : y;
+    const pYm = py + '-' + String(pm).padStart(2, '0');
+    const lastDay = new Date(py, pm, 0).getDate();
+    let n = 0;
+    for (let i = 1; i <= firstDow; i++) {         // 前月末から firstDow 日ぶん
+      const d = lastDay - firstDow + i;
+      if (d < 1) continue;
+      if (isWork(values.get(staff.id + '|' + pYm + '|' + d) || '')) n++;
+    }
+    return n;
+  }
+
+  /**
    * 月を日曜始まりの週に切る。月初と月末の欠けた週も1つの週として扱う。
    * 週の途中で月が変わるぶんは、その週の日数が減るだけ。
    */
@@ -1818,14 +1849,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     // 5. 週ごとの出勤日数。上限は週勤務日数
     const freeSet = new Set(free);
-    const wk = weeks.map(w => {
+    const seamWorked = seamWorkedOf_(s, curYear_, curMonth_);
+    const wk = weeks.map((w, wi) => {
       const cols = w.cols.filter(c => freeSet.has(c));
       const floor = cols.filter(c => mustWork.has(c)).length;   // 必ず出る日は減らせない
+      // 先頭の週は月をまたぐ。前月に出た日数を差し引く
+      const room = (Number(s.weekDays) || 0) - (wi === 0 ? seamWorked : 0);
       return {
         cols: cols, floor: floor, n: 0, over: false,
-        cap: Math.max(floor, Math.min(Number(s.weekDays) || 0, cols.length))
+        cap: Math.max(floor, Math.min(Math.max(0, room), cols.length))
       };
     });
+    if (seamWorked && wk.length) {
+      note_(s.name + '：先頭の週は前月に ' + seamWorked
+        + ' 日出ているので、今月ぶんを ' + wk[0].cap + ' 日までにしました');
+    }
     // 週勤務日数は超えない。公休ノルマは「最低これだけ休む」という下限として扱う。
     // 週3の人は31日の月に13日ほどしか働けないので、公休はノルマを必ず超える。
     // ノルマに合わせて無理に出勤させると、週勤務日数の約束を破ることになる。

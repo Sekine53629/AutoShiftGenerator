@@ -19,7 +19,7 @@ const RULE_BLOCK = (() => {
 })();
 const FNS = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays', 'offQuotaBase',
-  'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_', 'needOf_', 'needOf_', 'clerkCapOf_', 'shortage_',
+  'offQuotaFor', 'buildWeeks', 'seamWorkedOf_', 'placeOneStaff_', 'pickWeek_', 'needOf_', 'needOf_', 'clerkCapOf_', 'shortage_',
   'firstOverrun_', 'repairRuns_'];
 
 const make = new Function([
@@ -31,6 +31,7 @@ const make = new Function([
   'const isWork=v=>v==="◯"||workSyms().indexOf(v)>=0;',
   'const pubOffSyms=()=>DB.patterns.filter(p=>!p.work&&p.pubOff).map(p=>p.sym);',
   'const isPubOff=v=>!!v&&pubOffSyms().indexOf(v)>=0;',
+  'let curYear_=0, curMonth_=0;',
   'const values=new Map();',
   'const get=(row,c)=>values.get(row.key+"|"+c)||"";',
   'const setV=(row,c,v)=>{if(v)values.set(row.key+"|"+c,v);else values.delete(row.key+"|"+c);};',
@@ -44,12 +45,12 @@ const make = new Function([
   '  const num=t=>{const p=String(t||"").split(/[-\\/]/); return p.length>=2?Number(p[0])*100+Number(p[1]):0;};',
   '  const f=num(s.from), t=num(s.to); if(f&&ym<f) return false; if(t&&ym>t) return false; return true; }',
   'return function(staffList, y, m, doc, hours, rules){',
-  '  DB.staff = staffList; docShift = doc;',
+  '  DB.staff = staffList; docShift = doc; curYear_=y; curMonth_=m;',
   '  // 指定が無いパターンは初期値へ戻す。前のパターンの設定が残ると数字が狂う',
   '  const base = seedDb();',
   '  DB.hours = hours ? hours : base.hours;',
   '  DB.rules = Object.assign(base.rules, rules || {});',
-  '  days = buildDays(y,m); values.clear(); autoNotes=[];',
+  '  curYear_=y; curMonth_=m; days = buildDays(y,m); values.clear(); autoNotes=[];',
   '  const live = staffList.filter(s=>inService(s,y,m));',
   '  ROWS = live.map((s,i)=>({kind:"staff",index:i,key:s.id,label:s.name,staff:s,',
   '    role: s.kind==="事務員"?"clerk":(s.employment==="派遣"?"dispatch":"pharm")}));',

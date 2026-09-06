@@ -15,7 +15,7 @@ const RULE = src.slice(src.indexOf('const RULE_NORMAL'),
   src.indexOf(';', src.indexOf('const usesQuota')) + 1);
 const FN = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays', 'offQuotaBase',
-  'offQuotaFor', 'buildWeeks', 'placeOneStaff_', 'pickWeek_', 'needOf_', 'needOf_', 'clerkCapOf_', 'shortage_',
+  'offQuotaFor', 'buildWeeks', 'seamWorkedOf_', 'placeOneStaff_', 'pickWeek_', 'needOf_', 'needOf_', 'clerkCapOf_', 'shortage_',
   'firstOverrun_', 'repairRuns_', 'normDow_', 'migrateDb_'];
 
 const run = new Function('staff', 'y', 'm', [
@@ -28,6 +28,7 @@ const run = new Function('staff', 'y', 'm', [
   'const isWork=v=>v==="◯"||workSyms().indexOf(v)>=0;',
   'const pubOffSyms=()=>DB.patterns.filter(p=>!p.work&&p.pubOff).map(p=>p.sym);',
   'const isPubOff=v=>!!v&&pubOffSyms().indexOf(v)>=0;',
+  'let curYear_=y, curMonth_=m;',
   'const values=new Map(); let curYm=y+"-"+String(m).padStart(2,"0");',
   'let days=buildDays(y,m);',
   upto('const cellKey ='),
