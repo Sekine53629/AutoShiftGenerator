@@ -190,7 +190,10 @@ button.primary:hover { filter: brightness(1.12); }
 .pgroup { display: flex; align-items: stretch; }
 /* 見出しも中身と同じ枠。ここを別扱いにすると並びが崩れる */
 /* 見出しの上段は、いま選んでいる記号。中身のスタンプと同じ見え方にする */
-.ptoggle .pcur { display: block; font-weight: 700; line-height: 1.1; }
+.ptoggle .pcur {
+  display: block; font-weight: 700; line-height: 1.1;
+  min-height: 1em;      /* 空でも高さを保つ。無いと見出しの位置が上下する */
+}
 .ptoggle .caret { font-style: normal; margin-left: 2px; }
 .pgroup.open .ptoggle .pcur { color: var(--accent); }
 /**
@@ -3574,7 +3577,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
       // スタンプと同じ .stamp を着せる。作りが同じなら大きさも必ず揃う
       const tog = el('button', 'stamp ptoggle');
-      tog.appendChild(el('span', 'pcur', '·'));
+      // いま選んでいる記号を出す欄。何も選んでいなければ空のまま
+      tog.appendChild(el('span', 'pcur', ''));
       const capt = el('small', '', g.label);
       capt.appendChild(el('i', 'caret', '▸'));
       tog.appendChild(capt);
@@ -3666,8 +3670,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const cur = box.querySelector('.pcur');
       if (!cur) return;
       const on = box.querySelector('.pitems .stamp.on');
-      cur.textContent = on ? on.firstChild.nodeValue : '·';
-      cur.style.color = on ? '' : 'var(--ink-faint)';
+      // 選んでいないときは空にする。埋め草の「・」を置くと、
+      // 記号だと思って押されるし、並べたときに点が目について落ち着かない
+      cur.textContent = on ? on.firstChild.nodeValue : '';
     });
   }
 
