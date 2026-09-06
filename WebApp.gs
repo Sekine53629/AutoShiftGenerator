@@ -33,8 +33,9 @@ function doGet(e) {
     // 「配信されているコードが新しいか」だけを1クリックで確かめるための入口。
     // 画面が構文エラーで真っ白なときでも、ここは必ず出る
     if (e && e.parameter && e.parameter.probe) {
+      // 版だけを返す。クエリの中身は一切 echo しない（反射 XSS の口になる）
       return HtmlService.createHtmlOutput(
-        `<pre style="font:14px monospace">版 ${CONFIG.APP_VERSION}</pre>`);
+        `<pre style="font:14px monospace">版 ${escapeHtml_(CONFIG.APP_VERSION)}</pre>`);
     }
 
     const template = HtmlService.createTemplateFromFile('WebAppView');
@@ -51,8 +52,11 @@ function doGet(e) {
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
     logError(MODULE_WEBAPP, 'doGet', error, '', true);
+    // ★ error.message にはクエリの中身が混ざりうる。生で埋めると反射 XSS になる。
+    //   詳細はログにだけ残し、画面には出さない（何が動いているかも漏らさない）
     return HtmlService.createHtmlOutput(
-      `<p>画面を開けませんでした。</p><pre>${error.message}</pre>`);
+      '<p>画面を開けませんでした。管理者に連絡してください。</p>'
+      + `<p style="color:#666;font:12px monospace">版 ${escapeHtml_(CONFIG.APP_VERSION)}</p>`);
   }
 }
 

