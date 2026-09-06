@@ -183,16 +183,7 @@ button.primary:hover { filter: brightness(1.12); }
  * 開いた群の中身は下の段に出す。横に伸ばすと、その右にあるものが
  * ずれて、押そうとしていたボタンが逃げる。
  */
-#palette { display: flex; flex-direction: column; gap: 4px; }
-.ptabs { display: flex; flex-wrap: wrap; gap: 4px; }
-.pitemsrow {
-  display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
-  min-height: 34px;           /* 開け閉めで高さが跳ねないよう先に確保する */
-  padding: 3px 5px;
-  border: 1px solid var(--rule-soft); border-radius: 3px;
-  background: var(--ground);
-}
-.pitemsrow .hint { font-size: 11px; color: var(--ink-faint); }
+#palette { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 
 .pgroup { display: flex; align-items: stretch; }
 .ptoggle { min-width: 0; }
@@ -202,8 +193,26 @@ button.primary:hover { filter: brightness(1.12); }
 }
 .ptoggle .caret { font-style: normal; margin-left: 3px; }
 .pgroup.open .ptoggle .pcur { color: var(--accent); }
-/* 群の見出し。開いているものだけ色を変える */
-.pgroup.open .ptoggle { background: var(--accent-soft); border-color: var(--accent); }
+/**
+ * 群の中身は見出しの隣に開く。**スタンプは独立した段に置いてあるので、
+ * 横に伸びてもほかのボタンは動かない。**
+ * 同じ段に置いていたころは、開くたびに右のボタンが逃げていた。
+ */
+.pitems {
+  display: flex; align-items: center; gap: 4px;
+  max-width: 0; opacity: 0; overflow: hidden; padding: 0;
+  transition: max-width .22s ease, opacity .16s ease, padding .22s ease;
+}
+.pgroup.open .pitems {
+  max-width: 900px; opacity: 1; padding: 0 5px;
+  border: 1px solid var(--accent); border-left: 0; border-radius: 0 3px 3px 0;
+  background: var(--surface);
+}
+@media (prefers-reduced-motion: reduce) { .pitems { transition: none; } }
+.pgroup.open .ptoggle {
+  background: var(--accent-soft); border-color: var(--accent);
+  border-right-color: transparent; border-radius: 3px 0 0 3px;
+}
 .stamp {
   min-width: 34px; padding: 3px 7px;
   font-family: ui-monospace, "Consolas", monospace; font-weight: 700;
@@ -528,9 +537,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   #storeSel { max-width: 130px; }
   #yy { width: 66px !important; }
   #mm { width: 48px !important; }
-  .ptabs, .pitemsrow { flex-wrap: nowrap; overflow-x: auto; }
-  .pitemsrow { min-height: 46px; }
-  #palette { width: 100%; }
+  /* 狭い画面は横に流す。折り返すと押す場所が上下に動く */
+  #palette { width: 100%; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .pgroup, .stamp { flex: none; }
+  .pgroup.open .pitems { max-width: none; }
   .page-head { padding: 9px 10px 6px; }
   .page-head h1 { font-size: 20px; }
 }
@@ -3548,16 +3558,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       openGroup = stamp.kind === 'clear' ? null : stamp.kind;
     }
 
-    /**
-     * 上の段は群のボタンだけ。**ここは開け閉めで動かさない。**
-     * 横に伸びる作りだったころは、群を開くと右にあるボタンがずれて、
-     * 押そうとしていたものが逃げていた。
-     */
-    const tabs = el('div', 'ptabs');
     groups.forEach(g => {
       if (!g.items.length) return;
       const box = el('span', 'pgroup');
       box.dataset.kind = g.kind;
+
+      // スタンプと同じ .stamp を着せる。作りが同じなら大きさも必ず揃う
       const tog = el('button', 'stamp ptoggle');
       tog.appendChild(el('span', 'pcur', '·'));
       const capt = el('small', '', g.label);
@@ -3568,19 +3574,20 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         syncPaletteOpen();
       });
       box.appendChild(tog);
-      tabs.appendChild(box);
-    });
-    // 消去は使う頻度が高いので畳まない
-    tabs.appendChild(stampButton('clear', { value: '', face: '×', sub: '消去' }));
-    host.appendChild(tabs);
 
-    // 下の段は、開いている群の中身だけ
-    const row = el('div', 'pitemsrow');
-    row.id = 'pitemsRow';
-    host.appendChild(row);
+      const items = el('span', 'pitems');
+      g.items.forEach(it => items.appendChild(stampButton(g.kind, it)));
+      box.appendChild(items);
+      host.appendChild(box);
+    });
+
+    // 消去は使う頻度が高いので畳まない
+    host.appendChild(stampButton('clear', { value: '', face: '×', sub: '消去' }));
 
     syncPaletteOpen();
+    updatePaletteState();
   }
+
 
 
   /**
@@ -3597,17 +3604,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       if (tog) tog.title = (on ? '閉じる' : '開く') + '（' + box.dataset.kind + '）';
     });
 
-    // 開いている群の中身を下の段に出す。高さは CSS で確保してあるので跳ねない
-    const row = $('pitemsRow');
-    if (!row) return;
-    row.textContent = '';
-    const g = paletteGroups().find(x => x.kind === openGroup);
-    if (!g || !g.items.length) {
-      row.appendChild(el('span', 'hint', '上の見出しを押すとスタンプが出ます'));
-    } else {
-      g.items.forEach(it => row.appendChild(stampButton(g.kind, it)));
-    }
-    updatePaletteState();
   }
 
   /**
