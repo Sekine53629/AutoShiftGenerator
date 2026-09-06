@@ -568,6 +568,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   .pn-print { display: block !important; }
   .printnote { padding: 8px 0 0; page-break-inside: avoid; }
   .scroll { max-height: none; overflow: visible; }
+  /**
+   * 貼り付けをやめる。
+   *
+   * 画面では日付行・曜日行・氏名列をスクロールに追従させているが、
+   * **スクロールした状態で刷ると、その量ぶんずれて表の中に降りてくる。**
+   * 氏名列が表の真ん中に重なり、日付行が4行目あたりに出ていた。
+   * 紙は全体が一度に見えるので、そもそも貼り付ける必要がない。
+   */
+  #grid thead th, #grid .nm, #grid .r-repeat th { position: static !important; }
   body { background: #fff; margin: 0; }
   .page-head { padding: 0 0 4px; }
   /* 表を1枚に収める。行の途中で改ページさせない */
@@ -2478,6 +2487,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const set = o => Object.keys(o).forEach(k => root.style.setProperty(k, o[k]));
     const clear = () => Object.keys(PRINT_SIZES)
       .forEach(k => root.style.removeProperty(k));
+
+    // スクロール位置を戻してから測る。ずれたまま刷ると見出しが表の中に降りる
+    const box = grid.closest ? grid.closest('.scroll') : null;
+    if (box) { box.scrollLeft = 0; box.scrollTop = 0; }
 
     // 印刷の見た目にしてから測る。画面の寸法で測ると高く見積もりすぎる
     printMetrics_(true);

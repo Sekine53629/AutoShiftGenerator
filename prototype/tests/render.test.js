@@ -336,6 +336,20 @@ check(fitRun.zoom() >= 0.5, '倍率の下限は守る', String(fitRun.zoom()));
     '印刷の寸法を CSS に直書きしていない');
 }
 
+// スクロールしたまま刷ると、貼り付いた見出しと氏名列がその量ぶんずれて
+// 表の中に降りてくる（氏名列が真ん中に重なり、日付行が4行目に出ていた）
+{
+  const print = src.slice(src.indexOf('@media print'));
+  check(/#grid thead th[^{]*\{[^}]*position: static !important/.test(print),
+    '紙でも見出しを貼り付けたままにしている');
+  check(/#grid \.nm/.test(print.slice(print.indexOf('position: static !important') - 200,
+    print.indexOf('position: static !important'))),
+    '氏名列の貼り付けを外していない');
+  const fp = grab('fitPrint_');
+  check(/scrollLeft = 0/.test(fp) && /scrollTop = 0/.test(fp),
+    'スクロール位置を戻していない');
+}
+
 console.log('');
 console.log('■ document から探さずに書けているか（未挿入でも効くこと）');
 console.log('  document.querySelector は常に null を返す状態で組み立てた');
