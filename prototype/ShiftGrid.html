@@ -258,9 +258,18 @@ th.shut, td.shut { color: var(--ink-soft) !important; }
 
 td.cell { cursor: cell; }
 td.cell.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+/**
+ * セルの記号。実物のシフト表は本文もすべて太字で、書体は游ゴシック
+ * （docs/OUTPUT-FORMAT.md §3）。
+ *
+ * 以前は欧文等幅（Consolas）を先頭にしていたため、○●▲ は Consolas で細く、
+ * 「公休」は日本語フォントに落ちて太く見え、同じ表の中で太さが揃わなかった。
+ * 日本語フォントを先頭に置けば、記号も漢字も同じ face で出る。
+ */
 td.cell .v {
   display: block; height: 100%; line-height: var(--cell-h);
-  font-family: ui-monospace, "Consolas", monospace; font-weight: 500;
+  font-family: "Yu Gothic UI", "Meiryo", "Noto Sans JP", sans-serif;
+  font-weight: 700;
 }
 td.cell .v.small { font-size: 10px; letter-spacing: -.02em; }
 td.text input {
@@ -384,10 +393,26 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 .warnbox li { margin: 2px 0; }
 .warnbox.ok { background: var(--accent-soft); border-left-color: var(--accent); }
 
+/**
+ * 印刷。実物のブックの設定に合わせる（docs/OUTPUT-FORMAT.md §6）。
+ *   横・A4／余白 上下 1.9cm・左 0.6cm・右 0
+ * 実物は倍率61%固定だが、CSS に倍率は無いので幅で合わせる。
+ */
+@page {
+  size: A4 landscape;
+  margin: 1.9cm 0 1.9cm 0.6cm;
+}
 @media print {
-  .toolbar, .legend, .holiday-bar, .tabs { display: none; }
+  .toolbar, .legend, .holiday-bar, .tabs, #gridWarn,
+  .panel:not(.on), #appVer { display: none !important; }
   .scroll { max-height: none; overflow: visible; }
-  body { background: #fff; }
+  body { background: #fff; margin: 0; }
+  .page-head { padding: 0 0 4px; }
+  /* 表を1枚に収める。行の途中で改ページさせない */
+  #grid { font-size: 8pt; }
+  #grid tr, #grid td, #grid th { page-break-inside: avoid; }
+  /* 背景色は既定で印刷されない。土日祝や灰色が消えると表の意味が変わる */
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
@@ -395,7 +420,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 <body>
 
 <header class="page-head">
-  <h1>シフト表</h1>
+  <h1 id="sheetTitle">シフト表</h1>
   <span class="ym" id="ymLabel">—</span>
   <span class="note" id="quotaNote"></span>
   <span class="note" id="appVer" style="margin-left:auto"></span>
@@ -1427,11 +1452,25 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     curMonth_ = m;
     days = buildDays(y, m);
     ROWS = buildRows(y, m);
+    // 実物の1行目は A1「R8.8月」・D1「土日公休10回　祝日1回　休みのトータル11回」。
+    // 店名はシートに入っていない（ファイル名だけ）が、複数店で使う以上
+    // どの店の表かは画面と印刷に出しておく
+    const store = DB.stores.find(t => t.id === activeStore) || {};
+    const wa = y - WAREKI_BASE;
+    $('sheetTitle').textContent =
+      (store.name ? store.name + '　' : '')
+      + (wa >= 1 ? 'R' + String(wa).padStart(2, '0') + '.' + m + '月' : y + '年' + m + '月');
     $('ymLabel').textContent = y + '年' + m + '月';
-    // 月の公休ノルマは全員共通。人ごとの設定ではないと分かるよう見出しに出す
+
+    // 公休の内訳。実物の D1 と同じ言い回しにする。
+    // 「ノルマ○日」だけだと、なぜその日数なのかが表から読み取れない
+    const satN = days.filter(d => d.inMonth && d.dow === 6 && d.countsOff).length;
+    const sunN = days.filter(d => d.inMonth && d.dow === 0 && d.countsOff).length;
+    const holN = days.filter(d => d.inMonth && d.countsOff && d.dow !== 0 && d.dow !== 6).length;
     $('quotaNote').textContent =
-      '今月の公休ノルマ ' + offQuotaBase() + ' 日（全員共通・暦から算出）／'
-      + y + '年の合計 ' + annualQuotaOf(y) + ' 日';
+      '土日公休' + (satN + sunN) + '回　祝日' + holN + '回　'
+      + '休みのトータル' + offQuotaBase() + '回'
+      + '（' + y + '年の合計 ' + annualQuotaOf(y) + ' 日）';
 
     const bar = $('holidayBar');
     bar.textContent = '';
@@ -1683,7 +1722,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     v.classList.toggle('small', t.length > 1);
     // 記号が無い日は要判断（公休枠を超えたぶん）。見て分かるようにする
     cell.classList.toggle('na', naDay_(row, c));
-    const todo = row.kind === 'staff' && !t && days[c].inMonth && !naDay_(row, c);
+    // **手動配置の人（派遣）には付けない。** 派遣は空欄が正常で、
+    // 全セルに斜線が入ると印刷が真っ黒になる
+    const todo = row.kind === 'staff' && !t && days[c].inMonth && !naDay_(row, c)
+      && !!row.staff && row.staff.rule !== RULE_MANUAL;
     cell.classList.toggle('todo', todo);
     cell.title = todo
       ? '公休枠を超えるため空けてあります。有休・夏休を割り当ててください' : '';
