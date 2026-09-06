@@ -217,6 +217,8 @@ node prototype/tests/manual.test.js      # 手で入れたものが自動生成�
 node prototype/tests/history.test.js     # 編集履歴（戻す・進める・保存できない環境）
 node prototype/tests/render.test.js      # 組み立て時にセルの中身が書けているか
 node prototype/tests/docrows.test.js     # 医師名欄の行数を変えられるか
+node prototype/tests/symbols.test.js     # 早番・遅半・遅番の配り方
+node prototype/tests/persist.test.js     # 再読み込みで入力が残るか
 node prototype/tests/dispatch.test.js    # 医師パターン × 派遣の量
 ```
 

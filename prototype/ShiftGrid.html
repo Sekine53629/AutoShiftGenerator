@@ -2318,13 +2318,41 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const work = byOrder(DB.patterns).filter(p => p.work).map(p => p.sym);
     if (work.length < 2) return;              // 記号が1種類なら配りようがない
     const r = DB.rules;
-    // 必要数。マスタの並び順の先頭から 早番・遅半・遅番 に対応させる
+    // 必要数。マスタの並び順の先頭から 早番・遅半 に対応させる
     const need = {};
     need[work[0]] = Math.max(0, Number(r.earlyN) || 0);
     if (work[1]) need[work[1]] = Math.max(0, Number(r.midN) || 0);
     const fill = work[work.length - 1];       // 余った人はここ（遅番）
-    // 誰がその記号を何回やったか。偏らせないために数えながら配る
-    const tally = {};
+
+    const can_ = (row, sym) => (row.staff.patterns || []).indexOf(sym) >= 0;
+    const tally = {};        // 'index|記号' → その月の回数
+    const last = {};         // 'index|記号' → 最後に当てた日（散らすため）
+
+    /**
+     * その記号を当てる順番。上から順に見る。
+     *
+     * 1. **その記号しか選べない人が先。** 遅番ができない人を後回しにすると、
+     *    余りの段で遅番に押し込むしかなくなる（本人が使えない記号になる）
+     * 2. その月にその記号が少ない人。**できる人だけで数える**ので、
+     *    遅番をやらない人が早番の分母から外れて均等になる
+     * 3. 最後に当てた日が古い人。同じ人に固まらないよう散らす
+     */
+    const rank = (a2, b2, sym, c) => {
+      const opt = row => (row.staff.patterns || []).filter(x => work.indexOf(x) >= 0).length;
+      const cnt = row => tally[row.index + '|' + sym] || 0;
+      const ago = row => c - (last[row.index + '|' + sym] === undefined
+        ? -99 : last[row.index + '|' + sym]);
+      return opt(a2) - opt(b2)          // 選べる記号が少ない人を先に
+        || cnt(a2) - cnt(b2)            // その記号が少ない人を先に
+        || ago(b2) - ago(a2)            // 最後に当てたのが古い人を先に
+        || a2.index - b2.index;         // 並びを決めきる
+    };
+
+    const put = (row, c, sym) => {
+      setV(row, c, sym);
+      tally[row.index + '|' + sym] = (tally[row.index + '|' + sym] || 0) + 1;
+      last[row.index + '|' + sym] = c;
+    };
 
     for (let c = 0; c < DAY_COLS; c++) {
       if (!days[c].inMonth || !days[c].open) continue;
@@ -2344,30 +2372,46 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
           want[work[0]] = Math.max(0, Number(r.clerkEarlyN) || 0);
         }
         const left = new Set(free);
-        // 早番から順に、その記号を使える人を当てる。
-        // **その月に同じ記号が少ない人から選ぶ。** 単に先頭から取ると
-        // 同じ人が毎日 早番になる（実際そうなっていた）
+
+        // 1. 遅番ができない人を先に片づける。この人たちは早番か遅半にしか入れない
+        Array.from(left)
+          .filter(row => !can_(row, fill))
+          .sort((a2, b2) => rank(a2, b2, work[0], c))
+          .forEach(row => {
+            const mine = work.filter(x => can_(row, x));
+            if (!mine.length) return;
+            // その日の必要数がまだ空いている記号を先に使う。
+            // これが無いと、遅番ができない人が早番の定員を押し広げる
+            const room = mine.filter(x => (want[x] || 0) - (already[x] || 0) > 0);
+            const pool = room.length ? room : mine;
+            // そのうち、その月にいちばん少ないものを取る
+            const sym = pool.slice().sort((x, y) =>
+              (tally[row.index + '|' + x] || 0) - (tally[row.index + '|' + y] || 0)
+              || work.indexOf(x) - work.indexOf(y))[0];
+            put(row, c, sym);
+            already[sym] = (already[sym] || 0) + 1;
+            left.delete(row);
+          });
+
+        // 2. 早番・遅半の残りを埋める
         work.forEach(sym => {
           let n2 = (want[sym] || 0) - (already[sym] || 0);
           if (n2 <= 0) return;
-          const cand = Array.from(left)
-            .filter(row => (row.staff.patterns || []).indexOf(sym) >= 0)
-            .sort((a, b) => (tally[a.index + '|' + sym] || 0) - (tally[b.index + '|' + sym] || 0)
-                            || a.index - b.index);
-          cand.forEach(row => {
-            if (n2 <= 0) return;
-            setV(row, c, sym);
-            tally[row.index + '|' + sym] = (tally[row.index + '|' + sym] || 0) + 1;
-            left.delete(row);
-            n2--;
-          });
+          Array.from(left)
+            .filter(row => can_(row, sym))
+            .sort((a2, b2) => rank(a2, b2, sym, c))
+            .forEach(row => {
+              if (n2 <= 0) return;
+              put(row, c, sym);
+              left.delete(row);
+              n2--;
+            });
         });
-        // 残りは遅番。使えない人は本人の記号のうち最後のもの
+
+        // 3. 残りは遅番
         left.forEach(row => {
-          const can = (row.staff.patterns || []).filter(x => work.indexOf(x) >= 0);
-          const sym = can.indexOf(fill) >= 0 ? fill : (can[can.length - 1] || fill);
-          setV(row, c, sym);
-          tally[row.index + '|' + sym] = (tally[row.index + '|' + sym] || 0) + 1;
+          const mine = work.filter(x => can_(row, x));
+          put(row, c, can_(row, fill) ? fill : (mine[mine.length - 1] || fill));
         });
       });
     }
