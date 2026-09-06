@@ -14,9 +14,14 @@
   マスタは localStorage に持つ。本番では各マスタシートが正になる。
   ※ clasp には push されない（.claspignore の許可リストは直下の *.html だけ）。
 -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&display=swap">
+<!--
+  外部からフォントを読まない。理由は3つ。
+    1. 配布物を file:// で開くので、オフラインの端末でも同じに見える必要がある
+    2. 開くたびに外部へ通信すると、誰がいつ開いたかが外に出る
+    3. 薬局の端末は外部通信が絞られていることがある
+  Windows の日本語環境なら Yu Gothic UI / Meiryo が入っているので、
+  下のフォント指定はそのまま実体に当たる。
+-->
 <style>
 /* ── 配色（明） ───────────────────────────────────────── */
 :root {
@@ -70,7 +75,7 @@ body {
   margin: 0;
   background: var(--ground);
   color: var(--ink);
-  font-family: "Noto Sans JP", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  font-family: "Yu Gothic UI", "Meiryo", "Noto Sans JP", system-ui, sans-serif;
   font-size: 13px;
   line-height: 1.5;
 }
@@ -83,7 +88,7 @@ body {
 }
 .page-head h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: .02em; }
 .ym {
-  font-family: "Roboto Mono", ui-monospace, monospace;
+  font-family: ui-monospace, "Consolas", "Roboto Mono", monospace;
   font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;
   color: var(--accent);
 }
@@ -123,7 +128,7 @@ input, select, textarea {
   background: var(--surface); color: var(--ink);
   border: 1px solid var(--rule); border-radius: 3px;
 }
-input[type="number"] { font-family: "Roboto Mono", ui-monospace, monospace; }
+input[type="number"] { font-family: ui-monospace, "Consolas", "Roboto Mono", monospace; }
 input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
 button {
   font: inherit; padding: 4px 10px;
@@ -143,7 +148,7 @@ button.primary:hover { filter: brightness(1.12); }
 .ptoggle { min-width: 0; }
 .ptoggle .pcur {
   display: block;
-  font-family: "Roboto Mono", "Noto Sans JP", monospace; font-weight: 700;
+  font-family: ui-monospace, "Consolas", monospace; font-weight: 700;
 }
 .ptoggle .caret { font-style: normal; margin-left: 3px; }
 .pgroup.open .ptoggle {
@@ -164,11 +169,11 @@ button.primary:hover { filter: brightness(1.12); }
 @media (prefers-reduced-motion: reduce) { .pitems { transition: none; } }
 .stamp {
   min-width: 34px; padding: 3px 7px;
-  font-family: "Roboto Mono", "Noto Sans JP", monospace; font-weight: 700;
+  font-family: ui-monospace, "Consolas", monospace; font-weight: 700;
 }
 .stamp.wide { min-width: 42px; font-size: 11px; }
 .stamp small {
-  display: block; font-family: "Noto Sans JP", sans-serif;
+  display: block; font-family: "Yu Gothic UI", "Meiryo", sans-serif;
   font-size: 9px; font-weight: 400; color: var(--ink-faint);
   max-width: 74px; overflow: hidden; text-overflow: ellipsis;
 }
@@ -195,7 +200,7 @@ td.cell.todo {
   background: var(--surface); border: 1px solid var(--rule-soft); border-radius: 10px;
 }
 .chip i { width: 9px; height: 9px; border-radius: 2px; background: var(--hol); font-style: normal; }
-.chip b { font-family: "Roboto Mono", monospace; font-variant-numeric: tabular-nums; color: var(--ink); }
+.chip b { font-family: ui-monospace, "Consolas", monospace; font-variant-numeric: tabular-nums; color: var(--ink); }
 
 /* ── シフト表 ────────────────────────────────────────── */
 .scroll { overflow: auto; max-height: calc(100vh - 250px); border-bottom: 1px solid var(--rule-soft); }
@@ -219,10 +224,10 @@ td.cell.todo {
 #grid thead .r-dow  th { position: sticky; top: var(--cell-h); z-index: 3; }
 #grid thead .nm { z-index: 4; }
 #grid thead th {
-  font-family: "Roboto Mono", monospace; font-weight: 500;
+  font-family: ui-monospace, "Consolas", monospace; font-weight: 500;
   font-variant-numeric: tabular-nums; background: var(--band); color: var(--ink);
 }
-#grid thead .nm { font-family: "Noto Sans JP", sans-serif; font-weight: 700; }
+#grid thead .nm { font-family: "Yu Gothic UI", "Meiryo", sans-serif; font-weight: 700; }
 
 .sat { background: var(--sat) !important; color: var(--day-ink) !important; }
 .sun { background: var(--sun) !important; color: var(--day-ink) !important; }
@@ -247,13 +252,13 @@ td.cell { cursor: cell; }
 td.cell.sel { box-shadow: inset 0 0 0 2px var(--accent); }
 td.cell .v {
   display: block; height: 100%; line-height: var(--cell-h);
-  font-family: "Roboto Mono", "Noto Sans JP", monospace; font-weight: 500;
+  font-family: ui-monospace, "Consolas", monospace; font-weight: 500;
 }
 td.cell .v.small { font-size: 10px; letter-spacing: -.02em; }
 td.text input {
   width: 100%; height: var(--cell-h);
   border: 0; background: transparent; color: inherit;
-  font: inherit; font-family: "Noto Sans JP", sans-serif; font-size: 10px;
+  font: inherit; font-family: "Yu Gothic UI", "Meiryo", sans-serif; font-size: 10px;
   text-align: center; padding: 0 1px; border-radius: 0;
 }
 td.text input:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -261,7 +266,7 @@ td.locked { background: var(--outside); cursor: not-allowed; }
 
 tr.aggrow td, tr.aggrow th { background: var(--agg); font-weight: 500; }
 tr.aggrow .nm { font-weight: 700; }
-.num { font-family: "Roboto Mono", monospace; font-variant-numeric: tabular-nums; }
+.num { font-family: ui-monospace, "Consolas", monospace; font-variant-numeric: tabular-nums; }
 .neg { color: var(--danger); font-weight: 700; }
 .zero { color: var(--ink-faint); }
 
@@ -385,6 +390,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <h1>シフト表</h1>
   <span class="ym" id="ymLabel">—</span>
   <span class="note" id="quotaNote"></span>
+  <span class="note" id="appVer" style="margin-left:auto"></span>
 </header>
 
 <nav class="tabs" id="tabs">
@@ -706,7 +712,20 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   function busyDocN_() {
     return clamp_(Number(DB.rules.busyDocN) || DOC_BUSY_DEFAULT, 1, DOC_ROWS_MAX);
   }
-  const STORE_KEY = 'shiftgrid.db.v1';
+  /**
+   * 版。**画面に出して、動いているコードを見分けるために使う。**
+   * 配った控えと手元のものが同じか、これが無いと分からない。
+   * コードを変えたら必ず上げること（GAS 側の CONFIG.APP_VERSION と同じ考え方）。
+   */
+  const APP_VERSION = '1.0.0';
+  const STORE_KEY = 'shiftgrid.db.v1';      // マスタ
+  const CELLS_KEY = 'shiftgrid.cells.v1';   // シフトの中身
+  /**
+   * 前回の保存が通ったか。**通らなかったことを黙っていてはいけない。**
+   * 画面は動き続けるので、利用者は保存できたと思ったまま作業を続けてしまう。
+   */
+  let dbPersist = true;
+  let cellsPersist = true;
 
   /* 集計列（右）— 仕様書 §5.4 の6列 */
   const AGG_COLS = [
@@ -983,8 +1002,53 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     return seedDb();
   }
   function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }
-    catch (e) { /* 保存できなくても画面は動かす */ }
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(DB));
+      dbPersist = true;
+    } catch (e) {
+      // 画面は動かすが、保存できていないことは必ず出す（checkRules が拾う）
+      dbPersist = false;
+    }
+  }
+
+  /**
+   * シフトの中身を保存する。
+   *
+   * ここが無かったころは、再読み込みで入力が丸ごと消えていた。
+   * しかも起動時に autoGenerate() が走るので、作り直された表が出て
+   * 「消えた」ことに気づけなかった。
+   */
+  function saveCells() {
+    try {
+      const o = {};
+      values.forEach((v, k) => { if (v) o[k] = v; });
+      localStorage.setItem(CELLS_KEY, JSON.stringify(o));
+      cellsPersist = true;
+      return true;
+    } catch (e) {
+      cellsPersist = false;
+      return false;
+    }
+  }
+
+  /** 保存してあるシフトを読み戻す。@return {number} 読めた件数 */
+  function loadCells() {
+    try {
+      const raw = localStorage.getItem(CELLS_KEY);
+      if (!raw) return 0;
+      const o = JSON.parse(raw);
+      let n = 0;
+      Object.keys(o).forEach(k => {
+        // '<行キー>|yyyy-mm|日' の形だけを通す。壊れた控えで表を壊さない
+        if (/^[^|]+\|\d{4}-\d{2}\|\d{1,2}$/.test(k) && o[k]) {
+          values.set(k, String(o[k]));
+          n++;
+        }
+      });
+      return n;
+    } catch (e) {
+      return 0;
+    }
   }
 
   /* ═══ 祝日・休診日 ═════════════════════════════════════ */
@@ -1659,6 +1723,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       });
     });
 
+    saveCells();     // 表が変わるたびに必ずここを通る。保存の唯一の出口
     checkRules();
   }
 
@@ -1669,6 +1734,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     box.textContent = '';
     const msgs = [];
     const r = DB.rules;
+
+    // 保存できていないことを黙っていてはいけない。画面は動き続けるので、
+    // 利用者は保存できたと思ったまま作業を続けてしまう
+    if (!cellsPersist || !dbPersist) {
+      msgs.push('⚠ このブラウザに保存できていません（'
+        + [!cellsPersist ? 'シフト' : '', !dbPersist ? 'マスタ' : '']
+            .filter(Boolean).join('・')
+        + '）。閉じると消えます。「データ書き出し」タブから控えを取ってください');
+    }
 
     ROWS.forEach(row => {
       if (row.kind !== 'staff' || !row.staff) return;
@@ -3309,6 +3383,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     });
 
     return JSON.stringify({
+      appVersion: APP_VERSION,
       exportedAt: new Date().toISOString(),
       targetMonth: y + '-' + String(m).padStart(2, '0'),
       // 保存するときのファイル名。PDF/xlsx も同じ形にする
@@ -3441,10 +3516,19 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   $('yy').value = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
   $('mm').value = now.getMonth() === 11 ? 1 : now.getMonth() + 2;
 
+  $('appVer').textContent = 'v' + APP_VERSION;
+
   Object.keys(COLS).forEach(renderMaster);
   renderRules();
+
+  // **前回の続きから開く。** 保存してあるシフトを先に読み戻す。
+  // これが無かったころは、再読み込みのたびに autoGenerate() が走って
+  // 作り直された表が出るので、入力が消えたことに気づけなかった。
+  const restored = loadCells();
   refreshAll();
-  autoGenerate();   // 空の表では集計も色も確かめられないので、例を入れて開く
+  if (!restored) {
+    autoGenerate();   // 初めて開いたとき。空の表では集計も色も確かめられない
+  }
   fillDataBox(false);   // 書き出し欄は最初から埋めておく（空のまま保存されるのを防ぐ）
 })();
 </script>
