@@ -212,6 +212,63 @@ const docNa = cellsOf(naRun.body, docRow.index).some(td =>
 check(!docNa, '医師欄には灰色を付けない');
 
 console.log('');
+console.log('■ 今月の入力を消す（医師シフトとそれ以外を分ける）');
+
+// 先に医師シフトを入れてから自動生成する手順なので、スタッフをやり直すたびに
+// 医師名まで消えると入れ直しになる。だから2つに分けてある。
+const clearRun = new Function([
+  "const curYm = '2026-08';",
+  'const values = new Map();',
+  grab('clearMonth_'),
+  'return { values, clearMonth_ };',
+].join('\n'))();
+
+function seedCells() {
+  const v = clearRun.values;
+  v.clear();
+  v.set('doc1|2026-08|1', '医A');
+  v.set('doc6|2026-08|3', '医B');
+  v.set('mark:doc1|2026-08|1', 'mk1');
+  v.set('s001|2026-08|1', '○');
+  v.set('s012|2026-08|5', '公休');
+  v.set('mark:s001|2026-08|1', 'mk1');
+  v.set('note|2026-08|9', '棚卸');
+  v.set('memo|2026-08', '【1on1日程】…');
+  v.set('doc1|2026-09|1', '医C');       // 別の月
+  v.set('s001|2026-09|1', '▲');         // 別の月
+  return v;
+}
+const keys = () => Array.from(clearRun.values.keys()).sort();
+
+seedCells();
+clearRun.clearMonth_('doctor');
+check(!clearRun.values.has('doc1|2026-08|1'), '医師シフトが消える');
+check(!clearRun.values.has('doc6|2026-08|3'), '医師6行目も消える');
+check(!clearRun.values.has('mark:doc1|2026-08|1'), '医師欄の色の印も消える');
+check(clearRun.values.has('s001|2026-08|1'), 'スタッフは残る', keys().join(' '));
+check(clearRun.values.has('mark:s001|2026-08|1'), 'スタッフの色の印は残る');
+check(clearRun.values.has('note|2026-08|9'), '備考行は残る');
+check(clearRun.values.has('memo|2026-08'), '注記は残る');
+check(clearRun.values.has('doc1|2026-09|1'), '別の月の医師シフトは残る');
+
+seedCells();
+clearRun.clearMonth_('other');
+check(clearRun.values.has('doc1|2026-08|1'), '医師シフトは残る');
+check(clearRun.values.has('mark:doc1|2026-08|1'), '医師欄の色の印は残る');
+check(!clearRun.values.has('s001|2026-08|1'), 'スタッフが消える');
+check(!clearRun.values.has('s012|2026-08|5'), '公休も消える');
+check(!clearRun.values.has('mark:s001|2026-08|1'), 'スタッフの色の印も消える');
+check(!clearRun.values.has('note|2026-08|9'), '備考行も消える');
+check(clearRun.values.has('memo|2026-08'), '注記は消さない（1on1や休憩の割り当てが入る）');
+check(clearRun.values.has('s001|2026-09|1'), '別の月のスタッフは残る');
+
+seedCells();
+clearRun.clearMonth_('doctor');
+clearRun.clearMonth_('other');
+check(keys().join(' ') === 'doc1|2026-09|1 memo|2026-08 s001|2026-09|1',
+  '両方押すと、今月は注記だけが残る', keys().join(' '));
+
+console.log('');
 console.log('■ document から探さずに書けているか（未挿入でも効くこと）');
 console.log('  document.querySelector は常に null を返す状態で組み立てた');
 check(kinds.staff && kinds.staff[0] !== '', '画面に載せる前でもスタッフ欄が埋まる');

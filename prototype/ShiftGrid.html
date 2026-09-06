@@ -521,7 +521,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       <button id="histNow" title="いまの状態を控えます">控えを取る</button>
       <button id="undoBtn" title="ひとつ前の控えに戻ります（Ctrl+Z）">← 戻す</button>
       <button id="redoBtn" title="戻しすぎたぶんを進めます（Ctrl+Y）">進める →</button>
-      <button id="clearAll" title="開いている月の入力だけを消します">今月の入力を消す</button>
+      <button id="clearDoc" title="開いている月の医師名欄だけを消します。スタッフのシフトは残ります"
+        >医師シフトを消す</button>
+      <button id="clearStaff" title="開いている月のスタッフ・派遣・事務・備考・色の印を消します。医師名欄は残ります"
+        >シフトを消す（医師以外）</button>
       <span class="note" id="undoStat"></span>
     </div>
     <div class="group">
@@ -3411,12 +3414,41 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   $('undoBtn').addEventListener('click', undoOnce_);
   $('redoBtn').addEventListener('click', redoOnce_);
   // 全部の月を消すと取り返しがつかない。開いている月だけにする
-  arm($('clearAll'), 'もう一度押すと消去', () => {
-    snapshot_('消去の直前');
-    markEdited_();
+  /**
+   * 開いている月の入力を消す。
+   *
+   * 医師シフトとそれ以外を分ける。**先に医師シフトを入れてから自動生成する**
+   * 手順なので、スタッフをやり直すたびに医師名まで消えると入れ直しになる。
+   *
+   * 月ごとの注記（memo）は消さない。休憩の割り当てや 1on1 の日程が入っており、
+   * シフトを組み直しても変わらないため。消したいときは欄で消す。
+   *
+   * @param {string} which 'doctor' … 医師名欄だけ / 'other' … それ以外
+   */
+  function clearMonth_(which) {
+    const doc = /^doc\d+$/;
     Array.from(values.keys()).forEach(k => {
-      if (k.split('|')[1] === curYm) values.delete(k);
+      const part = k.split('|');
+      if (part.length < 2 || part[1] !== curYm) return;
+      if (part[0] === 'memo') return;                    // 注記は残す
+      const base = part[0].replace(/^mark:/, '');
+      const isDoc = doc.test(base);
+      if (which === 'doctor' ? isDoc : !isDoc) values.delete(k);
     });
+  }
+
+  arm($('clearDoc'), 'もう一度押すと消去', () => {
+    snapshot_('医師シフト消去の直前');
+    markEdited_();
+    clearMonth_('doctor');
+    renderGrid();
+    renderHistory();
+  });
+
+  arm($('clearStaff'), 'もう一度押すと消去', () => {
+    snapshot_('シフト消去の直前');
+    markEdited_();
+    clearMonth_('other');
     renderGrid();
     renderHistory();
   });
