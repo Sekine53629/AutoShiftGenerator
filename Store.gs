@@ -4,21 +4,28 @@
  * VBA 版にも仕様書にも無い。`docs/DEPLOY-PLAN.md` 構成B の「保存先だけ Sheets に」を、
  * 実際に組むときの置き場として起こしたもの。
  *
- * 【なぜシートのセルではなく Drive のファイルか】
- *   Apps Script に本物のデータベースは無い。永続する置き場は3つだけで、
+ * 【なぜ隠しシートに JSON なのか】
+ *   Apps Script に本物のデータベースは無い。永続する置き場は限られる。
  *
- *     PropertiesService  1値 9KB・全体 500KB      設定値どまり。マスタには小さい
- *     CacheService       最大6時間で消える        保存には使えない
- *     Drive のファイル    実質無制限              JSON 1個をそのまま置ける
+ *     PropertiesService  1値 9KB・全体 500KB   設定値どまり。マスタには小さい
+ *     CacheService       最大6時間で消える     保存には使えない
+ *     Drive のファイル    実質無制限           **`.../auth/drive` が要る**
+ *     このスプレッドシート  1セル 5万文字        追加の権限が要らない
+ *
+ *   Drive に置くほうが素直だが、`DriveApp` は Drive **全体**への権限を求める。
+ *   このプロジェクトの `appsscript.json` は `spreadsheets.currentonly` まで
+ *   絞ってあり、シフト表のために利用者の Drive 全部を開けさせるのは割に合わない。
+ *   いま開いているスプレッドシートの中なら、既にある権限で足りる。
  *
  *   マスタは入れ子の構造（社員が使える記号の配列、店舗ごとの営業時間…）なので、
  *   セルの表に展開すると項目を足すたびに列対応を書き直すことになる。
- *   JSON のまま置けば、画面が持つ形をそのまま保存できる。
+ *   **JSON のまま1行に置く。** 画面が持つ形をそのまま保存できる。
  *
- *   **スプレッドシートは出力先として残る**（Export.gs）。人が読む表はそちら。
+ *   1セルは5万文字までなので、超える分は右の列へ分けて入れる。
+ *   人が読む表は Export.gs が別のシートに出す。こちらは触らせない。
  *
  * 【同時編集】
- *   ファイルごとに版番号（rev）を持つ。保存するときは「読んだときの rev」を送り、
+ *   行ごとに版番号（rev）を持つ。保存するときは「読んだときの rev」を送り、
  *   サーバ側で今の rev と突き合わせる。**違っていたら書かない。**
  *   誰かの編集を黙って消すより、画面に出して読み直してもらう。
  *
@@ -32,51 +39,54 @@
 
 const MODULE_STORE = 'Store';
 
-/** 保存先フォルダの ID を入れるスクリプトプロパティ */
-const STORE_PROP_FOLDER = 'DATA_FOLDER_ID';
-
-/** 保存先フォルダの名前。プロパティが空のときに作る */
-const STORE_FOLDER_NAME = 'AutoShiftGenerator データ';
-
-/** マスタを入れるファイル名 */
+/** マスタを入れる行の名前 */
 const STORE_DB_FILE = 'masters.json';
 
 /** 書き込みの順番待ちの上限（ミリ秒） */
 const STORE_LOCK_WAIT_MS = 20000;
 
-/** 1ファイルの上限。これを超える保存は受け付けない（事故で肥大したものを弾く） */
-const STORE_MAX_BYTES = 8 * 1024 * 1024;
+/**
+ * 1セルに入れる文字数。Sheets の上限は 50,000 なので余裕を見る。
+ * これを超えた分は右の列へ続ける。
+ */
+const STORE_CHUNK = 40000;
+
+/** JSON が始まる列（A:名前 B:版 C:時刻 D:書いた人 E以降:中身） */
+const STORE_COL_JSON = 5;
+
+/** 1件の上限。事故で肥大したものを弾く */
+const STORE_MAX_CHUNKS = 20;
 
 /**
- * 保存先のフォルダ。プロパティに無ければ作って覚える。
- * ロジックにフォルダ ID を書かない（Tier 1「No Hard-Coded Paths」）。
- * @return {GoogleAppsScript.Drive.Folder}
+ * 保存データのシート。無ければ作って隠す。
+ *
+ * **人が触るシートではない。**隠しておかないと、行を消されたり
+ * 並べ替えられたりして、保存が丸ごと壊れる。
+ * @return {GoogleAppsScript.Spreadsheet.Sheet}
  */
-function storeFolder_() {
+function storeSheet_() {
   try {
-    const props = PropertiesService.getScriptProperties();
-    const id = props.getProperty(STORE_PROP_FOLDER);
-    if (id) {
-      try {
-        return DriveApp.getFolderById(id);
-      } catch (ignored) {
-        // 消された・権限が変わった。作り直して覚え直す
-        console.error(`[${MODULE_STORE}.storeFolder_] フォルダを開けません: ${id}`);
-      }
+    const ss = SpreadsheetApp.getActive();
+    let sheet = ss.getSheetByName(CONFIG.SHEET_DATA);
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEET_DATA);
+      sheet.getRange(1, 1, 1, 4)
+        .setValues([['名前', '版', '更新時刻', '更新者']])
+        .setFontWeight('bold');
+      sheet.setFrozenRows(1);
+      sheet.hideSheet();
     }
-    const folder = DriveApp.createFolder(STORE_FOLDER_NAME);
-    props.setProperty(STORE_PROP_FOLDER, folder.getId());
-    return folder;
+    return sheet;
   } catch (error) {
-    logError(MODULE_STORE, 'storeFolder_', error, '');
+    logError(MODULE_STORE, 'storeSheet_', error, '');
     throw error;
   }
 }
 
 /**
- * 月ごとのシフトを入れるファイル名。
- * 店舗と年月で1ファイル。**分けることが同時編集の単位になる。**
- * 1ファイルにまとめると、別の店・別の月を触っただけで衝突する。
+ * 月ごとのシフトを入れる行の名前。
+ * 店舗と年月で1行。**分けることが同時編集の単位になる。**
+ * 1行にまとめると、別の店・別の月を触っただけで衝突する。
  */
 function storeCellsFile_(storeId, ym) {
   const s = String(storeId || '').trim();
@@ -87,40 +97,50 @@ function storeCellsFile_(storeId, ym) {
   if (!/^\d{4}-\d{2}$/.test(m)) {
     throw new Error('[storeCellsFile_] 年月が不正です: ' + ym);
   }
-  return 'cells-' + s + '-' + m + '.json';
+  return 'cells-' + s + '-' + m;
 }
 
-/** 名前でファイルを探す。無ければ null */
-function storeFileOrNull_(name) {
-  const it = storeFolder_().getFilesByName(name);
-  return it.hasNext() ? it.next() : null;
+/** 名前が入っている行番号。無ければ 0 */
+function storeRowOf_(sheet, name) {
+  const last = sheet.getLastRow();
+  if (last < 2) return 0;
+  const names = sheet.getRange(2, 1, last - 1, 1).getValues();
+  for (let i = 0; i < names.length; i++) {
+    if (String(names[i][0]) === name) return i + 2;
+  }
+  return 0;
 }
 
 /**
  * 読み出す。まだ無ければ rev 0 と null を返す。
  *
- * **「無い」と「読めない」を分ける。** 壊れたファイルを「無い」として
- * 扱うと、次の保存で中身を消してしまう。
+ * **「無い」と「読めない」を分ける。** 壊れた中身を「無い」として
+ * 扱うと、次の保存で内容を消してしまう。
  *
  * @return {{rev:number, data:Object|null, updatedAt:string, updatedBy:string}}
  */
 function storeRead_(name) {
   try {
-    const file = storeFileOrNull_(name);
-    if (!file) return { rev: 0, data: null, updatedAt: '', updatedBy: '' };
+    const sheet = storeSheet_();
+    const row = storeRowOf_(sheet, name);
+    if (!row) return { rev: 0, data: null, updatedAt: '', updatedBy: '' };
 
-    const text = file.getBlob().getDataAsString('UTF-8');
-    let box;
+    const width = Math.max(sheet.getLastColumn(), STORE_COL_JSON);
+    const cells = sheet.getRange(row, 1, 1, width).getValues()[0];
+    const text = cells.slice(STORE_COL_JSON - 1).join('');
+    if (!text) return { rev: 0, data: null, updatedAt: '', updatedBy: '' };
+
+    let data;
     try {
-      box = JSON.parse(text);
+      data = JSON.parse(text);
     } catch (e) {
       throw new Error('保存されている内容が JSON として読めません: ' + name);
     }
     return {
-      rev: Number(box && box.rev) || 0,
-      data: box ? box.data : null,
-      updatedAt: (box && box.updatedAt) || '',
-      updatedBy: (box && box.updatedBy) || ''
+      rev: Number(cells[1]) || 0,
+      data: data,
+      updatedAt: String(cells[2] || ''),
+      updatedBy: String(cells[3] || '')
     };
   } catch (error) {
     logError(MODULE_STORE, 'storeRead_', error, `name=${name}`);
@@ -135,7 +155,7 @@ function storeRead_(name) {
  * 「読み直す」か「自分の内容で上書きする」かを選ばせる。
  * 中身を返さずに「衝突しました」だけ言うと、何が違うのか分からない。
  *
- * @param {string} name ファイル名
+ * @param {string} name 行の名前
  * @param {number} baseRev 読んだときの版。0 は「まだ無いはず」
  * @param {Object} data 書く中身
  * @param {boolean} force true なら版を見ずに上書きする（画面で選んだときだけ）
@@ -155,26 +175,34 @@ function storeWrite_(name, baseRev, data, force) {
       return { ok: false, rev: now.rev, conflict: now };
     }
 
-    const box = {
-      rev: now.rev + 1,
-      updatedAt: new Date().toISOString(),
-      updatedBy: storeWho_(),
-      appVersion: CONFIG.APP_VERSION,
-      data: data
-    };
-    const text = JSON.stringify(box);
-    if (text.length > STORE_MAX_BYTES) {
-      throw new Error('保存する内容が大きすぎます: ' + text.length + ' バイト');
+    const text = JSON.stringify(data);
+    const chunks = [];
+    for (let i = 0; i < text.length; i += STORE_CHUNK) {
+      chunks.push(text.slice(i, i + STORE_CHUNK));
+    }
+    if (chunks.length > STORE_MAX_CHUNKS) {
+      throw new Error('保存する内容が大きすぎます: ' + text.length + ' 文字');
     }
 
-    const file = storeFileOrNull_(name);
-    if (file) file.setContent(text);
-    else storeFolder_().createFile(name, text, 'application/json');
+    const sheet = storeSheet_();
+    const row = storeRowOf_(sheet, name) || (sheet.getLastRow() + 1);
+    // 前より短くなったとき、残った古い断片が後ろにくっつく。
+    // 書く幅は「今までの幅」と「これから書く幅」の広いほうに揃えて空で潰す
+    const width = Math.max(sheet.getLastColumn(), STORE_COL_JSON + chunks.length - 1);
+    const line = new Array(width).fill('');
+    line[0] = name;
+    line[1] = now.rev + 1;
+    line[2] = new Date().toISOString();
+    line[3] = storeWho_();
+    chunks.forEach((c, i) => { line[STORE_COL_JSON - 1 + i] = c; });
+
+    sheet.getRange(row, 1, 1, width).setValues([line]);
+    SpreadsheetApp.flush();
 
     logSuccess(MODULE_STORE, 'storeWrite_',
-      `name=${name}; rev=${box.rev}; bytes=${text.length}; `
+      `name=${name}; rev=${line[1]}; chars=${text.length}; chunks=${chunks.length}; `
       + `elapsedMs=${Date.now() - started}`);
-    return { ok: true, rev: box.rev };
+    return { ok: true, rev: line[1] };
   } catch (error) {
     logError(MODULE_STORE, 'storeWrite_', error, `name=${name}; base=${baseRev}`);
     throw error;

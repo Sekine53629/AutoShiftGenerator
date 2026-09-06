@@ -1,3 +1,15 @@
+> **この文書は役目を終えている（2026-09-06）。**
+>
+> ここに書いてある Web アプリは、シフトを**スプレッドシートのセルに直接**
+> 読み書きする作りだった（`WebAppView.html` / `apiLoadGrid` / `apiSaveCells`）。
+> その画面と API は削除した。保存先が二重になり、片方で作ったシフトが
+> もう片方から見えなくなるため。
+>
+> いまの作りは `docs/DEPLOY-PLAN.md` を見ること。画面は
+> `prototype/ShiftGrid.html`、保存は隠しシートの JSON（`Store.gs`）。
+>
+> 残してあるのは、そこに至った判断の記録として。
+
 # Web アプリ化の設計メモ
 
 仕様書 `GAS-PORTING-SPEC.md` §6 は「クリック入力はサイドバー（HtmlService）で代替する」
