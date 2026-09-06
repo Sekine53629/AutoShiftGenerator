@@ -88,12 +88,17 @@ body {
   padding: 13px 18px 9px;
   background: var(--surface);
 }
-.page-head h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: .02em; }
-.ym {
-  font-family: ui-monospace, "Consolas", "Roboto Mono", monospace;
-  font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;
-  color: var(--accent);
+/**
+ * 表題。実物は A1「R8.8月」が 游ゴシック 28pt 太字、D1 の公休告知が 10pt。
+ * 大小の差をそのまま写す（docs/OUTPUT-FORMAT.md §3）。
+ */
+.page-head h1 {
+  margin: 0; font-weight: 700; letter-spacing: .02em;
+  font-family: "Yu Gothic UI", "Meiryo", sans-serif;
+  font-size: 26px;
 }
+/* 店名。実物のシートには無いが、複数店で使うので小さく添える */
+.storename { color: var(--ink-soft); font-size: 12px; align-self: center; }
 .page-head .note { color: var(--ink-soft); font-size: 12px; }
 
 .tabs {
@@ -214,7 +219,8 @@ td.cell.todo {
 .nm {
   position: sticky; left: 0; z-index: 2;
   width: var(--name-w); min-width: var(--name-w); max-width: var(--name-w);
-  text-align: left; padding: 0 7px;
+  /* 実物は氏名列も中央揃え（docs/OUTPUT-FORMAT.md §3） */
+  text-align: center; padding: 0 5px;
   background: var(--surface); border-right: 2px solid var(--rule);
   overflow: hidden; text-overflow: ellipsis;
 }
@@ -421,8 +427,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
 <header class="page-head">
   <h1 id="sheetTitle">シフト表</h1>
-  <span class="ym" id="ymLabel">—</span>
   <span class="note" id="quotaNote"></span>
+  <span class="storename" id="storeName"></span>
   <span class="note" id="appVer" style="margin-left:auto"></span>
 </header>
 
@@ -1457,10 +1463,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // どの店の表かは画面と印刷に出しておく
     const store = DB.stores.find(t => t.id === activeStore) || {};
     const wa = y - WAREKI_BASE;
-    $('sheetTitle').textContent =
-      (store.name ? store.name + '　' : '')
-      + (wa >= 1 ? 'R' + String(wa).padStart(2, '0') + '.' + m + '月' : y + '年' + m + '月');
-    $('ymLabel').textContent = y + '年' + m + '月';
+    // ★ 表題は「R8.8月」でゼロ詰めしない。ファイル名だけが「R08.08月」と
+    //   ゼロ詰めする（実物がその使い分け。docs/OUTPUT-FORMAT.md）
+    $('sheetTitle').textContent = wa >= 1 ? 'R' + wa + '.' + m + '月' : y + '年' + m + '月';
+    $('storeName').textContent = store.name || '';
 
     // 公休の内訳。実物の D1 と同じ言い回しにする。
     // 「ノルマ○日」だけだと、なぜその日数なのかが表から読み取れない
@@ -1469,8 +1475,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const holN = days.filter(d => d.inMonth && d.countsOff && d.dow !== 0 && d.dow !== 6).length;
     $('quotaNote').textContent =
       '土日公休' + (satN + sunN) + '回　祝日' + holN + '回　'
-      + '休みのトータル' + offQuotaBase() + '回'
-      + '（' + y + '年の合計 ' + annualQuotaOf(y) + ' 日）';
+      + '休みのトータル' + offQuotaBase() + '回';
+    $('quotaNote').title = y + '年の公休の合計 ' + annualQuotaOf(y) + ' 日';
 
     const bar = $('holidayBar');
     bar.textContent = '';
