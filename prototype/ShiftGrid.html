@@ -669,8 +669,43 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /** 公休ノルマを守らせる相手か */
   const usesQuota = s => s.rule === RULE_NORMAL;
   const DAY_COLS = 31;              // B〜AF 固定（LAYOUT.COL_FIRST〜COL_LAST）
-  const DOC_ROWS = 5;               // 医師名欄の行数（LAYOUT.DOC_BLOCK_ROWS）
-  const DOC_BUSY_N = 5;             // 「5診出勤」とみなす医師数
+  const clamp_ = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  /**
+   * 医師名欄の行数（LAYOUT.DOC_BLOCK_ROWS）。固定にしない。
+   *
+   * 実物のシフト表は月ごとに 4行・5行・6行 と増減していて、診療数も
+   * R8.1月の平均 3.21 診から R8.7月の 4.45 診へ上がっている。5診以上の日は
+   * 0% → 58%、6診の日も出はじめた（docs/REAL-SHIFT-ANALYSIS.md §5・§7）。
+   * 5行に固定すると、6診の日が入力できずに医師数が過少に出る。
+   */
+  const DOC_ROWS_MIN = 3;
+  const DOC_ROWS_MAX = 10;
+  const DOC_ROWS_DEFAULT = 6;
+  function docRowCount_() {
+    return clamp_(Number(DB.rules.docRows) || DOC_ROWS_DEFAULT, DOC_ROWS_MIN, DOC_ROWS_MAX);
+  }
+
+  /**
+   * 曜日別下限の使い方。
+   *   off      … 使わない。必要人数は診療数だけで決める（門前薬局。既定）
+   *   noDoctor … 医師欄が空の日だけ当て板に使う
+   *   always   … 常に、診療数から引いた人数との大きいほうを採る（面薬局）
+   */
+  const FLOOR_OFF = 'off';
+  const FLOOR_NODOC = 'noDoctor';
+  const FLOOR_ALWAYS = 'always';
+  const FLOOR_OPTS = [
+    { v: FLOOR_OFF, label: '使わない（必要人数は診療数だけで決める）' },
+    { v: FLOOR_NODOC, label: '医師欄が空の日だけ当て板に使う' },
+    { v: FLOOR_ALWAYS, label: '常に使う（診療数と大きいほう）' }
+  ];
+
+  /** 「◯診出勤」の集計列が、何診から数えるか */
+  const DOC_BUSY_DEFAULT = 5;
+  function busyDocN_() {
+    return clamp_(Number(DB.rules.busyDocN) || DOC_BUSY_DEFAULT, 1, DOC_ROWS_MAX);
+  }
   const STORE_KEY = 'shiftgrid.db.v1';
 
   /* 集計列（右）— 仕様書 §5.4 の6列 */
@@ -680,8 +715,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     { head: '○早番', test: v => v === '○' || v === '◯' },
     { head: '▲遅番', test: v => v === '▲' },
     { head: '●遅半', test: v => v === '●' },
-    { head: '5診出勤', test: null }   // 医師数を見るので日単位で数える
+    { head: null, test: null }   // 「◯診出勤」。医師数を見るので日単位で数える
   ];
+  /** 集計列の見出し。診の基準は設定で変わるので、描くときに作る */
+  const aggHead_ = a => a.head || (busyDocN_() + '診出勤');
 
   /* ═══ マスタの初期値 ═══════════════════════════════════
      氏名はすべて架空の表記。本番は各マスタシートが正になる。 */
@@ -702,17 +739,19 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     // 店の休みではない（店の営業日は店舗営業マスタが持つ）
     const ALL = [1, 1, 1, 1, 1, 1, 1];
     const NONE = [0, 0, 0, 0, 0, 0, 0];
-    // 連続出勤の上限は人ごとに違う。A は 3 日、B 以降は 5 日
+    // 連続出勤の上限は人ごとに違う。A は本人の希望で 3 日、B 以降は 4 日。
+    // 実物のシフト表では4連勤が18.7%あり、3日上限は現場より厳しい
+    // （docs/REAL-SHIFT-ANALYSIS.md §6）
     staff.push(mk('薬剤師 A', '薬剤師', '社員', 5, '', 3, ['○', '●', '▲'], ALL, [], true, RULE_NORMAL));
     ['B', 'C', 'D', 'E', 'F'].forEach(x =>
-      staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, '', 5, ['○', '●', '▲'], ALL, [], true, RULE_NORMAL)));
+      staff.push(mk('薬剤師 ' + x, '薬剤師', '社員', 5, '', 4, ['○', '●', '▲'], ALL, [], true, RULE_NORMAL)));
     staff.push(mk('薬剤師 G', '薬剤師', '社員', 4, '', 4, ['○', '●'], ALL, [], true, RULE_WEEKN));
     staff.push(mk('薬剤師 H', '薬剤師', '社員', 3, '', 3, ['●'], ALL,
                   [0, 1, 0, 1, 0, 1, 0], false, RULE_FIXED));   // 月水金
     ['1', '2', '3'].forEach(x =>
       staff.push(mk('派遣 ' + x, '薬剤師', '派遣', 0, '', 6, ['▲', '●'], ALL, [], false, '手動')));
     ['A', 'B', 'C'].forEach(x =>
-      staff.push(mk('事務 ' + x, '事務員', '社員', 5, '', 5, ['○', '●'], ALL, [], true, RULE_NORMAL)));
+      staff.push(mk('事務 ' + x, '事務員', '社員', 5, '', 4, ['○', '●'], ALL, [], true, RULE_NORMAL)));
     staff.push(mk('事務 D', '事務員', '社員', 4, '', 4, ['○'], ALL, [], false, RULE_WEEKN));
 
     return {
@@ -793,7 +832,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
        * 曜日別下限（店舗営業マスタ）とは併用し、大きいほうを採る。
        */
       demand: [
-        { id: 'dm0', doctors: 0, min: 1, target: 2 },
+        // 医師0人＝休診、または医師欄がまだ空。実物のシフト表の注記に
+        // 「薬剤師1名で開局」とあるので、開けるとしたら1名
+        { id: 'dm0', doctors: 0, min: 1, target: 1 },
         { id: 'dm1', doctors: 1, min: 2, target: 2 },
         { id: 'dm2', doctors: 2, min: 2, target: 3 },
         { id: 'dm3', doctors: 3, min: 3, target: 3 },
@@ -804,9 +845,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
       rules: {
         // 曜日別の必要人数と休業日は 店舗営業マスタ が正。ここには置かない
+        docRows: DOC_ROWS_DEFAULT,       // 医師名欄の行数
+        busyDocN: DOC_BUSY_DEFAULT,      // 「◯診出勤」を数えはじめる医師数
         earlyN: 1, lateN: 1, midN: 0, clerkEarlyN: 1,
         countNationalOff: true,   // 国民の祝日を公休ノルマに数えるか
-        maxConsDefault: 5, maxOffRun: 3,
+        // 曜日別下限は使わない。必要人数は診療数だけで決める
+        weekdayFloor: FLOOR_OFF,
+        maxConsDefault: 4, maxOffRun: 3,   // 実測は4連勤が18.7%。3日上限は現場より厳しい
         needCloser: true,
         wishMax: 3,
         carryOver: true
@@ -822,6 +867,29 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    * 数えられず、集計列が 0、ノルマ判定は全員 NG になっていた。
    * 読み込みと取り込みの両方でここを通す。
    */
+  /**
+   * 必要人数マスタ（医師数ごと）を、医師名欄の行数に合わせて伸ばす。
+   *
+   * 行数を増やしたのに表が 0〜5 診しか無いと、6 診の日が最後の行に
+   * 落ちて 5 診と同じ人数になる。足りない行は直前の行を写して作る。
+   * 減らしたときは消さない。増やし直したときに、前の値がそのまま戻る。
+   */
+  function syncDemand_(db) {
+    const rules = db.rules || (db.rules = {});
+    const want = clamp_(Number(rules.docRows) || DOC_ROWS_DEFAULT,
+                        DOC_ROWS_MIN, DOC_ROWS_MAX);
+    const list = db.demand || (db.demand = []);
+    const byN = d => list.find(r => Number(r.doctors) === d);
+    for (let d = 0; d <= want; d++) {
+      if (byN(d)) continue;
+      const prev = byN(d - 1) || { min: 1, target: 2 };
+      list.push({ id: 'dm' + d, doctors: d,
+                  min: Number(prev.min) || 0, target: Number(prev.target) || 0 });
+    }
+    list.sort((a, b) => Number(a.doctors) - Number(b.doctors));
+    return db;
+  }
+
   function migrateDb_(db) {
     const seed = seedDb();
 
@@ -829,6 +897,22 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     ['stores', 'hours', 'closures', 'holidays', 'demand'].forEach(k => {
       if (!Array.isArray(db[k]) || !db[k].length) db[k] = seed[k];
     });
+
+    // あとから足したルール。無ければ初期値
+    db.rules = db.rules || {};
+    if (db.rules.docRows === undefined) db.rules.docRows = seed.rules.docRows;
+    if (db.rules.busyDocN === undefined) db.rules.busyDocN = seed.rules.busyDocN;
+    // 真偽値ひとつだった頃の設定を3択に移す
+    if (db.rules.floorOnlyWhenNoDoctor !== undefined) {
+      if (db.rules.weekdayFloor === undefined) {
+        db.rules.weekdayFloor = db.rules.floorOnlyWhenNoDoctor ? FLOOR_NODOC : FLOOR_ALWAYS;
+      }
+      delete db.rules.floorOnlyWhenNoDoctor;
+    }
+    if (!FLOOR_OPTS.some(o => o.v === db.rules.weekdayFloor)) {
+      db.rules.weekdayFloor = seed.rules.weekdayFloor;
+    }
+    syncDemand_(db);
     // 収容上限を持たない版の店舗マスタ
     (db.stores || []).forEach(t => {
       if (t.capPharm === undefined) t.capPharm = 6;
@@ -1069,7 +1153,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const live = DB.staff.filter(s => inService(s, y, m) && belongsHere(s));
 
     push({ kind: 'band', label: '医師名' });
-    for (let i = 0; i < DOC_ROWS; i++) {
+    const docN = docRowCount_();
+    for (let i = 0; i < docN; i++) {
       push({ kind: 'doctor', key: 'doc' + (i + 1), label: '医師 ' + (i + 1) });
     }
     push({ kind: 'repeat', label: '' });
@@ -1330,7 +1415,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     else {
       if (d.exception) bits.push(d.exception);
       if (d.from && d.to) bits.push(d.from + '–' + d.to);
-      bits.push('薬剤師 ' + d.pharmMin + ' 人以上／事務 ' + d.clerkMin + ' 人以上');
+      const mode = DB.rules.weekdayFloor || FLOOR_OFF;
+      const tail = mode === FLOOR_ALWAYS ? ''
+        : mode === FLOOR_NODOC ? '（医師名が入っている日は使いません）'
+        : '（必要人数には使っていません）';
+      bits.push('薬剤師 ' + d.pharmMin + ' 人以上／事務 ' + d.clerkMin + ' 人以上' + tail);
     }
     return bits.join('\n');
   }
@@ -1372,7 +1461,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         tr.appendChild(el('th', 'nm'));
         headCells('th', d => String(d.day)).forEach(c => tr.appendChild(c));
         AGG_COLS.forEach((a, i) =>
-          tr.appendChild(el('th', 'agcol' + (i === 0 ? ' first' : ''), a.head)));
+          tr.appendChild(el('th', 'agcol' + (i === 0 ? ' first' : ''), aggHead_(a))));
         body.appendChild(tr);
         return;
       }
@@ -1563,7 +1652,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
           if (!days[c].inMonth) continue;
           const v = get(row, c);
           if (AGG_COLS[i].test) { if (AGG_COLS[i].test(v)) n++; }
-          else if (doc[c] >= DOC_BUSY_N && isWork(v)) n++;
+          else if (doc[c] >= busyDocN_() && isWork(v)) n++;
         }
         cell.textContent = String(n);
         cell.classList.toggle('zero', n === 0);
@@ -1638,6 +1727,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       }
     });
 
+    // 曜日別下限を使わない設定では、必要人数は医師欄が正になる。
+    // 入れ忘れたまま自動生成すると、まるごと人数の薄い月ができてしまう
+    if ((DB.rules.weekdayFloor || FLOOR_OFF) === FLOOR_OFF) {
+      let empty = 0;
+      for (let c = 0; c < DAY_COLS; c++) {
+        if (!days[c].inMonth || isClosed(days[c])) continue;
+        if (docCount(c) === 0) empty++;
+      }
+      if (empty) {
+        msgs.push('医師欄が空の日が ' + empty + ' 日あります。'
+          + '必要人数は診療数から決まるので、先に医師のシフトを入れてください'
+          + '（空の日は必要人数マスタの 0診 の行で置いています）');
+      }
+    }
+
     for (let c = 0; c < DAY_COLS; c++) {
       if (!days[c].inMonth || isClosed(days[c])) continue;
       let on = 0, closer = 0;
@@ -1649,8 +1753,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       });
       const nd = needOf_(c);
       if (on < nd.min) {
+        const dn = docCount(c);
+        const mode = DB.rules.weekdayFloor || FLOOR_OFF;
+        const byFloor = mode === FLOOR_ALWAYS || (mode === FLOOR_NODOC && dn === 0);
         msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人。下限 ' + nd.min
-          + ' 人に足りません（医師 ' + docCount(c) + ' 人／曜日下限 ' + days[c].pharmMin + ' 人）');
+          + ' 人に足りません（医師 ' + dn + ' 人'
+          + (byFloor ? '／曜日下限 ' + days[c].pharmMin + ' 人' : '') + '）');
       } else if (on > nd.max) {
         msgs.push(days[c].day + '日：薬剤師 ' + on + ' 人。店舗の収容上限 '
           + nd.max + ' 人を超えています');
@@ -1962,14 +2070,28 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /** その日の人手の不足ぶん。大きいほど出勤させたい */
   /**
    * その日に要る薬剤師の 下限・目安・上限。
-   * 医師数から引いた値と、曜日別下限の大きいほうを採る。
+   *
+   * **必要人数は診療数で決まる。曜日では決まらない。** この薬局は建物の7階にあり、
+   * 面薬局としての立地がよくない。休診日に処方箋の需要はほとんど無く、営業は
+   * 診療に合わせている。祝日も病院が開くので、祝日は休みではなく営業日になる。
+   *
+   * 実測もそうだった。実物のシフト表8か月分で医師0人の日は正月三が日の3日だけで、
+   * その3日は店も閉まっている。祝日はすべて医師・薬剤師とも通常どおり出ていた。
+   * 薬剤師数は曜日平均 4.65〜5.38 とほぼ平坦で、木曜だけ厚いという事実もない
+   * （docs/REAL-SHIFT-ANALYSIS.md §4・§8）。
+   *
+   * そこで曜日別下限は既定で使わない。医師欄が空の日は必要人数マスタの
+   * 0診の行が当て板になる。門前ではない店のために、設定で戻せるようにしてある
+   * （rules.weekdayFloor: 'off' / 'noDoctor' / 'always'）。
    */
   function needOf_(c) {
     const n = docCount(c);
     const list = DB.demand || [];
     const row = list.find(r => Number(r.doctors) === n)
       || list[list.length - 1] || { min: 0, target: 0 };
-    const floor = days[c].pharmMin;
+    const mode = DB.rules.weekdayFloor || FLOOR_OFF;
+    const useFloor = mode === FLOOR_ALWAYS || (mode === FLOOR_NODOC && n === 0);
+    const floor = useFloor ? days[c].pharmMin : 0;
     // 上限は店舗の収容人数。需要ではなく広さで決まる
     const store = DB.stores.find(t => t.id === activeStore) || {};
     const cap = Number(store.capPharm) || 99;
@@ -2217,7 +2339,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
     const tbody = el('tbody');
     // 店舗に属するマスタは、選んでいる店舗のぶんだけ出す
-    const rows = (name === 'hours' || name === 'closure') ? storeRows(list) : list;
+    let rows = (name === 'hours' || name === 'closure') ? storeRows(list) : list;
+    // 必要人数は医師名欄の行数までしか使わない。使わない行は隠す（値は消さない）
+    if (name === 'demand') rows = rows.filter(r => Number(r.doctors) <= docRowCount_());
     rows.forEach(rec => {
       const tr = el('tr');
       cols.forEach(col => tr.appendChild(fieldCell(col, rec, name)));
@@ -2420,7 +2544,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const BLANK = {
     staff: () => ({
       id: newId('s'), name: '', kind: '薬剤師', employment: '社員',
-      weekDays: 5, annualOff: '', maxCons: 5, patterns: ['○', '●', '▲'],
+      weekDays: 5, annualOff: '', maxCons: 4, patterns: ['○', '●', '▲'],
       availDow: [1, 1, 1, 1, 1, 1, 1], fixedDow: [0, 0, 0, 0, 0, 0, 0],
       canClose: false, from: '', to: '', rule: RULE_NORMAL, memo: '',
       hq: false, stores: [activeStore]
@@ -2477,6 +2601,28 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'midN',   label: '●遅半', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'clerkEarlyN', label: '事務員の○早番', type: 'num', unit: '人/日', min: 0, max: 6 }
     ]},
+    { title: '曜日別下限の扱い', items: [
+      { key: 'weekdayFloor', label: '店舗営業マスタの曜日別下限を', type: 'select',
+        opts: FLOOR_OPTS },
+      { note: '必要人数は診療数で決まり、曜日では決まりません。休診日に処方箋の需要は'
+             + 'ほとんど無く、営業は診療に合わせているためです。祝日も病院が開くので、'
+             + '祝日は休みではなく営業日です。' },
+      { note: '実物のシフト表8か月分でも、医師0人の日は正月三が日の3日だけで、その3日は'
+             + '店も閉まっていました。薬剤師数は曜日平均 4.65〜5.38 とほぼ平坦です。' },
+      { note: '「使わない」のとき、医師欄が空の日は必要人数マスタの 0診 の行が'
+             + '当て板になります。面薬局のように曜日で客足が決まる店では'
+             + '「常に使う」を選んでください。' }
+    ]},
+    { title: '医師名欄', items: [
+      { key: 'docRows', label: '医師名欄の行数', type: 'num', unit: '行',
+        min: DOC_ROWS_MIN, max: DOC_ROWS_MAX, sync: true },
+      { note: '実物のシフト表は月ごとに 4〜6 行で増減しています。5 行に固定すると'
+             + '6 診の日が入力できません。減らしても入力済みの医師名は消えず、'
+             + '表示されなくなるだけです。' },
+      { key: 'busyDocN', label: '「◯診出勤」を数えはじめる医師数', type: 'num', unit: '診',
+        min: 1, max: DOC_ROWS_MAX, sync: true },
+      { note: '右の集計列の見出しと数え方が変わります。' }
+    ]},
     { title: '連続と休み', items: [
       { key: 'maxConsDefault', label: '連続出勤の上限（既定値）', type: 'num', unit: '日', min: 1, max: 14 },
       { note: '連続出勤の上限は社員ごとに社員マスタで設定します。ここは、その欄が空の人にだけ使う値です。' },
@@ -2499,6 +2645,26 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       b.appendChild(el('h3', '', box.title));
       box.items.forEach(it => {
         if (it.note) { b.appendChild(el('p', 'hint', it.note)); return; }
+
+        if (it.type === 'select') {
+          const f = el('div', 'field');
+          f.appendChild(el('span', '', it.label));
+          const sel = document.createElement('select');
+          it.opts.forEach(o => {
+            const op = document.createElement('option');
+            op.value = o.v; op.textContent = o.label;
+            sel.appendChild(op);
+          });
+          sel.value = DB.rules[it.key] || it.opts[0].v;
+          sel.addEventListener('change', () => {
+            DB.rules[it.key] = sel.value; save(); refreshAll();
+          });
+          const right = el('div', 'field');
+          right.appendChild(sel);
+          f.appendChild(right);
+          b.appendChild(f);
+          return;
+        }
 
         if (it.type === 'check') {
           const line = el('label', 'chkline');
@@ -2525,6 +2691,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         inp.value = DB.rules[it.key];
         inp.addEventListener('change', () => {
           DB.rules[it.key] = it.type === 'num' ? Number(inp.value) : inp.value.trim();
+          if (it.sync) { syncDemand_(DB); renderMaster('demand'); }
           save(); refreshAll();
         });
         right.appendChild(inp);
@@ -3103,6 +3270,27 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   /* ═══ 書き出しと取り込み ═══════════════════════════════
      枠の中では download が効かないので、貼り付けでやり取りする。 */
+
+  /**
+   * 出力ファイル名。実物の運用に合わせる。
+   *
+   *   さくら薬局北口店R08.09月シフト.pdf
+   *
+   * 和暦2桁・月2桁のゼロ詰め。GAS 側は Export.gs buildExportFileName_ が同じ形を作る
+   * （ひな型は Config.gs の EXPORT_NAME）。店名は店舗マスタから取り、ここに書かない。
+   *
+   * ★ 和暦は令和固有（西暦 − 2018）。元号が変わったら WAREKI_BASE を直す。
+   */
+  const WAREKI_BASE = 2018;
+  function exportFileName_(y, m, ext) {
+    const store = DB.stores.find(t => t.id === activeStore) || {};
+    const wa = Number(y) - WAREKI_BASE;
+    if (!(wa >= 1)) return '';                     // 令和より前は作らない
+    return (store.name || '').trim()
+      + 'R' + String(wa).padStart(2, '0')
+      + '.' + String(m).padStart(2, '0') + '月シフト'
+      + (ext ? '.' + ext : '');
+  }
   /**
    * 書き出し。マスタは DB をそのまま出すので、あとから足したマスタも
    * 勝手に入る。シフトは開いている月だけでなく、入力のある月すべて。
@@ -3123,6 +3311,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     return JSON.stringify({
       exportedAt: new Date().toISOString(),
       targetMonth: y + '-' + String(m).padStart(2, '0'),
+      // 保存するときのファイル名。PDF/xlsx も同じ形にする
+      fileName: exportFileName_(y, m),
       masters: Object.keys(DB),          // 何が入っているか一目で分かるように
       months: Object.keys(byMonth).sort(),
       master: DB,
@@ -3147,8 +3337,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
     $('dataBox').value = text;
     if (focus) { $('dataBox').focus(); $('dataBox').select(); }
+    const fn = exportFileName_(Number($('yy').value), Number($('mm').value), 'json');
     dataStat('書き出しました（' + text.length.toLocaleString() + ' 文字）。'
-      + (focus ? 'このままコピーできます。' : '欄を選んでコピーしてください。'));
+      + (focus ? 'このままコピーできます。' : '欄を選んでコピーしてください。')
+      + (fn ? '　保存するときのファイル名: ' + fn : ''));
   }
 
   $('dataDump').addEventListener('click', () => fillDataBox(true));

@@ -22,8 +22,13 @@ const FNS = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeI
   'offQuotaFor', 'buildWeeks', 'seamWorkedOf_', 'placeOneStaff_', 'pickWeek_', 'needOf_', 'needOf_', 'clerkCapOf_', 'shortage_',
   'firstOverrun_', 'repairRuns_'];
 
+// 医師名欄の行数まわり（clamp_ / DOC_ROWS_* / docRowCount_ / busyDocN_）を
+// HTML から丸ごと取る。seedDb と migrateDb_ がこれを参照する。
+const DOC_BLOCK = src.slice(src.indexOf('const clamp_ ='),
+  src.indexOf('}', src.indexOf('function busyDocN_')) + 1);
+
 const make = new Function([
-  'const DAY_COLS=31;', RULE_BLOCK,
+  'const DAY_COLS=31;', DOC_BLOCK, RULE_BLOCK,
   L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
   FNS.map(grab).join('\n'),
   'const DB=seedDb(); const activeStore="st1";',
@@ -57,7 +62,7 @@ const make = new Function([
   '  const weeks = buildWeeks();',
   '  ROWS.forEach(row=>{ if(row.staff.rule==="手動") return;',
   '    placeOneStaff_(row,row.staff,weeks,"公休"); });',
-  '  return {days,weeks,ROWS,DB,get,isWork,isPubOff,offQuotaFor,',
+  '  return {days,weeks,ROWS,DB,get,isWork,isPubOff,offQuotaFor,needOf_,',
   '          quota:offQuotaBase(),notes:autoNotes,docCount};',
   '};'
 ].join('\n'))();
@@ -99,22 +104,27 @@ staffFiles.forEach(f => {
       });
     });
 
-    // 曜日下限を割る日
-    let shortDays = 0;
+    // 必要人数を割る日。
+    // 必要人数は needOf_ が決める。曜日別下限はその内訳のひとつでしかなく、
+    // 既定では医師名が入っている日には効かない。生の下限で測ると、
+    // エンジンが見ていない値を割った日まで数えてしまう。
+    let shortDays = 0, floorDays = 0;
     im.forEach(c => {
       if (!r.days[c].open) return;
       let on = 0;
       r.ROWS.forEach(row => {
         if (row.role !== 'clerk' && r.isWork(r.get(row, c))) on++;
       });
-      if (on < r.days[c].pharmMin) shortDays++;
+      if (on < r.needOf_(c).min) shortDays++;
+      if (on < r.days[c].pharmMin) floorDays++;      // 参考値
     });
 
     console.log('  ' + f.replace('.json', '').padEnd(20) + y + '/' + String(m).padStart(2, '0')
       + '  在籍' + String(r.ROWS.length).padStart(2) + '名(自動' + autoN + ')'
       + '  ノルマ' + String(r.quota).padStart(2)
       + '  記号未定' + String(blanks).padStart(3) + '日'
-      + '  下限割れ' + String(shortDays).padStart(2) + '日'
+      + '  必要人数割れ' + String(shortDays).padStart(2) + '日'
+      + '（曜日下限では' + String(floorDays).padStart(2) + '日）'
       + '  ' + (ok ? '整合OK' : '★NG'));
     if (r.notes.length) {
       const uniq = [...new Set(r.notes.map(t => t.replace(/^[^：]+：/, '')))];

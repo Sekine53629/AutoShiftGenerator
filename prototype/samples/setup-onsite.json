@@ -1,5 +1,5 @@
 {
-  "_comment": "社員マスタの見本【現場の構成に近い形】実際に使われている構成と曜日別下限を写したもの。氏名は伏せてある。薬剤師7名（うち1名は日水木が出られず締め不可、1名は週4）＋派遣2名＋事務2名。連続出勤の上限は全員3日 / 実在の職員ではありません。データ書き出しタブに貼って「貼り付けた内容を取り込む」。 staff / leave / hours / rules を差し替えます。",
+  "_comment": "社員マスタの見本【現場の構成に近い形】実際に使われている構成と曜日別下限を写したもの。氏名は伏せてある。薬剤師7名（うち1名は日水木が出られず締め不可、1名は週4）＋派遣2名＋事務2名。連続出勤の上限は4日。薬剤師1のみ本人の希望で3日 / 実在の職員ではありません。データ書き出しタブに貼って「貼り付けた内容を取り込む」。 staff / leave / hours / rules を差し替えます。",
   "staff": [
     {
       "id": "s001",
@@ -36,7 +36,7 @@
       "from": "",
       "to": "",
       "rule": "通常",
-      "memo": "",
+      "memo": "本人の希望で3連勤まで",
       "hq": false,
       "stores": []
     },
@@ -47,7 +47,7 @@
       "employment": "社員",
       "weekDays": 5,
       "annualOff": "",
-      "maxCons": 3,
+      "maxCons": 4,
       "patterns": [
         "○",
         "●",
@@ -86,7 +86,7 @@
       "employment": "社員",
       "weekDays": 5,
       "annualOff": "",
-      "maxCons": 3,
+      "maxCons": 4,
       "patterns": [
         "○",
         "●",
@@ -125,7 +125,7 @@
       "employment": "社員",
       "weekDays": 5,
       "annualOff": "",
-      "maxCons": 3,
+      "maxCons": 4,
       "patterns": [
         "○",
         "●",
@@ -164,7 +164,7 @@
       "employment": "社員",
       "weekDays": 5,
       "annualOff": "",
-      "maxCons": 3,
+      "maxCons": 4,
       "patterns": [
         "○",
         "●",
@@ -203,7 +203,7 @@
       "employment": "社員",
       "weekDays": 5,
       "annualOff": "",
-      "maxCons": 3,
+      "maxCons": 4,
       "patterns": [
         "○",
         "●",
@@ -356,7 +356,7 @@
       "employment": "社員",
       "weekDays": 5,
       "annualOff": "",
-      "maxCons": 3,
+      "maxCons": 4,
       "patterns": [
         "○",
         "▲"
@@ -394,7 +394,7 @@
       "employment": "社員",
       "weekDays": 5,
       "annualOff": "",
-      "maxCons": 3,
+      "maxCons": 4,
       "patterns": [
         "○",
         "▲"
@@ -570,7 +570,7 @@
     "midN": 0,
     "clerkEarlyN": 1,
     "countNationalOff": true,
-    "maxConsDefault": 3,
+    "maxConsDefault": 4,
     "maxOffRun": 14,
     "needCloser": true,
     "wishMax": 3,

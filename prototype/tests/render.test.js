@@ -65,15 +65,21 @@ const document = {
 /* ── 本体から必要な関数を取り出す ─────────────────────── */
 const FN = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays', 'normDow_',
-  'migrateDb_', 'inService', 'belongsHere', 'buildRows', 'needOf_', 'offQuotaBase',
+  'syncDemand_', 'migrateDb_', 'inService', 'belongsHere', 'buildRows', 'needOf_', 'offQuotaBase',
   'offQuotaFor', 'annualQuotaOf', 'clearAnnualCache_', 'staffTip', 'dayClass',
   'dayTip', 'headCells', 'el', 'fillCell_', 'buildBody', 'clerkCapOf_'];
+
+// 医師名欄の行数まわり（clamp_ / DOC_ROWS_* / docRowCount_ / busyDocN_）を
+// HTML から丸ごと取る。seedDb と migrateDb_ がこれを参照する。
+const DOC_BLOCK = src.slice(src.indexOf('const clamp_ ='),
+  src.indexOf('}', src.indexOf('function busyDocN_')) + 1);
 
 const run = new Function('document', [
   'const DAY_COLS=31; const DOC_ROWS=5;',
   'const DOW=["日","月","火","水","木","金","土"];',
-  RULE, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
+  RULE, DOC_BLOCK, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
   src.slice(src.indexOf('const AGG_COLS'), src.indexOf('];', src.indexOf('const AGG_COLS')) + 2),
+  L('  const aggHead_ ='),   // 「◯診出勤」の見出しは設定で変わるので描くときに作る
   FN.map(grab).join('\n'),
   L('  const isInput ='), upto('const dowNames_ ='), L('  const closedClass ='),
   L('  const isClosed ='), L('  const byOrder ='),

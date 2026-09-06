@@ -1,4 +1,5 @@
-// 医師パターン10種 × 派遣の量3水準 = 30通りを回して、派遣がどれだけ効くかを見る。
+// 医師パターン × 派遣の量3水準 を全部回して、派遣がどれだけ効くかを見る。
+// パターンは samples/doctor-*.json を拾うので、足せばそのぶん増える。
 //
 // 実際の手順に合わせる: 派遣を先に置いてから自動生成する。
 // 自動配置は shortage_ で派遣も頭数に数えるので、置いてから回すと
@@ -24,13 +25,18 @@ const RULE = src.slice(src.indexOf('const RULE_NORMAL'),
 const FN = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays', 'offQuotaBase',
   'offQuotaFor', 'buildWeeks', 'seamWorkedOf_', 'placeOneStaff_', 'pickWeek_', 'needOf_',
-  'clerkCapOf_', 'shortage_', 'firstOverrun_', 'repairRuns_', 'normDow_', 'migrateDb_',
+  'clerkCapOf_', 'shortage_', 'firstOverrun_', 'repairRuns_', 'normDow_', 'syncDemand_', 'migrateDb_',
   'inService', 'belongsHere', 'buildRows'];
+
+// 医師名欄の行数まわり（clamp_ / DOC_ROWS_* / docRowCount_ / busyDocN_）を
+// HTML から丸ごと取る。seedDb と migrateDb_ がこれを参照する。
+const DOC_BLOCK = src.slice(src.indexOf('const clamp_ ='),
+  src.indexOf('}', src.indexOf('function busyDocN_')) + 1);
 
 const api = new Function([
   'const DAY_COLS=31; const DOC_ROWS=5;',
   'const DOW=["日","月","火","水","木","金","土"];',
-  RULE, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
+  RULE, DOC_BLOCK, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
   FN.map(grab).join('\n'),
   L('  const isInput ='), upto('const dowNames_ ='),
   L('  const closedClass ='), L('  const isClosed ='), L('  const byOrder ='),
@@ -153,6 +159,9 @@ console.log('══ 分析 ═════════════════�
 
 console.log('');
 console.log('■ 派遣を増やすと不足はどれだけ減るか（不足人日）');
+console.log('  ※ 不足は needOf_ の下限に対する数。曜日別下限は医師名が入った日には');
+console.log('    効かない（rules.floorOnlyWhenNoDoctor）ので、医師シフトを入れた');
+console.log('    この試行では下限は医師0人の日にしか出てこない');
 console.log('  医師パターン        少 → 中 → 多      中の効き  多の効き  1人日あたり');
 rows.filter(x => x.level.name === '少').forEach(a => {
   const b = rows.find(x => x.pattern === a.pattern && x.level.name === '中');
@@ -197,8 +206,15 @@ LEVELS.forEach(lv => {
   console.log('  ' + lv.name.padEnd(6) + String(low).padStart(7) + '日'
     + String(high).padStart(11) + '日');
 });
-console.log('  → 派遣を増やすと不足は消えるが、代わりに上限超えが増える。');
-console.log('    社員を減らせない以上、入れた派遣はどこかで余る');
+const anyLow = rows.some(x => x.r.low > 0);
+if (anyLow) {
+  console.log('  → 派遣を増やすと不足は消えるが、代わりに上限超えが増える。');
+  console.log('    社員を減らせない以上、入れた派遣はどこかで余る');
+} else {
+  console.log('  → 医師シフトが入っていれば、派遣なしでも全パターンで不足ゼロ。');
+  console.log('    社員の総量は公休ノルマで決まっていて動かないので、');
+  console.log('    入れた派遣はまるごと上乗せになり、上限超えだけが増える');
+}
 
 console.log('');
 console.log('■ 派遣を最大まで入れても残る不足');
@@ -219,8 +235,10 @@ else {
 
 console.log('');
 console.log('■ 公休ノルマ');
-console.log(ng ? ('  ★ 違反 ' + ng + ' 件') : '  全30通りで全員ノルマちょうど（派遣の量に影響されない）');
+console.log(ng ? ('  ★ 違反 ' + ng + ' 件')
+  : '  全' + rows.length + '通りで全員ノルマちょうど（派遣の量に影響されない）');
 
 console.log('');
-console.log(ng ? ('★ NG ' + ng + ' 件') : '30通り: 公休ノルマを崩さずに回りきった');
+console.log(ng ? ('★ NG ' + ng + ' 件')
+  : rows.length + '通り: 公休ノルマを崩さずに回りきった');
 process.exit(ng ? 1 : 0);

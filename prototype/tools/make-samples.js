@@ -116,20 +116,24 @@ PATTERNS['setup-onsite'] = {
   title: '現場の構成に近い形',
   aim: '実際に使われている構成と曜日別下限を写したもの。氏名は伏せてある。'
      + '薬剤師7名（うち1名は日水木が出られず締め不可、1名は週4）＋派遣2名＋事務2名。'
-     + '連続出勤の上限は全員3日',
+     + '連続出勤の上限は4日。薬剤師1のみ本人の希望で3日',
   // 曜日別の薬剤師 下限（日 月 火 水 木 金 土）
   pharmMin: [2, 6, 5, 3, 5, 6, 3],
-  rules: { maxConsDefault: 3, maxOffRun: 14, reqPlus: 1, lateN: 3 },
+  rules: { maxConsDefault: 4, maxOffRun: 14, reqPlus: 1, lateN: 3 },
   staff: [
-    ...[1, 2, 3, 4, 5].map(i => person({ name: '薬剤師 ' + i, maxCons: 3 })),
-    person({ name: '薬剤師 6', maxCons: 3, availDow: dow(1, 2, 5, 6), canClose: false,
+    // 実測では4連勤が18.7%あり、3日上限は現場より厳しい
+    // （docs/REAL-SHIFT-ANALYSIS.md §6）。既定を4日にした。
+    // 薬剤師1だけは本人の希望で3日のまま。
+    person({ name: '薬剤師 1', maxCons: 3, memo: '本人の希望で3連勤まで' }),
+    ...[2, 3, 4, 5].map(i => person({ name: '薬剤師 ' + i, maxCons: 4 })),
+    person({ name: '薬剤師 6', maxCons: 4, availDow: dow(1, 2, 5, 6), canClose: false,
              memo: '日・水・木は出られない。締め作業不可' }),
     person({ name: '薬剤師 7', weekDays: 4, maxCons: 4, rule: '週N日', memo: '週4' }),
     person({ name: '派遣 1', employment: '派遣', rule: '手動', weekDays: 0, maxCons: 6,
              patterns: ['▲'], canClose: false, memo: '遅番のみ' }),
     person({ name: '派遣 2', employment: '派遣', rule: '手動', weekDays: 0, maxCons: 6,
              patterns: ['▲', '●'], canClose: false, memo: '中長期' }),
-    ...[1, 2].map(i => person({ name: '事務 ' + i, kind: '事務員', maxCons: 3,
+    ...[1, 2].map(i => person({ name: '事務 ' + i, kind: '事務員', maxCons: 4,
              patterns: ['○', '▲'] }))
   ]
 };
@@ -222,11 +226,29 @@ const DOC_PATTERNS = [
   { file: 'doctor-10-variable', title: '週ごとに変動',
     aim: '週によって±1動く。読みにくい月を見る',
     counts: [3, 5, 5, 4, 4, 5, 4], vary: true },
+
+  /* ここから下は実物のシフト表 8 か月分から起こしたもの。
+     docs/REAL-SHIFT-ANALYSIS.md §4・§5 の曜日別平均を四捨五入した値。
+     01〜10 は「月火金5診・日3診」という想定で作ったが、実測はそうなって
+     いなかった。実測は曜日差が小さく、月を追って全体が底上げされている。 */
+  { file: 'doctor-11-real-early', title: '実測・前半（R8.1〜3月）',
+    aim: '実測の曜日別平均。金曜だけ厚く、木土日が薄い。平均3.5診',
+    counts: [3, 4, 4, 4, 3, 5, 3] },
+  { file: 'doctor-12-real-late', title: '実測・後半（R8.6〜8月）',
+    aim: '半年で底上げされたあとの実測。曜日差がほぼ消えて平均4.4診',
+    counts: [4, 5, 4, 4, 4, 5, 4] },
+  { file: 'doctor-13-six', title: '6診が常態',
+    aim: '底上げの傾向をもう一段進めた想定。医師名欄が5行では入らない',
+    counts: [4, 5, 5, 4, 5, 6, 5] },
 ];
 
 const DOC_Y = 2026, DOC_M = 10;
-/** 医師名欄の行数。ここを超える診療数は表に入らない（LAYOUT.DOC_BLOCK_ROWS と同じ） */
-const DOC_ROWS = 5;
+/**
+ * 医師名欄の行数。ここを超える診療数は表に入らない。
+ * 画面側は DB.rules.docRows で変えられる（既定 6）。実物のシフト表も
+ * 月ごとに 4〜6 行で増減している。ここはその最大値に合わせておく。
+ */
+const DOC_ROWS = 6;
 
 DOC_PATTERNS.forEach(p => {
   const last = new Date(DOC_Y, DOC_M, 0).getDate();
@@ -234,7 +256,7 @@ DOC_PATTERNS.forEach(p => {
   hol[nthMonday(DOC_Y, 10, 2)] = 'スポーツの日';
 
   const shift = {};
-  for (let i = 1; i <= 5; i++) shift['doc' + i] = {};
+  for (let i = 1; i <= DOC_ROWS; i++) shift['doc' + i] = {};
   const counts = [];
 
   for (let day = 1; day <= last; day++) {
@@ -245,7 +267,7 @@ DOC_PATTERNS.forEach(p => {
     let n = p.counts[dow];
     if (isHol && p.holidayCount !== undefined) n = p.holidayCount;
     else if (isHol && !p.holidaySameAsDow) n = p.counts[0];   // 既定は日曜と同じ扱い
-    // 変動は下側だけに振る。上へ振ると 5 診を超えて表に入らない
+    // 変動は下側だけに振る。doctor-10 の想定を変えないため、上へは振らない
     if (p.vary) n = Math.max(2, n + [0, -1, 0, -2, -1][nth - 1]);
 
     if (n > DOC_ROWS) {
@@ -254,6 +276,12 @@ DOC_PATTERNS.forEach(p => {
     const names = roster(dow, n, p.rotate ? (nth % 2) * 3 : 0);
     names.forEach((name, i) => { shift['doc' + (i + 1)][day] = name; });
     counts.push(n);
+  }
+
+  // 一度も使わなかった行は書かない。医師名欄の行数は画面側の設定で変わるので、
+  // 空の doc6 を持たせても意味がなく、差分が読みにくくなるだけ
+  for (let i = 1; i <= DOC_ROWS; i++) {
+    if (!Object.keys(shift['doc' + i]).length) delete shift['doc' + i];
   }
 
   fs.writeFileSync(path.join(OUT, p.file + '.json'), JSON.stringify({

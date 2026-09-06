@@ -25,10 +25,16 @@ const FNS = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeI
   'offQuotaBase', 'offQuotaFor', 'buildWeeks', 'seamWorkedOf_', 'placeOneStaff_', 'pickWeek_',
   'needOf_', 'clerkCapOf_', 'shortage_', 'firstOverrun_', 'repairRuns_'];
 
+// 医師名欄の行数まわり（clamp_ / DOC_ROWS_* / docRowCount_ / busyDocN_）を
+// HTML から丸ごと取る。seedDb と migrateDb_ がこれを参照する。
+const DOC_BLOCK = src.slice(src.indexOf('const clamp_ ='),
+  src.indexOf('}', src.indexOf('function busyDocN_')) + 1);
+
 const harness = `
   const DAY_COLS = 31;
   const DOW = ['日','月','火','水','木','金','土'];
   ${RULE_BLOCK}
+  ${DOC_BLOCK}
   ${line('const DAYS_IN_MONTH')}
   ${line('const vernalDay')}
   ${line('const autumnalDay')}

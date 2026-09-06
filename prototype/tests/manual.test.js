@@ -24,13 +24,18 @@ const RULE = src.slice(src.indexOf('const RULE_NORMAL'),
 const FN = ['seedDb', 'nthMonday', 'holidaysOf', 'parseMonthDay', 'daysOfRangeInMonth',
   'closureMap', 'holidayInfoOf', 'storeRows', 'hoursOf', 'buildDays', 'offQuotaBase',
   'offQuotaFor', 'buildWeeks', 'seamWorkedOf_', 'placeOneStaff_', 'pickWeek_', 'needOf_',
-  'clerkCapOf_', 'shortage_', 'firstOverrun_', 'repairRuns_', 'normDow_', 'migrateDb_',
+  'clerkCapOf_', 'shortage_', 'firstOverrun_', 'repairRuns_', 'normDow_', 'syncDemand_', 'migrateDb_',
   'inService', 'belongsHere', 'buildRows'];
+
+// 医師名欄の行数まわり（clamp_ / DOC_ROWS_* / docRowCount_ / busyDocN_）を
+// HTML から丸ごと取る。seedDb と migrateDb_ がこれを参照する。
+const DOC_BLOCK = src.slice(src.indexOf('const clamp_ ='),
+  src.indexOf('}', src.indexOf('function busyDocN_')) + 1);
 
 const api = new Function([
   'const DAY_COLS=31; const DOC_ROWS=5;',
   'const DOW=["日","月","火","水","木","金","土"];',
-  RULE, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
+  RULE, DOC_BLOCK, L('const DAYS_IN_MONTH'), L('const vernalDay'), L('const autumnalDay'),
   FN.map(grab).join('\n'),
   L('  const isInput ='), upto('const dowNames_ ='),
   L('  const closedClass ='), L('  const isClosed ='), L('  const byOrder ='),
