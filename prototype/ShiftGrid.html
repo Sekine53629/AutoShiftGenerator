@@ -4961,9 +4961,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     setTimeout(restore, 60000);
     try {
       window.print();
-      outStat(name
-        ? '印刷画面で「PDF に保存」を選んでください。保存名: ' + name + '.pdf'
-        : '印刷画面を開きました');
+      /**
+       * Web アプリの中では保存名を変えられない。**画面が枠の中にあるため。**
+       * ブラウザは枠の外（Google 側）の題名から保存名を作るので、
+       * こちらで document.title を差し替えても効かない。手で直してもらう。
+       */
+      outStat(!name ? '印刷画面を開きました'
+        : onServer()
+          ? '印刷画面で「PDF に保存」を選んでください。'
+            + '保存名は手で「' + name + '」にしてください（枠の中からは変えられません）'
+          : '印刷画面で「PDF に保存」を選んでください。保存名: ' + name + '.pdf');
     } catch (e) {
       restore();
       outStat('印刷画面を開けませんでした: ' + e.message);

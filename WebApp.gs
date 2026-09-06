@@ -23,6 +23,16 @@
 const MODULE_WEBAPP = 'WebApp';
 
 /**
+ * Web アプリの画面。**シフト表エディタ本体を出す。**
+ *
+ * clasp はサブディレクトリを 'prototype/ShiftGrid' という名前で送る。
+ * 直下にコピーを置くと二重管理になる（片方だけ直して食い違う）ので、
+ * 出どころは prototype/ShiftGrid.html 1つにしてある。
+ * .claspignore で明示的に送る指定をしていないと push されない。
+ */
+const WEBAPP_VIEW_FILE = 'prototype/ShiftGrid';
+
+/**
  * Web アプリの入口。
  * @param {Object} e クエリパラメータ
  * @return {GoogleAppsScript.HTML.HtmlOutput}
@@ -38,16 +48,28 @@ function doGet(e) {
         `<pre style="font:14px monospace">版 ${escapeHtml_(CONFIG.APP_VERSION)}</pre>`);
     }
 
-    const template = HtmlService.createTemplateFromFile('WebAppView');
-    // 生の文字列を <?= ?> で埋めると、シート名に含まれる文字で JS が壊れる。
-    // 必ず JSON にしてから <?!= ?> で出すこと
-    // ★ 値は data- 属性で渡し、<script> の中にテンプレートを書かない。
-    //   スクリプトレットが JS の中にあると、置換のしかた次第で構文エラーになり、
-    //   そのとき画面は真っ白になって原因が分からない。
-    //   属性なら <?= ?> が HTML として正しくエスケープしてくれる
-    template.initialSheet = (e && e.parameter && e.parameter.sheet) || '';
-    template.appVersion = CONFIG.APP_VERSION;
-    return template.evaluate()
+    // 旧画面（WebAppView）は ?view=legacy でだけ出す。プロジェクトには残す
+    if (e && e.parameter && e.parameter.view === 'legacy') {
+      // こちらはスクリプトレットで値を埋める作り。
+      // 生の文字列を <?= ?> で埋めると、シート名に含まれる文字で JS が壊れる。
+      // 値は data- 属性で渡し、<script> の中にテンプレートを書かないこと
+      const template = HtmlService.createTemplateFromFile('WebAppView');
+      template.initialSheet = (e.parameter.sheet) || '';
+      template.appVersion = CONFIG.APP_VERSION;
+      return template.evaluate()
+        .setTitle('シフト表（旧画面）')
+        .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    }
+
+    /**
+     * シフト表エディタ本体。**テンプレートを通さない。**
+     *
+     * `createTemplateFromFile` は `<? ?>` をスクリプトレットとして解釈する。
+     * エディタは xlsx を組み立てる箇所で `<?xml version="1.0" ... ?>` を
+     * 6か所持っているので、テンプレートに通すと画面ごと壊れる。
+     * 埋め込む値も無いので、ファイルをそのまま出す。
+     */
+    return HtmlService.createHtmlOutputFromFile(WEBAPP_VIEW_FILE)
       .setTitle('シフト表')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {

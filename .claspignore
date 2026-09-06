@@ -20,3 +20,12 @@
 #   ファイル名を名指しすると、画面を増やしたときに送り忘れる。
 #   実際 ImportProfileView.html を足したとき、ここが原因で push されなかった。
 !*.html
+
+# シフト表エディタ本体。**これが Web アプリの画面**（doGet が出す）。
+#   直下ではなく prototype/ に置いてあるので、上の !*.html では拾われない。
+#   実際、ここが無かったので一度も push されておらず、
+#   デプロイしても旧 WebAppView.html が出ていた。
+#
+#   clasp はサブディレクトリを 'prototype/ShiftGrid' というファイル名にする。
+#   同名の .gs は無いので衝突しない（Apps Script は名前が拡張子をまたいで一意）。
+!prototype/ShiftGrid.html

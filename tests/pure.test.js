@@ -71,7 +71,8 @@ Object.assign(sandbox, vm.runInContext(
   + ' SCHEMA, FORMAT_PROFILE, FORMAT_DEFAULT, DOCTOR_MASTER, PATTERN_MASTER,'
   + ' NOTE_MASTER,'
   + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF,'
-  + ' ROLE, ROLE_RANK, FORMULA_LEADS, FORMULA_LEAD_CTRL, CELL_MAX_LEN })', sandbox));
+  + ' ROLE, ROLE_RANK, FORMULA_LEADS, FORMULA_LEAD_CTRL, CELL_MAX_LEN,'
+  + ' WEBAPP_VIEW_FILE, STORE_DB_FILE, STORE_PROP_FOLDER })', sandbox));
 
 // ---- テストランナー ----------------------------------------------------
 let passed = 0;
@@ -2323,6 +2324,44 @@ test('API はそのまま読み書きに繋がっている', function () {
     // 別の月は空のまま
     assert.strictEqual(sandbox.apiMonthLoad('st1', '2026-11').rev, 0);
   });
+});
+
+// ---- Web アプリが出す画面 ---------------------------------------------
+//
+// 「デプロイしたのに古い画面が出る」を作らない。
+// 実際、.claspignore が直下の *.html しか送らず、エディタ本体
+// （prototype/ShiftGrid.html）が一度も push されていなかった。
+
+test('doGet はエディタ本体を出す', function () {
+  const src = fs.readFileSync(path.join(ROOT, 'WebApp.gs'), 'utf8');
+  const at = src.indexOf('function doGet');
+  const body = src.slice(at, src.indexOf('\nfunction ', at + 10));
+  assert.ok(/WEBAPP_VIEW_FILE/.test(body), 'doGet が画面を指していない');
+  assert.strictEqual(sandbox.WEBAPP_VIEW_FILE, 'prototype/ShiftGrid');
+  // テンプレートに通すと <?xml ?> がスクリプトレットとして解釈されて壊れる
+  assert.ok(/createHtmlOutputFromFile\(WEBAPP_VIEW_FILE\)/.test(body),
+    'エディタをテンプレートに通している');
+});
+
+test('エディタは clasp で送られる', function () {
+  const ig = fs.readFileSync(path.join(ROOT, '.claspignore'), 'utf8');
+  assert.ok(/^!prototype\/ShiftGrid\.html$/m.test(ig),
+    '.claspignore にエディタを送る指定が無い（push されず旧画面が出る）');
+});
+
+test('エディタはテンプレートに通せない形をしている', function () {
+  // 通せない、を確かめておく。通せる形に戻ったら createTemplateFromFile に
+  // 変えてよいが、そのときはこのテストが落ちて気づける
+  const html = fs.readFileSync(path.join(ROOT, 'prototype', 'ShiftGrid.html'), 'utf8');
+  assert.ok(html.indexOf('<?') >= 0,
+    'スクリプトレットに見える文字列が無くなった。doGet を見直すこと');
+});
+
+test('画面のファイル名は .gs と衝突しない', function () {
+  // Apps Script は名前が拡張子をまたいで一意でなければならない。
+  // prototype/ShiftGrid.gs があると、どちらかが載らない
+  const dup = fs.existsSync(path.join(ROOT, 'prototype', 'ShiftGrid.gs'));
+  assert.strictEqual(dup, false, '同じ名前の .gs がある');
 });
 
 // ---- 結果 -------------------------------------------------------------
