@@ -2678,7 +2678,14 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       // 頭数が足りていても、時間帯によっては薄いことがある。
       // 実物は記号ごとに勤務時間が30分ずつずれており、開局直後は早番しかいない
       const cov = coverageOf_(c);
-      const want = Math.max(1, Number(r.minOnDuty) || 1);
+      /**
+       * 何人を下回ったら知らせるか。**早番の人数で見る。**
+       *
+       * minOnDuty（同時にいてほしい薬剤師）で見ていたが、早番を1人に決めた
+       * あとは、開局直後がその1人になるのは**設計どおり**。既定の2で見ると
+       * 毎日この警告が出て、本当に薄い日が埋もれる（実測で31日中30日）。
+       */
+      const want = Math.max(1, Number(r.earlyN) || 1);
       if (cov.min === 0 && on > 0) {
         msgs.push(days[c].day + '日：' + cov.at + ' に薬剤師が誰もいません。'
           + '営業時間（' + days[c].from + '–' + days[c].to + '）と'
