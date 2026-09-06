@@ -173,8 +173,8 @@ button.primary:hover { filter: brightness(1.12); }
 .palettebar.hide { display: none; }
 #palette { flex: 1; min-width: 0; }
 .tips {
-  display: flex; flex-direction: column; gap: 1px;
-  font-size: 11px; color: var(--ink-soft); line-height: 1.5;
+  display: flex; flex-wrap: wrap; gap: 2px 18px;
+  font-size: 11px; color: var(--ink-soft); line-height: 1.6;
 }
 .more { align-self: center; }
 
@@ -576,6 +576,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       <input type="number" id="mm" min="1" max="12" step="1" style="width:54px">
     </div>
     <div class="group">
+      <span class="lbl">表示</span>
+      <button data-zoom="28">小</button>
+      <button data-zoom="34" class="on">中</button>
+      <button data-zoom="42">大</button>
+    </div>
+    <div class="group">
       <button id="autoRun" class="primary">自動生成</button>
       <button id="histNow" title="いまの状態を控えます">控えを取る</button>
       <button id="undoBtn" title="ひとつ前の控えに戻ります（Ctrl+Z）">← 戻す</button>
@@ -594,12 +600,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     ほかのボタンを押しやってしまう（位置が動くと押し間違える）。
   -->
   <div class="toolbar2" id="toolbar2">
-    <div class="group">
-      <span class="lbl">表示</span>
-      <button data-zoom="28">小</button>
-      <button data-zoom="34" class="on">中</button>
-      <button data-zoom="42">大</button>
-    </div>
     <div class="tips">
       <span>セルを選んでスタンプ、または <b>1</b>–<b>9</b> キー。<b>Delete</b> で消去、方向キーで移動</span>
       <span>スタンプは群の見出しを押すと開きます。薄いものは、いま選んでいる欄には押せません</span>
