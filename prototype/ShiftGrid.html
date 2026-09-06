@@ -36,6 +36,8 @@
   --agg:         #f2efe6;
   --outside:     #eeeeec;
   --na:          #d0cece;   /* 出られない曜日。実物と同じ灰 */
+  --stamp-w:     46px;      /* スタンプの枠。見出しも中身も同じ大きさにする */
+  --stamp-h:     38px;
   --print-zoom:  1;         /* 印刷を1枚に詰める倍率。fitPrint_ が入れる */
   --accent:      #2f6f7e;
   --accent-ink:  #ffffff;
@@ -186,12 +188,10 @@ button.primary:hover { filter: brightness(1.12); }
 #palette { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 
 .pgroup { display: flex; align-items: stretch; }
-.ptoggle { min-width: 0; }
-.ptoggle .pcur {
-  display: block;
-  font-family: ui-monospace, "Consolas", monospace; font-weight: 700;
-}
-.ptoggle .caret { font-style: normal; margin-left: 3px; }
+/* 見出しも中身と同じ枠。ここを別扱いにすると並びが崩れる */
+/* 見出しの上段は、いま選んでいる記号。中身のスタンプと同じ見え方にする */
+.ptoggle .pcur { display: block; font-weight: 700; line-height: 1.1; }
+.ptoggle .caret { font-style: normal; margin-left: 2px; }
 .pgroup.open .ptoggle .pcur { color: var(--accent); }
 /**
  * 群の中身は見出しの隣に開く。**スタンプは独立した段に置いてあるので、
@@ -213,15 +213,25 @@ button.primary:hover { filter: brightness(1.12); }
   background: var(--accent-soft); border-color: var(--accent);
   border-right-color: transparent; border-radius: 3px 0 0 3px;
 }
+/**
+ * スタンプ。**群の見出しも中身も、すべて同じ枠。**
+ * 幅が3種類（34px / 42px / 見出しは0）でばらついていて、並べると不揃いだった。
+ * 中身が1文字でも2文字でも同じ大きさになるよう、幅と高さを決め打ちする。
+ */
 .stamp {
-  min-width: 34px; padding: 3px 7px;
-  font-family: ui-monospace, "Consolas", monospace; font-weight: 700;
+  width: var(--stamp-w); min-width: var(--stamp-w); max-width: var(--stamp-w);
+  height: var(--stamp-h); padding: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 1px;
+  font-family: "Yu Gothic UI", "Meiryo", sans-serif; font-weight: 700;
+  font-size: 14px; line-height: 1.1;
+  overflow: hidden;
 }
-.stamp.wide { min-width: 42px; font-size: 11px; }
 .stamp small {
   display: block; font-family: "Yu Gothic UI", "Meiryo", sans-serif;
   font-size: 9px; font-weight: 400; color: var(--ink-faint);
-  max-width: 74px; overflow: hidden; text-overflow: ellipsis;
+  line-height: 1.1;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .stamp.on small { color: var(--accent-ink); }
 /* その欄には押せないスタンプ。押すこと自体は塞がない（先に選んでから押す使い方のため） */
@@ -521,8 +531,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 @media (max-width: 760px) {
   .toolbar, .toolbar2 { padding: 7px 10px; gap: 6px 10px; }
   .toolbar .lbl, .toolbar2 .lbl { display: none; }   /* 見出しは場所を食うだけ */
-  .stamp { min-width: 40px; min-height: 40px; }      /* 指で押せる大きさ */
-  .stamp.wide { min-width: 52px; }
+  :root { --stamp-w: 48px; --stamp-h: 46px; }        /* 指で押せる大きさ */
   .toolbar button, .toolbar2 button { min-height: 36px; padding: 0 10px; }
   .tips { display: none; }                            /* 説明は狭い画面では隠す */
   .palettebar { padding: 7px 10px; }
@@ -3619,7 +3628,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   }
 
   function stampButton(kind, it) {
-    const b = el('button', 'stamp' + (it.face.length > 1 ? ' wide' : ''));
+    const b = el('button', 'stamp');
     const face = document.createElement('span');
     face.textContent = it.face;
     if (it.color) { face.style.color = it.color; face.style.textShadow = '0 0 1px #6b6b6b'; }
