@@ -116,7 +116,10 @@ body {
   border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer;
 }
 .tabs button:hover { color: var(--ink); background: var(--accent-soft); }
-.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 700; }
+.tabs button.on {
+  color: var(--ink); background: transparent;
+  border-bottom-color: var(--accent); font-weight: 700;
+}
 
 .panel { display: none; }
 .panel.on { display: block; }
@@ -148,7 +151,14 @@ button {
 button:hover { background: var(--accent-soft); }
 button:disabled { opacity: .4; cursor: not-allowed; }
 button:disabled:hover { background: var(--surface); }
-button.on, button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+/**
+ * 押されているボタン。**タブは除く。**
+ * タブは下線で選択を示す作りなので、ここで塗ると
+ * 背景と文字が同じ色になって、何を選んでいるか見えなくなる。
+ */
+button.on:not(.tabbtn), button.primary {
+  background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+}
 button.primary:hover { filter: brightness(1.12); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -615,17 +625,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 </header>
 
 <nav class="tabs" id="tabs">
-  <button data-tab="grid" class="on">シフト表</button>
-  <button data-tab="rules">自動生成ルール</button>
-  <button data-tab="store">店舗・営業</button>
-  <button data-tab="holiday">祝日マスタ</button>
-  <button data-tab="staff">社員マスタ</button>
-  <button data-tab="doctor">医師マスタ</button>
-  <button data-tab="pattern">シフトパターン</button>
-  <button data-tab="note">備考マスタ</button>
-  <button data-tab="leave">有休管理</button>
-  <button data-tab="history">編集履歴</button>
-  <button data-tab="data">データ書き出し</button>
+  <button class="tabbtn on" data-tab="grid">シフト表</button>
+  <button class="tabbtn" data-tab="rules">自動生成ルール</button>
+  <button class="tabbtn" data-tab="store">店舗・営業</button>
+  <button class="tabbtn" data-tab="holiday">祝日マスタ</button>
+  <button class="tabbtn" data-tab="staff">社員マスタ</button>
+  <button class="tabbtn" data-tab="doctor">医師マスタ</button>
+  <button class="tabbtn" data-tab="pattern">シフトパターン</button>
+  <button class="tabbtn" data-tab="note">備考マスタ</button>
+  <button class="tabbtn" data-tab="leave">有休管理</button>
+  <button class="tabbtn" data-tab="history">編集履歴</button>
+  <button class="tabbtn" data-tab="data">データ書き出し</button>
 </nav>
 
 <!-- ══ シフト表 ══════════════════════════════════════ -->
