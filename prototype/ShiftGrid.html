@@ -954,9 +954,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         short: String.fromCharCode(64 + i), order: i, memo: ''
       })),
       patterns: [
-        { id: 'p1', sym: '○',   label: '早番',   kind: '出勤', start: '08:30', end: '17:30', work: true,  order: 1 },
-        { id: 'p2', sym: '●',   label: '遅半',   kind: '出勤', start: '11:00', end: '20:00', work: true,  order: 2 },
-        { id: 'p3', sym: '▲',   label: '遅番',   kind: '出勤', start: '12:00', end: '21:00', work: true,  order: 3 },
+        // 実物の凡例どおり（docs/OUTPUT-FORMAT.md）。開局は 10:00〜20:00 で、
+        // 3種類が30分ずつずれて全時間帯を覆う作りになっている。
+        // 以前は 08:30〜17:30 などとしており、早番が閉局の2時間半前に上がっていた
+        { id: 'p1', sym: '○',   label: '早番',   kind: '出勤', start: '10:00', end: '19:00', work: true,  order: 1 },
+        { id: 'p2', sym: '●',   label: '遅半',   kind: '出勤', start: '10:30', end: '19:30', work: true,  order: 2 },
+        { id: 'p3', sym: '▲',   label: '遅番',   kind: '出勤', start: '11:00', end: '20:00', work: true,  order: 3 },
         { id: 'p4', sym: '公休', label: '公休',   kind: '休み', start: '', end: '', work: false, pubOff: true,  order: 4 },
         { id: 'p5', sym: '希休', label: '希望休', kind: '休み', start: '', end: '', work: false, pubOff: true,  order: 5 },
         { id: 'p6', sym: '有休', label: '有休',   kind: '休み', start: '', end: '', work: false, pubOff: false, order: 6 },
@@ -1020,6 +1023,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         // 実物の R8.8月は ▲120 / ●47 / ○40 で遅番が最多。
         // 「○早番は受付で処方入力、▲遅番はピッキング」という役割分担に合う
         earlyN: 1, midN: 1, clerkEarlyN: 1,
+        /**
+         * 開いているあいだ、薬剤師が何人いれば回るか。
+         * 頭数ではなく**時間帯で見る。** 記号ごとに勤務時間が違うので、
+         * その日の人数が足りていても開局直後だけ1人になることがある
+         */
+        minOnDuty: 2,
         countNationalOff: true,   // 国民の祝日を公休ノルマに数えるか
         // 曜日別下限は使わない。必要人数は診療数だけで決める
         weekdayFloor: FLOOR_OFF,
@@ -1973,6 +1982,56 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     $('monthMemoPrint').textContent = memo;
   }
 
+  /** 'hh:mm' → 分。読めなければ null */
+  function minOf_(t) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '').trim());
+    if (!m) return null;
+    const v = Number(m[1]) * 60 + Number(m[2]);
+    return v >= 0 && v <= 24 * 60 ? v : null;
+  }
+
+  /**
+   * その日、いちばん人が薄くなる時間帯の人数を返す。
+   *
+   * 記号ごとに勤務時間が違うので、頭数が足りていても時間帯によっては
+   * 1人になる。実物は 早番10:00〜19:00 / 遅半10:30〜19:30 / 遅番11:00〜20:00 で
+   * 30分ずつずれており、**開局直後は早番しかいない。**
+   * 早番が1人の日は、10:00〜10:30 が1人になる。
+   *
+   * @return {{min:number, at:string}} いちばん薄い人数と、その時刻
+   */
+  function coverageOf_(c) {
+    const open = minOf_(days[c].from);
+    const close = minOf_(days[c].to);
+    if (open === null || close === null || close <= open) return { min: 99, at: '' };
+
+    const span = [];
+    ROWS.forEach(row => {
+      if (row.kind !== 'staff' || row.role === 'clerk') return;
+      const v = get(row, c);
+      if (!isWork(v)) return;
+      const pat = DB.patterns.find(x => x.sym === v);
+      const a = pat ? minOf_(pat.start) : null;
+      const b = pat ? minOf_(pat.end) : null;
+      // 時刻が入っていない記号は、開いているあいだ居るものとして数える
+      span.push([a === null ? open : a, b === null ? close : b]);
+    });
+    if (!span.length) return { min: 0, at: days[c].from };
+
+    // 変化する時刻だけを見ればよい
+    const marks = [open];
+    span.forEach(x => { if (x[0] > open && x[0] < close) marks.push(x[0]); });
+    let best = { min: 99, at: '' };
+    marks.forEach(t => {
+      const n2 = span.filter(x => x[0] <= t && x[1] > t).length;
+      if (n2 < best.min) {
+        best = { min: n2, at: String(Math.floor(t / 60)).padStart(2, '0')
+          + ':' + String(t % 60).padStart(2, '0') };
+      }
+    });
+    return best;
+  }
+
   /**
    * 印刷を1枚に収める倍率を決める。
    *
@@ -2132,6 +2191,16 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         on++;
         if (row.staff && row.staff.canClose) closer++;
       });
+      // 頭数が足りていても、時間帯によっては薄いことがある。
+      // 実物は記号ごとに勤務時間が30分ずつずれており、開局直後は早番しかいない
+      const cov = coverageOf_(c);
+      const want = Math.max(1, Number(r.minOnDuty) || 1);
+      if (cov.min < want && cov.min < on) {
+        msgs.push(days[c].day + '日：' + cov.at + ' に薬剤師 ' + cov.min
+          + ' 人。その日の出勤は ' + on + ' 人ですが、勤務時間がずれているため'
+          + 'この時間帯だけ薄くなります');
+      }
+
       const nd = needOf_(c);
       if (on < nd.min) {
         const dn = docCount(c);
@@ -2370,6 +2439,22 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         const want = Object.assign({}, need);
         if (kind === 'clerk' && r.clerkEarlyN !== undefined) {
           want[work[0]] = Math.max(0, Number(r.clerkEarlyN) || 0);
+        } else if (kind === 'pharm') {
+          /**
+           * 開局直後は早番しかいない。早番が1人だとその時間帯が1人になる。
+           * 出勤が足りているなら、開局を覆えるだけの早番を置く。
+           *
+           * 実物の 早番10:00〜19:00 / 遅半10:30〜19:30 のように、
+           * 2番目の記号が開局に間に合うなら早番＋遅半で覆えるので、
+           * 早番だけで揃える必要はない。
+           */
+          const openAt = minOf_(days[c].from);
+          const midAt = work[1] ? minOf_((DB.patterns.find(x => x.sym === work[1]) || {}).start) : null;
+          const covered = midAt !== null && openAt !== null && midAt <= openAt;
+          const needOpen = Math.max(1, Number(r.minOnDuty) || 1);
+          if (!covered) {
+            want[work[0]] = Math.max(want[work[0]] || 0, Math.min(needOpen, free.length));
+          }
         }
         const left = new Set(free);
 
@@ -3136,7 +3221,13 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'clerkEarlyN', label: '事務員の○早番', type: 'num', unit: '人/日', min: 0, max: 6 },
       { note: '▲遅番の数は設定しません。**早番と遅半を配った残りが全員 遅番**になります。'
              + '実物もそうで、R8.8月は ▲120 / ●47 / ○40 と遅番が最多でした。' },
-      { note: '使える記号は社員マスタで人ごとに決めます。その人が使えない記号は当てません。' }
+      { note: '使える記号は社員マスタで人ごとに決めます。その人が使えない記号は当てません。' },
+      { key: 'minOnDuty', label: '同時にいてほしい薬剤師', type: 'num', unit: '人', min: 1, max: 6 },
+      { note: '**頭数ではなく時間帯で見ます。** 記号ごとに勤務時間がずれているので、'
+             + 'その日の出勤が足りていても開局直後だけ薄くなることがあります。'
+             + '例: 早番10:00〜／遅半10:30〜／遅番11:00〜 なら、'
+             + '早番が1人だと 10:00〜10:30 は1人です。' },
+      { note: 'この人数を満たせるだけ早番を置きます。それでも薄い日は表の下に出します。' }
     ]},
     { title: '曜日別下限の扱い', items: [
       { key: 'weekdayFloor', label: '店舗営業マスタの曜日別下限を', type: 'select',

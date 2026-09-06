@@ -33,9 +33,9 @@ function run(pats, rules, nDays, offOf) {
     'const PATS = ' + JSON.stringify(pats) + ';',
     'const OFF = ' + JSON.stringify(offOf || []) + ';',
     'const DB = { rules: ' + JSON.stringify(rules) + ', patterns: [',
-    '  { sym: "○", work: true, order: 1 },',
-    '  { sym: "●", work: true, order: 2 },',
-    '  { sym: "▲", work: true, order: 3 },',
+    '  { sym: "○", start: "10:00", end: "19:00", work: true, order: 1 },',
+    '  { sym: "●", start: "10:30", end: "19:30", work: true, order: 2 },',
+    '  { sym: "▲", start: "11:00", end: "20:00", work: true, order: 3 },',
     '  { sym: "公休", work: false, order: 4 } ] };',
     'const byOrder = l => l.slice().sort((a,b) => (a.order||0)-(b.order||0));',
     'const isWork = v => ["○","●","▲"].indexOf(v) >= 0;',
@@ -44,7 +44,7 @@ function run(pats, rules, nDays, offOf) {
     'const get = (r,c) => cells.get(key(r,c)) || "";',
     'const setV = (r,c,v) => { if (v) cells.set(key(r,c), v); else cells.delete(key(r,c)); };',
     'const days = [];',
-    'for (let c = 0; c < DAY_COLS; c++) days.push({ inMonth: true, open: true, day: c + 1 });',
+    'for (let c = 0; c < DAY_COLS; c++) days.push({ inMonth: true, open: true, day: c + 1, from: "10:00", to: "20:00" });',
     'const ROWS = PATS.map((p, i) => ({',
     '  kind: "staff", index: i, key: "s" + i, label: "s" + i,',
     '  role: p.role || "pharm",',
@@ -53,7 +53,8 @@ function run(pats, rules, nDays, offOf) {
     'ROWS.forEach((r, i) => { for (let c = 0; c < DAY_COLS; c++) {',
     '  if ((OFF[i] || []).indexOf(c) >= 0) { setV(r, c, "公休"); continue; }',
     '  setV(r, c, "▲"); } });',
-    grab('assignShiftSymbols_'),
+    // 開局を覆えるだけの早番を置くので、時刻の読み取りも要る
+    grab('minOf_'), grab('assignShiftSymbols_'),
     'assignShiftSymbols_(new Set());',
     'return { ROWS, get, days };',
   ].join('\n'))();
@@ -206,6 +207,95 @@ ok('公休の日は記号を置き換えない', () => {
       assert.ok(c > 2, '休みの ' + c + ' 日目に ' + sym + ' が付いた');
     });
   });
+});
+
+console.log('■ 開局を覆う（minOnDuty）');
+
+ok('minOnDuty 2 なら、開局を覆えるだけ早番を置く', () => {
+  const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }],
+    { earlyN: 1, midN: 1, minOnDuty: 2 }, 20);
+  r.byDay.forEach((d, c) => {
+    assert.strictEqual(d['○'] || 0, 2,
+      (c + 1) + '日目の早番が ' + (d['○'] || 0) + ' 人。開局が1人になる');
+  });
+});
+
+ok('minOnDuty 1 なら早番は1人のまま', () => {
+  const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }],
+    { earlyN: 1, midN: 1, minOnDuty: 1 }, 20);
+  r.byDay.forEach(d => assert.strictEqual(d['○'] || 0, 1));
+});
+
+ok('出勤が少ない日は、いる人数で頭打ちにする', () => {
+  // 2人しか出ない日。早番2人にすると遅番が0になるが、それでよい
+  const off = [[], [], [0], [0], [0]];
+  const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }],
+    { earlyN: 1, midN: 1, minOnDuty: 3 }, 10, off);
+  assert.strictEqual((r.byDay[0]['○'] || 0), 2, '出ている2人を超えて置かない');
+});
+
+ok('早番の均等さは保たれる', () => {
+  const r = run([{ syms: ALL }, { syms: ALL }, { syms: ALL },
+                 { syms: ALL }, { syms: ALL }],
+    { earlyN: 1, midN: 1, minOnDuty: 2 }, 20);
+  const n = r.per.map(p => p.count['○'] || 0);
+  assert.ok(Math.max.apply(null, n) - Math.min.apply(null, n) <= 1,
+    '早番が偏っている: ' + JSON.stringify(n));
+});
+
+console.log('■ 時間帯の薄さ');
+
+// 記号ごとに勤務時間が30分ずつずれているので、頭数が足りていても
+// 開局直後だけ1人、ということが起きる。実物は
+//   早番 10:00〜19:00 / 遅半 10:30〜19:30 / 遅番 11:00〜20:00
+// なので、早番が1人だと 10:00〜10:30 が1人になる。
+
+const cov = new Function([
+  'const DB = { patterns: [',
+  '  { sym: "○", start: "10:00", end: "19:00", work: true },',
+  '  { sym: "●", start: "10:30", end: "19:30", work: true },',
+  '  { sym: "▲", start: "11:00", end: "20:00", work: true } ] };',
+  'const isWork = v => ["○","●","▲"].indexOf(v) >= 0;',
+  'let SYMS = [];',
+  'const days = [{ from: "10:00", to: "20:00" }];',
+  'const ROWS = [];',
+  'const get = (r) => r.v;',
+  grab('minOf_'), grab('coverageOf_'),
+  'return { set: a => { ROWS.length = 0;',
+  '  a.forEach((v, i) => ROWS.push({ kind: "staff", role: "pharm", v: v })); },',
+  '  coverageOf_ };',
+].join('\n'))();
+
+ok('開局直後は早番しかいない', () => {
+  cov.set(['○', '▲', '▲', '▲']);
+  const r = cov.coverageOf_(0);
+  assert.strictEqual(r.min, 1, '4人出ていても 10:00 は1人');
+  assert.strictEqual(r.at, '10:00');
+});
+
+ok('早番が2人なら開局も2人', () => {
+  cov.set(['○', '○', '▲', '▲']);
+  assert.strictEqual(cov.coverageOf_(0).min, 2);
+});
+
+ok('早番1人＋遅半1人でも、10:00〜10:30 は1人', () => {
+  cov.set(['○', '●', '▲', '▲']);
+  const r = cov.coverageOf_(0);
+  assert.strictEqual(r.min, 1, '遅半は 10:30 からなので開局は覆えない');
+  assert.strictEqual(r.at, '10:00');
+});
+
+ok('誰も出ていない日は0人', () => {
+  cov.set([]);
+  assert.strictEqual(cov.coverageOf_(0).min, 0);
+});
+
+ok('時刻が読めない記号は、開いているあいだ居るものとして数える', () => {
+  cov.set(['○', '×']);          // × はマスタに無い記号
+  assert.strictEqual(cov.coverageOf_(0).min, 1, '知らない記号は数えない');
 });
 
 console.log(fail ? '\n■ ' + fail + ' 件 NG' : '\n■ すべて OK');
