@@ -493,8 +493,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   #grid td, #grid th, .page-head, .printnote { color: #000; }
   /* 0 を薄くする画面用の見せ方は、紙では消えてしまう */
   #grid td.zero, #grid .agcol { color: #000 !important; opacity: 1 !important; }
-  .toolbar, .legend, .holiday-bar, .tabs, #gridWarn,
-  .panel:not(.on), #appVer { display: none !important; }
+  .toolbar, .toolbar2, .palettebar, .legend, .holiday-bar, .tabs, #gridWarn,
+  .panel:not(.on), #appVer, #toolMore { display: none !important; }
   /* 注記は入力欄ではなく本文として刷る */
   .pn-memo label, .pn-memo textarea { display: none !important; }
   .pn-print { display: block !important; }
@@ -1542,20 +1542,28 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const push = r => { r.index = rows.length; rows.push(r); return r; };
     const live = DB.staff.filter(s => inService(s, y, m) && belongsHere(s));
 
-    push({ kind: 'band', label: '医師名' });
+    /**
+     * 日付行の氏名欄に、そこから下が何の欄かを書く。
+     *
+     * 「氏名」とだけ書いて、すぐ下に「医師名」の帯を置いていたが、
+     * 同じことを2行で言っていた。日付行に区分を書けば帯が要らない。
+     * 薬剤師の前の日付再掲も同じで、2行ぶん詰まる。
+     * 実物のシフト表にも区分の帯は無い。
+     */
     const docN = docRowCount_();
     for (let i = 0; i < docN; i++) {
       push({ kind: 'doctor', key: 'doc' + (i + 1), label: '医師 ' + (i + 1) });
     }
-    push({ kind: 'repeat', label: '' });
 
     const groups = [
       { label: '薬剤師',       role: 'pharm',    pick: s => s.kind === '薬剤師' && s.employment !== '派遣' },
       { label: '派遣薬剤師',   role: 'dispatch', pick: s => s.kind === '薬剤師' && s.employment === '派遣' },
       { label: '事務',         role: 'clerk',    pick: s => s.kind === '事務員' }
     ];
-    groups.forEach(g => {
-      push({ kind: 'band', label: g.label });
+    groups.forEach((g, i) => {
+      // 先頭の群（薬剤師）は日付の再掲に見出しを載せる。帯を1本減らす
+      if (i === 0) push({ kind: 'repeat', label: g.label });
+      else push({ kind: 'band', label: g.label });
       live.filter(g.pick).forEach(s =>
         push({ kind: 'staff', role: g.role, key: s.id, label: s.name, staff: s }));
     });
@@ -1831,7 +1839,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   function buildHead() {
     const head = el('thead');
     const rDate = el('tr', 'r-date');
-    rDate.appendChild(el('th', 'nm', '氏名'));
+    // 「氏名」ではなく、そこから下が何の欄かを書く。下に帯を置かなくて済む
+    rDate.appendChild(el('th', 'nm', '医師名'));
     headCells('th', d => String(d.day)).forEach(c => rDate.appendChild(c));
     AGG_COLS.forEach((a, i) => rDate.appendChild(el('th', 'agcol' + (i === 0 ? ' first' : ''))));
     head.appendChild(rDate);
@@ -1862,7 +1871,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       }
 
       if (row.kind === 'repeat') {
-        tr.appendChild(el('th', 'nm'));
+        tr.appendChild(el('th', 'nm', row.label || ''));
         headCells('th', d => String(d.day)).forEach(c => tr.appendChild(c));
         AGG_COLS.forEach((a, i) =>
           tr.appendChild(el('th', 'agcol' + (i === 0 ? ' first' : ''), aggHead_(a))));
