@@ -308,6 +308,13 @@ tr.aggrow .nm { font-weight: 700; }
 .printnote { display: flex; gap: 26px; padding: 10px 18px 18px; align-items: flex-start; }
 .pn-legend { font-size: 11px; line-height: 1.9; white-space: nowrap; }
 .pn-legend b { font-size: 13px; margin-right: 4px; }
+.pn-legend { white-space: normal; }
+.pn-legend .mkrow { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 2px; }
+.pn-legend .mkline { display: inline-flex; align-items: center; gap: 4px; }
+.pn-legend .sw {
+  width: 13px; height: 11px; border: 1px solid var(--rule); font-style: normal;
+  display: inline-block; flex: none;
+}
 .pn-memo { flex: 1; min-width: 0; }
 .pn-memo label { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
 .pn-memo textarea {
@@ -459,8 +466,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     text-align: center; letter-spacing: -.03em;
   }
   .page-head h1 { font-size: 18px; }
-  .printnote { font-size: 7pt; gap: 16px; }
-  .pn-legend, .pn-print { font-size: 7pt; line-height: 1.5; }
+  .printnote { font-size: 7pt; gap: 14px; }
+  .pn-legend, .pn-print { font-size: 7pt; line-height: 1.45; }
+  .pn-legend { max-width: 46%; }
+  .pn-legend .mkrow { gap: 1px 9px; }
   #grid tr, #grid td, #grid th { page-break-inside: avoid; }
   /* 背景色は既定で印刷されない。土日祝や灰色が消えると表の意味が変わる */
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -691,6 +700,14 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <p class="lead">備考行に押す文字です。シフト表の備考行で入力候補として出ます。</p>
   <div class="mtwrap"><table class="mt" id="mtNote"></table></div>
   <div class="mtfoot"><button data-add="note">行を追加</button></div>
+
+  <h2 style="margin-top:26px">色の印</h2>
+  <p class="lead">
+    記号とは別に、セルの背景を塗る印です。同じ日に「▲かつ薬品発注担当」のように重ねられます。
+    パレットの「色」から押します。<b>ここで付けた意味は、シフト表の下の凡例と印刷にそのまま出ます。</b>
+  </p>
+  <div class="mtwrap"><table class="mt" id="mtMark"></table></div>
+  <div class="mtfoot"><button data-add="mark">行を追加</button></div>
 </div></section>
 
 <section class="panel" data-panel="leave"><div class="sheet">
@@ -822,6 +839,15 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   /** 月ごとの注記のキー。'memo|yyyy-mm' で values に同居させる */
   const memoKey = () => 'memo|' + curYm;
   /**
+   * 色の印のキー。記号とは別の層なので、行キーの前に 'mark:' を付けて
+   * 同じ values に同居させる。こうすると保存も編集履歴も書き出しも
+   * そのまま効く（別の入れ物にすると3か所を直すことになる）。
+   */
+  const markKey = (row, c) =>
+    'mark:' + row.key + '|' + curYm + '|' + (days[c] ? days[c].day : c + 1);
+  const getMark = (row, c) => values.get(markKey(row, c)) || '';
+  const markOf = id => (DB.marks || []).find(m => m.id === id) || null;
+  /**
    * 前回の保存が通ったか。**通らなかったことを黙っていてはいけない。**
    * 画面は動き続けるので、利用者は保存できたと思ったまま作業を続けてしまう。
    */
@@ -931,6 +957,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         { id: 'p6', sym: '有休', label: '有休',   kind: '休み', start: '', end: '', work: false, pubOff: false, order: 6 },
         { id: 'p7', sym: '夏休', label: '夏休',   kind: '休み', start: '', end: '', work: false, pubOff: false, order: 7 }
       ],
+      /**
+       * 色の印。記号とは別の層で、セルの背景に付く。
+       * 実物の R8.8月から起こした（docs/OUTPUT-FORMAT.md §4）。
+       * 緑は24件すべて早番(○)の日に付いており、凡例に
+       * 「薬品発注担当（土曜日と祝日の前日は発注作業なし）」とある。
+       * 橙は3件すべて水曜で「備品発注日（週1）」。
+       * 黄と赤は凡例に無く、その場かぎりの目印として使われていた。
+       */
+      marks: [
+        { id: 'mk1', label: '薬品発注担当', color: '#a9d18e',
+          desc: '土曜日と祝日の前日は発注作業なし', order: 1 },
+        { id: 'mk2', label: '備品発注日',   color: '#ffc000',
+          desc: '週1', order: 2 },
+        { id: 'mk3', label: '注意',         color: '#ffff00', desc: '', order: 3 },
+        { id: 'mk4', label: '重要',         color: '#ff0000', desc: '', order: 4 }
+      ],
+
       notes: [
         { id: 'n1', text: '銀行', desc: '銀行対応の日', order: 1 },
         { id: 'n2', text: '棚卸', desc: '棚卸の日',     order: 2 },
@@ -1014,7 +1057,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const seed = seedDb();
 
     // 丸ごと無いマスタは初期値で補う
-    ['stores', 'hours', 'closures', 'holidays', 'demand'].forEach(k => {
+    ['stores', 'hours', 'closures', 'holidays', 'demand', 'marks'].forEach(k => {
       if (!Array.isArray(db[k]) || !db[k].length) db[k] = seed[k];
     });
 
@@ -1747,6 +1790,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       return '医師名は医師名欄にしか押せません';
     if (st.kind === 'note'   && row.kind !== 'note')
       return '備考は備考行にしか押せません';
+    if (st.kind === 'mark'   && row.kind !== 'staff')
+      return '色の印はスタッフ欄にしか押せません';
     return '';
   }
   const canStamp = (row, st) => !stampRejectReason(row, st);
@@ -1755,7 +1800,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const row = ROWS[r];
     if (!canStamp(row, st)) return false;
     markEdited_();
-    setV(row, c, st.value);
+    if (st.kind === 'mark') {
+      // 記号は消さない。背景だけを塗る。同じ色をもう一度押すと外す
+      const k = markKey(row, c);
+      if (values.get(k) === st.value) values.delete(k); else values.set(k, st.value);
+    } else if (st.kind === 'clear') {
+      // 消去は記号と色の両方を落とす
+      setV(row, c, '');
+      values.delete(markKey(row, c));
+    } else {
+      setV(row, c, st.value);
+    }
     paintCell(row, c);
     recalc();
     return true;
@@ -1790,15 +1845,20 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (!v) return;
     v.textContent = t;
     v.classList.toggle('small', t.length > 1);
-    // 記号が無い日は要判断（公休枠を超えたぶん）。見て分かるようにする
+    // 色の印。記号は消さず、背景だけを塗る（実物は記号と色が同じセルに同居する）
+    const mk = row.kind === 'staff' ? markOf(getMark(row, c)) : null;
+    cell.style.background = mk ? mk.color : '';
     cell.classList.toggle('na', naDay_(row, c));
+    // 記号が無い日は要判断（公休枠を超えたぶん）。見て分かるようにする。
     // **手動配置の人（派遣）には付けない。** 派遣は空欄が正常で、
     // 全セルに斜線が入ると印刷が真っ黒になる
     const todo = row.kind === 'staff' && !t && days[c].inMonth && !naDay_(row, c)
       && !!row.staff && row.staff.rule !== RULE_MANUAL;
     cell.classList.toggle('todo', todo);
-    cell.title = todo
-      ? '公休枠を超えるため空けてあります。有休・夏休を割り当ててください' : '';
+    cell.title = [
+      mk ? mk.label + (mk.desc ? '（' + mk.desc + '）' : '') : '',
+      todo ? '公休枠を超えるため空けてあります。有休・夏休を割り当ててください' : ''
+    ].filter(Boolean).join(' / ');
   }
 
   /** 画面から探して書き直す。既に載っているセル向け */
@@ -1880,6 +1940,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const off = byOrder(DB.patterns).filter(p => !p.work)
       .map(p => p.sym + (p.pubOff ? '（公休枠）' : '')).join('　');
     if (off) box.appendChild(el('div', '', off));
+
+    // 色の印。何色が何を指すのかは、紙にも書いておかないと伝わらない。
+    // 1色1行にすると縦に伸びて紙からはみ出すので、横に流す
+    const marks = byOrder(DB.marks || []).filter(m => m.label);
+    if (marks.length) {
+      const row = el('div', 'mkrow');
+      marks.forEach(m => {
+        const one = el('span', 'mkline');
+        const sw = el('i', 'sw');
+        sw.style.background = m.color;
+        one.appendChild(sw);
+        one.appendChild(document.createTextNode(
+          m.label + (m.desc ? '（' + m.desc + '）' : '')));
+        row.appendChild(one);
+      });
+      box.appendChild(row);
+    }
 
     const memo = values.get(memoKey()) || '';
     $('monthMemo').value = memo;
@@ -2489,6 +2566,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { key: 'desc',  head: '説明',   type: 'text', w: 240 },
       { key: 'order', head: '表示順', type: 'num', min: 1, max: 99 }
     ],
+    mark: [
+      { key: 'color', head: '色',     type: 'color' },
+      { key: 'label', head: '意味',   type: 'text', w: 130 },
+      { key: 'desc',  head: '但し書き（凡例に出ます）', type: 'text', w: 260 },
+      { key: 'order', head: '表示順', type: 'num', min: 1, max: 99 }
+    ],
     demand: [
       { key: 'doctors', head: '医師数', type: 'calc', calc: r => r.doctors + ' 診' },
       { key: 'min',     head: '薬剤師 下限', type: 'num', min: 0, max: 20 },
@@ -2538,7 +2621,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const LIST_OF = { store: 'stores', hours: 'hours', closure: 'closures',
                     holiday: 'holidays', demand: 'demand',
                     staff: 'staff', doctor: 'doctors', pattern: 'patterns',
-                    note: 'notes', leave: 'leave' };
+                    note: 'notes', leave: 'leave', mark: 'marks' };
 
   function renderMaster(name) {
     const cols = COLS[name];
@@ -2650,6 +2733,24 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       td.textContent = DOW[i];
       return td;
     }
+    // 色の印。実際に塗られる色をその場で見せる
+    if (col.type === 'color') {
+      const wrap = el('div', 'field');
+      const ip = document.createElement('input');
+      ip.type = 'color';
+      ip.value = /^#[0-9a-f]{6}$/i.test(rec[col.key] || '') ? rec[col.key] : '#ffd966';
+      ip.style.width = '44px';
+      ip.style.height = '24px';
+      ip.style.padding = '0';
+      ip.addEventListener('change', () => { rec[col.key] = ip.value; commit(); });
+      const code = el('span', 'unit', ip.value);
+      ip.addEventListener('input', () => { code.textContent = ip.value; });
+      wrap.appendChild(ip);
+      wrap.appendChild(code);
+      td.appendChild(wrap);
+      return td;
+    }
+
     if (col.type === 'check') {
       const cb = document.createElement('input');
       cb.type = 'checkbox';
@@ -2794,6 +2895,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
                       start: '', end: '', work: true, pubOff: false,
                       order: DB.patterns.length + 1 }),
     note:    () => ({ id: newId('n'), text: '', desc: '', order: DB.notes.length + 1 }),
+    mark:    () => ({ id: newId('mk'), label: '', color: '#ffd966', desc: '',
+                      order: (DB.marks || []).length + 1 }),
     leave:   () => ({ id: newId('l'), staffId: (DB.staff[0] || {}).id || '',
                       grantDate: '', grantDays: 10, usedDays: 0 })
   };
@@ -2952,7 +3055,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
             value: d.short || d.name, face: d.short || d.name.charAt(0), sub: d.name })) },
       { kind: 'note', label: '備考', items: byOrder(DB.notes)
           .filter(n => n.text).map(n => ({
-            value: n.text, face: n.text, sub: n.desc || n.text })) }
+            value: n.text, face: n.text, sub: n.desc || n.text })) },
+      // 色の印は記号を消さずに背景だけを塗る。同じ日に「▲かつ薬品発注担当」が要る
+      { kind: 'mark', label: '色', items: byOrder(DB.marks || [])
+          .filter(m => m.label).map(m => ({
+            value: m.id, face: '■', sub: m.label, color: m.color,
+            hint: m.desc })) }
     ];
   }
 
@@ -3033,7 +3141,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   function stampButton(kind, it) {
     const b = el('button', 'stamp' + (it.face.length > 1 ? ' wide' : ''));
-    b.appendChild(document.createTextNode(it.face));
+    const face = document.createElement('span');
+    face.textContent = it.face;
+    if (it.color) { face.style.color = it.color; face.style.textShadow = '0 0 1px #6b6b6b'; }
+    b.appendChild(face);
     b.appendChild(el('small', '', it.sub));
     b.dataset.kind = kind;
     b.dataset.value = it.value;

@@ -89,6 +89,8 @@ const run = new Function('document', [
   'const values=new Map(); let curYm="2026-10";',
   'let days=buildDays(2026,10);',
   upto('const cellKey ='),
+  // 色の印。記号とは別の層で背景を塗る
+  upto('const markKey ='), L('  const getMark ='), L('  const markOf ='),
   'const get=(r,c)=>values.get(cellKey(r,c))||"";',
   'const setV=(r,c,v)=>{if(v)values.set(cellKey(r,c),v);else values.delete(cellKey(r,c));};',
   'const docCount=()=>0;',
@@ -158,6 +160,8 @@ const naRun = new Function('document', [
   'const values=new Map(); let curYm="2026-10";',
   'let curYear_=2026, curMonth_=10;',
   upto('const cellKey ='),
+  // 色の印。記号とは別の層で背景を塗る
+  upto('const markKey ='), L('  const getMark ='), L('  const markOf ='),
   'const get=(r,c)=>values.get(cellKey(r,c))||"";',
   'const setV=(r,c,v)=>{if(v)values.set(cellKey(r,c),v);else values.delete(cellKey(r,c));};',
   'const docCount=()=>0; const paintRow=()=>{};',
