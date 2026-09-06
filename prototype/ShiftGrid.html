@@ -1010,7 +1010,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         // 曜日別の必要人数と休業日は 店舗営業マスタ が正。ここには置かない
         docRows: DOC_ROWS_DEFAULT,       // 医師名欄の行数
         busyDocN: DOC_BUSY_DEFAULT,      // 「◯診出勤」を数えはじめる医師数
-        earlyN: 1, lateN: 1, midN: 0, clerkEarlyN: 1,
+        // 日ごとに配る記号の数。マスタの並び順の先頭から 早番・遅半 に当て、
+        // 余った人は最後の記号（遅番）になる。
+        // 実物の R8.8月は ▲120 / ●47 / ○40 で遅番が最多。
+        // 「○早番は受付で処方入力、▲遅番はピッキング」という役割分担に合う
+        earlyN: 1, midN: 1, clerkEarlyN: 1,
         countNationalOff: true,   // 国民の祝日を公休ノルマに数えるか
         // 曜日別下限は使わない。必要人数は診療数だけで決める
         weekdayFloor: FLOOR_OFF,
@@ -2209,13 +2213,97 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const weeks = buildWeeks();
     autoNotes = [];
 
+    // 手で入れた出勤記号は動かさない。置き直す前に控えておく
+    const manual = new Set();
+    ROWS.forEach(row => {
+      if (row.kind !== 'staff') return;
+      for (let c = 0; c < DAY_COLS; c++) {
+        if (days[c].inMonth && isWork(get(row, c))) manual.add(row.index + '|' + c);
+      }
+    });
+
     ROWS.forEach(row => {
       if (row.kind !== 'staff' || !row.staff) return;
       if (row.staff.rule === RULE_MANUAL) return;   // 派遣など。手で置く
       placeOneStaff_(row, row.staff, weeks, offSym);
-      paintRow(row);
     });
+
+    assignShiftSymbols_(manual);
+
+    ROWS.forEach(row => { if (row.kind === 'staff') paintRow(row); });
     recalc();
+  }
+
+  /**
+   * 出勤する人が決まったあとで、日ごとに 早番/遅半/遅番 を配る。
+   *
+   * これが無かったころは placeOneStaff_ がその人の1つ目の記号を全日に使っており、
+   * 全員が毎日 ○早番 になっていた。ルール画面の「○早番 何人/日」も
+   * どこからも読まれていなかった。
+   *
+   * 配り方は、必要数の少ないものから順に埋め、余った人は最後の出勤記号にする。
+   * 実物も ▲遅番 が最多（R8.8月で ▲120 / ●47 / ○40）で、
+   * 「○早番は受付で処方入力、▲遅番はピッキング」という役割分担に合う。
+   *
+   * @param {Set<string>} manual 手で入れた出勤セル（'行index|列'）。触らない
+   */
+  function assignShiftSymbols_(manual) {
+    const work = byOrder(DB.patterns).filter(p => p.work).map(p => p.sym);
+    if (work.length < 2) return;              // 記号が1種類なら配りようがない
+    const r = DB.rules;
+    // 必要数。マスタの並び順の先頭から 早番・遅半・遅番 に対応させる
+    const need = {};
+    need[work[0]] = Math.max(0, Number(r.earlyN) || 0);
+    if (work[1]) need[work[1]] = Math.max(0, Number(r.midN) || 0);
+    const fill = work[work.length - 1];       // 余った人はここ（遅番）
+    // 誰がその記号を何回やったか。偏らせないために数えながら配る
+    const tally = {};
+
+    for (let c = 0; c < DAY_COLS; c++) {
+      if (!days[c].inMonth || !days[c].open) continue;
+
+      ['pharm', 'clerk'].forEach(kind => {
+        const on = ROWS.filter(row => row.kind === 'staff' && row.staff
+          && (kind === 'clerk' ? row.role === 'clerk' : row.role !== 'clerk')
+          && isWork(get(row, c)));
+        const free = on.filter(row => !manual.has(row.index + '|' + c));
+        // 手で入れたぶんは、その記号がもう埋まっているものとして数える
+        const already = {};
+        on.filter(row => manual.has(row.index + '|' + c))
+          .forEach(row => { const v = get(row, c); already[v] = (already[v] || 0) + 1; });
+
+        const want = Object.assign({}, need);
+        if (kind === 'clerk' && r.clerkEarlyN !== undefined) {
+          want[work[0]] = Math.max(0, Number(r.clerkEarlyN) || 0);
+        }
+        const left = new Set(free);
+        // 早番から順に、その記号を使える人を当てる。
+        // **その月に同じ記号が少ない人から選ぶ。** 単に先頭から取ると
+        // 同じ人が毎日 早番になる（実際そうなっていた）
+        work.forEach(sym => {
+          let n2 = (want[sym] || 0) - (already[sym] || 0);
+          if (n2 <= 0) return;
+          const cand = Array.from(left)
+            .filter(row => (row.staff.patterns || []).indexOf(sym) >= 0)
+            .sort((a, b) => (tally[a.index + '|' + sym] || 0) - (tally[b.index + '|' + sym] || 0)
+                            || a.index - b.index);
+          cand.forEach(row => {
+            if (n2 <= 0) return;
+            setV(row, c, sym);
+            tally[row.index + '|' + sym] = (tally[row.index + '|' + sym] || 0) + 1;
+            left.delete(row);
+            n2--;
+          });
+        });
+        // 残りは遅番。使えない人は本人の記号のうち最後のもの
+        left.forEach(row => {
+          const can = (row.staff.patterns || []).filter(x => work.indexOf(x) >= 0);
+          const sym = can.indexOf(fill) >= 0 ? fill : (can[can.length - 1] || fill);
+          setV(row, c, sym);
+          tally[row.index + '|' + sym] = (tally[row.index + '|' + sym] || 0) + 1;
+        });
+      });
+    }
   }
 
   function placeOneStaff_(row, s, weeks, offSym) {
@@ -2933,9 +3021,11 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       { note: '必要人数は下の表（医師数ごと）と、店舗営業マスタの曜日別下限で決まります。'
              + '医師数に一定数を足すだけの計算はやめました。' },
       { key: 'earlyN', label: '○早番', type: 'num', unit: '人/日', min: 0, max: 6 },
-      { key: 'lateN',  label: '▲遅番', type: 'num', unit: '人/日', min: 0, max: 6 },
       { key: 'midN',   label: '●遅半', type: 'num', unit: '人/日', min: 0, max: 6 },
-      { key: 'clerkEarlyN', label: '事務員の○早番', type: 'num', unit: '人/日', min: 0, max: 6 }
+      { key: 'clerkEarlyN', label: '事務員の○早番', type: 'num', unit: '人/日', min: 0, max: 6 },
+      { note: '▲遅番の数は設定しません。**早番と遅半を配った残りが全員 遅番**になります。'
+             + '実物もそうで、R8.8月は ▲120 / ●47 / ○40 と遅番が最多でした。' },
+      { note: '使える記号は社員マスタで人ごとに決めます。その人が使えない記号は当てません。' }
     ]},
     { title: '曜日別下限の扱い', items: [
       { key: 'weekdayFloor', label: '店舗営業マスタの曜日別下限を', type: 'select',

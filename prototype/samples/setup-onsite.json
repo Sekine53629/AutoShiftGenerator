@@ -566,8 +566,7 @@
   "rules": {
     "reqPlus": 1,
     "earlyN": 1,
-    "lateN": 3,
-    "midN": 0,
+    "midN": 1,
     "clerkEarlyN": 1,
     "countNationalOff": true,
     "maxConsDefault": 4,

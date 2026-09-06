@@ -119,7 +119,7 @@ PATTERNS['setup-onsite'] = {
      + '連続出勤の上限は4日。薬剤師1のみ本人の希望で3日',
   // 曜日別の薬剤師 下限（日 月 火 水 木 金 土）
   pharmMin: [2, 6, 5, 3, 5, 6, 3],
-  rules: { maxConsDefault: 4, maxOffRun: 14, reqPlus: 1, lateN: 3 },
+  rules: { maxConsDefault: 4, maxOffRun: 14, reqPlus: 1, earlyN: 1, midN: 1 },
   staff: [
     // 実測では4連勤が18.7%あり、3日上限は現場より厳しい
     // （docs/REAL-SHIFT-ANALYSIS.md §6）。既定を4日にした。
@@ -156,7 +156,9 @@ Object.keys(PATTERNS).forEach(key => {
       pharmMin: p.pharmMin[d], clerkMin: 1
     }));
     body.rules = Object.assign({
-      reqPlus: 1, earlyN: 1, lateN: 1, midN: 0, clerkEarlyN: 1,
+      // 日ごとに配る記号の数。早番と遅半を配った残りが全員 遅番になるので
+      // lateN は持たない（画面側の DB.rules と揃える）
+      reqPlus: 1, earlyN: 1, midN: 1, clerkEarlyN: 1,
       countNationalOff: true, maxConsDefault: 5, maxOffRun: 3,
       needCloser: true, wishMax: 3, carryOver: true
     }, p.rules || {});
