@@ -27,9 +27,9 @@
 :root {
   --ground:      #f7f7f5;
   --surface:     #ffffff;
-  --ink:         #1f2630;
-  --ink-soft:    #5d6773;
-  --ink-faint:   #8b949e;
+  --ink:         #111418;   /* 実物は黒。薄いと印刷で読めない */
+  --ink-soft:    #454c55;
+  --ink-faint:   #6b747e;
   --rule:        #aab2bb;
   --rule-soft:   #d5dae0;
   --band:        #e7ebef;
@@ -301,6 +301,22 @@ tr.aggrow .nm { font-weight: 700; }
   color: var(--accent-ink); background: var(--accent);
   padding: 2px 8px; border-radius: 10px; letter-spacing: .02em;
 }
+/**
+ * 印刷に出る欄。実物は表の下に凡例と注記を載せている。
+ * 画面では書き込み欄、紙では読み物になる。
+ */
+.printnote { display: flex; gap: 26px; padding: 10px 18px 18px; align-items: flex-start; }
+.pn-legend { font-size: 11px; line-height: 1.9; white-space: nowrap; }
+.pn-legend b { font-size: 13px; margin-right: 4px; }
+.pn-memo { flex: 1; min-width: 0; }
+.pn-memo label { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
+.pn-memo textarea {
+  width: 100%; font: inherit; font-size: 12px; line-height: 1.7;
+  padding: 6px 8px; border: 1px solid var(--rule-soft); border-radius: 3px;
+  background: var(--surface); color: var(--ink); resize: vertical;
+}
+.pn-print { display: none; font-size: 11px; line-height: 1.8; white-space: pre-wrap; }
+
 .legend {
   display: flex; flex-wrap: wrap; gap: 6px 14px;
   padding: 9px 18px 16px; font-size: 11px; color: var(--ink-soft);
@@ -409,13 +425,42 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   margin: 1.9cm 0 1.9cm 0.6cm;
 }
 @media print {
+  /* 紙は黒で刷る。画面の淡い色をそのまま刷ると読めない */
+  :root {
+    --ink: #000; --ink-soft: #222; --ink-faint: #444;
+    --rule: #666; --rule-soft: #999;
+    /**
+     * 1枚に収める。実物は倍率61%固定だが CSS に倍率が無いので寸法で合わせる。
+     * A4横（297mm）− 左余白6mm ＝ 約1100px、
+     * 上下余白19mm ずつを引いて高さ 約650px に、表と凡例を入れる。
+     *   氏名80 ＋ 日26×31 ＋ 集計32×6 ＝ 1078px
+     */
+    --cell-w: 26px; --cell-h: 15px; --name-w: 80px; --agg-w: 32px;
+  }
+  #grid td, #grid th, .page-head, .printnote { color: #000; }
+  /* 0 を薄くする画面用の見せ方は、紙では消えてしまう */
+  #grid td.zero, #grid .agcol { color: #000 !important; opacity: 1 !important; }
   .toolbar, .legend, .holiday-bar, .tabs, #gridWarn,
   .panel:not(.on), #appVer { display: none !important; }
+  /* 注記は入力欄ではなく本文として刷る */
+  .pn-memo label, .pn-memo textarea { display: none !important; }
+  .pn-print { display: block !important; }
+  .printnote { padding: 8px 0 0; page-break-inside: avoid; }
   .scroll { max-height: none; overflow: visible; }
   body { background: #fff; margin: 0; }
   .page-head { padding: 0 0 4px; }
   /* 表を1枚に収める。行の途中で改ページさせない */
-  #grid { font-size: 8pt; }
+  #grid { font-size: 7.5pt; }
+  #grid td.cell .v { font-size: 8pt; }
+  #grid td.cell .v.small { font-size: 6.5pt; }
+  /* 医師名・備考は input。枠と余白を外さないと2文字目が切れる */
+  #grid td.text input {
+    font-size: 7pt; padding: 0; border: 0; background: transparent;
+    text-align: center; letter-spacing: -.03em;
+  }
+  .page-head h1 { font-size: 18px; }
+  .printnote { font-size: 7pt; gap: 16px; }
+  .pn-legend, .pn-print { font-size: 7pt; line-height: 1.5; }
   #grid tr, #grid td, #grid th { page-break-inside: avoid; }
   /* 背景色は既定で印刷されない。土日祝や灰色が消えると表の意味が変わる */
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -491,6 +536,21 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <span><b>Ctrl+Z</b> で戻す、<b>Ctrl+Y</b> で進める。</span>
     <span><i style="background:repeating-linear-gradient(45deg,transparent 0 3px,var(--warn) 3px 4px)"></i>記号未定（公休枠を超えたぶん。有休・夏休を割り当ててください）</span>
   </div>
+  <!--
+    印刷に出る欄。実物のシフト表は表の下に
+    「凡例」「休憩について」「医事メンバー」「発注担当」「1on1日程」を載せている。
+    凡例はシフトパターンマスタから作る。それ以外は月ごとの自由記述。
+  -->
+  <div class="printnote">
+    <div class="pn-legend" id="pnLegend"></div>
+    <div class="pn-memo">
+      <label for="monthMemo">この月の注記（印刷に出ます）</label>
+      <textarea id="monthMemo" rows="5" spellcheck="false"
+        placeholder="【休憩について】早番薬剤師→13時〜14時（薬剤師4名体制のときのみ、薬剤師3名の日は14時〜15時）&#10;【医事メンバー】○早番は受付で処方入力、▲遅番はピッキング、午後から交代&#10;【1on1日程】…"></textarea>
+      <div class="pn-print" id="monthMemoPrint"></div>
+    </div>
+  </div>
+
   <div id="gridWarn" style="padding:0 18px 20px"></div>
 </section>
 
@@ -758,7 +818,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    */
   const APP_VERSION = '1.0.0';
   const STORE_KEY = 'shiftgrid.db.v1';      // マスタ
-  const CELLS_KEY = 'shiftgrid.cells.v1';   // シフトの中身
+  const CELLS_KEY = 'shiftgrid.cells.v1';   // シフトの中身（月ごとの注記も含む）
+  /** 月ごとの注記のキー。'memo|yyyy-mm' で values に同居させる */
+  const memoKey = () => 'memo|' + curYm;
   /**
    * 前回の保存が通ったか。**通らなかったことを黙っていてはいけない。**
    * 画面は動き続けるので、利用者は保存できたと思ったまま作業を続けてしまう。
@@ -1079,7 +1141,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       let n = 0;
       Object.keys(o).forEach(k => {
         // '<行キー>|yyyy-mm|日' の形だけを通す。壊れた控えで表を壊さない
-        if (/^[^|]+\|\d{4}-\d{2}\|\d{1,2}$/.test(k) && o[k]) {
+        const okCell = /^[^|]+\|\d{4}-\d{2}\|\d{1,2}$/.test(k);
+        const okMemo = /^memo\|\d{4}-\d{2}$/.test(k);
+        if ((okCell || okMemo) && o[k]) {
           values.set(k, String(o[k]));
           n++;
         }
@@ -1795,7 +1859,31 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     });
 
     saveCells();     // 表が変わるたびに必ずここを通る。保存の唯一の出口
+    renderPrintNote();
     checkRules();
+  }
+
+  /**
+   * 印刷に出る凡例。シフトパターンマスタから作る。
+   * 実物は「○　早　10:00〜19:00」の形で3つ並べている。
+   */
+  function renderPrintNote() {
+    const box = $('pnLegend');
+    box.textContent = '';
+    byOrder(DB.patterns).filter(p => p.work).forEach(p => {
+      const line = el('div');
+      line.appendChild(el('b', '', p.sym));
+      line.appendChild(document.createTextNode(
+        p.label + (p.start && p.end ? '　' + p.start + '〜' + p.end : '')));
+      box.appendChild(line);
+    });
+    const off = byOrder(DB.patterns).filter(p => !p.work)
+      .map(p => p.sym + (p.pubOff ? '（公休枠）' : '')).join('　');
+    if (off) box.appendChild(el('div', '', off));
+
+    const memo = values.get(memoKey()) || '';
+    $('monthMemo').value = memo;
+    $('monthMemoPrint').textContent = memo;
   }
 
   /* ═══ ルール違反の洗い出し ═════════════════════════════
@@ -3568,6 +3656,14 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     refreshAll();
     autoGenerate();
     dataStat('初期値に戻しました。');
+  });
+
+  $('monthMemo').addEventListener('input', () => {
+    const v = $('monthMemo').value;
+    if (v) values.set(memoKey(), v); else values.delete(memoKey());
+    $('monthMemoPrint').textContent = v;
+    markEdited_();
+    saveCells();
   });
 
   $('tabs').addEventListener('click', ev => {
