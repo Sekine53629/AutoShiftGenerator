@@ -5609,9 +5609,22 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         SYNC.monthKey = store + '|' + ym;
         SYNC.conflict = null;
         const n = res && res.data ? Object.keys(res.data).length : 0;
-        if (n) applyMonth_(res.data);
-        syncNote_(n ? '読み込みました（' + n + ' 件）' : 'この月はまだ空です');
-        return n;
+        if (n) { applyMonth_(res.data); syncNote_('読み込みました（' + n + ' 件）'); return n; }
+
+        /**
+         * サーバに無く、手元にはある月は、そのまま上げる。
+         *
+         * 単体版から「データ書き出し」で持ってきたときに要る。
+         * 取り込みで保存されるのは**開いている月だけ**なので、これが無いと
+         * 残りの月は、その月を開いて何か触るまでサーバに載らない。
+         */
+        const mine = Object.keys(monthCells_()).length;
+        if (mine) {
+          syncNote_('この月はサーバにありません。手元の ' + mine + ' 件を上げます');
+          return syncPushMonth_().then(() => mine);
+        }
+        syncNote_('この月はまだ空です');
+        return 0;
       })
       .catch(e => { syncNote_('読み込めませんでした: ' + e.message, 'warn'); return 0; });
   }
