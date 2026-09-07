@@ -88,7 +88,7 @@ function buildPharmCountFormula_(colLetter, gridTop, gridBottom) {
 /**
  * 出勤記号を COUNTIF / COUNTIFS の条件式にする。
  * WORK_SYM_PREFIX_MATCH が true なら末尾に `*` を付け、
- * 「▲佐藤典昭」のような記号＋氏名の複合テキストも数える。
+ * 「▲医A」のような記号＋氏名の複合テキストも数える。
  * Engine.matchWorkSym と同じ規則にすること。
  */
 function workSymCriteria_(sym) {

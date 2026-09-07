@@ -29,23 +29,34 @@ const MODULE_WEBAPP = 'WebApp';
  */
 function doGet(e) {
   try {
+    // ?probe=1 … テンプレートも JavaScript も使わない最小の応答。
+    // 「配信されているコードが新しいか」だけを1クリックで確かめるための入口。
+    // 画面が構文エラーで真っ白なときでも、ここは必ず出る
+    if (e && e.parameter && e.parameter.probe) {
+      // 版だけを返す。クエリの中身は一切 echo しない（反射 XSS の口になる）
+      return HtmlService.createHtmlOutput(
+        `<pre style="font:14px monospace">版 ${escapeHtml_(CONFIG.APP_VERSION)}</pre>`);
+    }
+
     const template = HtmlService.createTemplateFromFile('WebAppView');
     // 生の文字列を <?= ?> で埋めると、シート名に含まれる文字で JS が壊れる。
     // 必ず JSON にしてから <?!= ?> で出すこと
-    template.initialSheetJson = JSON.stringify(
-      (e && e.parameter && e.parameter.sheet) || '');
-    // 動いているコードの版。デプロイが古いままかを画面で見分けるため。
-    // HTML へ直接埋める用（appVersion）と、JS から読む用（JSON）の両方を渡す。
-    // JS の最後で書いていると、その前で落ちたときに版すら出ない
+    // ★ 値は data- 属性で渡し、<script> の中にテンプレートを書かない。
+    //   スクリプトレットが JS の中にあると、置換のしかた次第で構文エラーになり、
+    //   そのとき画面は真っ白になって原因が分からない。
+    //   属性なら <?= ?> が HTML として正しくエスケープしてくれる
+    template.initialSheet = (e && e.parameter && e.parameter.sheet) || '';
     template.appVersion = CONFIG.APP_VERSION;
-    template.appVersionJson = JSON.stringify(CONFIG.APP_VERSION);
     return template.evaluate()
       .setTitle('シフト表')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
   } catch (error) {
     logError(MODULE_WEBAPP, 'doGet', error, '', true);
+    // ★ error.message にはクエリの中身が混ざりうる。生で埋めると反射 XSS になる。
+    //   詳細はログにだけ残し、画面には出さない（何が動いているかも漏らさない）
     return HtmlService.createHtmlOutput(
-      `<p>画面を開けませんでした。</p><pre>${error.message}</pre>`);
+      '<p>画面を開けませんでした。管理者に連絡してください。</p>'
+      + `<p style="color:#666;font:12px monospace">版 ${escapeHtml_(CONFIG.APP_VERSION)}</p>`);
   }
 }
 
@@ -524,6 +535,33 @@ function apiCreateSheet(year, month) {
     return { sheetName: sheet.getName() };
   } catch (error) {
     logError(MODULE_WEBAPP, 'apiCreateSheet', error, `year=${year}; month=${month}`);
+    throw error;
+  }
+}
+
+/**
+ * 画面で組んだ表を、新しいシートにして返す。
+ *
+ * 画面から来る値は**中身が何であれ信用しない**。
+ * とくに `=` で始まる文字列は、シートに置いた瞬間に数式になる
+ * （`=IMPORTRANGE(...)` を書かれると他所のデータを引かせられる）。
+ * 通り道は exportModelToSheet_ 1本で、そこで cellSafe_ に通している。
+ *
+ * TODO(P5): 誰が出したかの検証。Auth.gs は揃っているが、
+ *   社員マスタ（email / 権限 / 担当店舗）の読み手がまだ無いので繋げていない。
+ *   apiSaveCells も同じ状態なので、そちらと一緒に入れる。
+ *   なお、この関数が書くのは**開いているスプレッドシート内の新しいシート**で、
+ *   既にある表は触らない。持ち出しにはならない。
+ *
+ * @param {Object} model 画面の表（ShiftGrid の sheetModel_ が返す形）
+ * @return {{sheetName:string, url:string, rows:number, cols:number}}
+ */
+function apiExportToSheet(model) {
+  try {
+    return exportModelToSheet_(model);
+  } catch (error) {
+    logError(MODULE_WEBAPP, 'apiExportToSheet', error,
+      `store=${model && model.store}; ym=${model && model.year}-${model && model.month}`);
     throw error;
   }
 }
