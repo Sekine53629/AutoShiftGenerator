@@ -665,6 +665,18 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 .modal .modal-msg.bad { background: var(--warn-bg); color: var(--ink); font-weight: 600; }
 .modal .modal-hint { margin: 7px 0 0; font-size: 12px; color: var(--ink-soft); }
 .modal .modal-hint.bad { color: var(--danger); font-weight: 600; }
+/* 上書きの注意。何も無いときは場所も取らない */
+.modal .modal-over { margin: 0; font-size: 13px; line-height: 1.6; }
+.modal .modal-over:empty { display: none; }
+.modal .modal-over.warn {
+  margin: 10px 0 0; padding: 9px 11px; border-radius: 4px;
+  background: var(--warn-bg); color: var(--ink);
+}
+.modal .modal-over.bad {
+  margin: 10px 0 0; padding: 10px 12px; border-radius: 4px;
+  background: var(--warn-bg); color: var(--danger);
+  border: 1px solid var(--danger); font-weight: 600;
+}
 .modal .modal-note { margin: 12px 0 0; font-size: 11.5px; color: var(--ink-faint); line-height: 1.6; }
 .modal .modal-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .modal .modal-act button { min-height: 34px; padding: 0 16px; }
@@ -717,6 +729,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   </div>
   <p class="modal-msg" id="docAskMsg"></p>
   <p class="modal-hint" id="docAskHint"></p>
+  <p class="modal-over" id="docAskOver"></p>
   <p class="modal-note">
     ブックの曜日と日にちが、この年月と合うかを確かめています。合わないまま入れると、
     日にちだけ合って曜日がずれた表になります。<b>ただし、暦の並びが同じ月は
@@ -6118,6 +6131,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
 
   const pad2_ = n => String(n).padStart(2, '0');
 
+  /** 'yyyy-mm' を「2026年8月」にする。ゼロ詰めのまま出すと読みにくい */
+  const ymFace_ = ym => {
+    const p = String(ym).split('-');
+    return p[0] + '年' + Number(p[1]) + '月';
+  };
+
   /**
    * その年月で、日にちと曜日の帳尻が合うセルだけを選ぶ。
    *
@@ -6398,15 +6417,18 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const d1 = new Date(Number(p3[0]), Number(p3[1]) - 1, 1);
     const hints = [];
     if (pendingBook.suggest && pendingBook.suggest !== ym) {
-      hints.push('ブックの日付は ' + pendingBook.suggest.replace('-', '年') + '月');
+      hints.push('ブックの日付は ' + ymFace_(pendingBook.suggest));
     }
     if (pendingBook.fileYm && pendingBook.fileYm !== ym) {
-      hints.push('ファイル名は ' + pendingBook.fileYm.replace('-', '年') + '月');
+      hints.push('ファイル名は ' + ymFace_(pendingBook.fileYm));
     }
     $('docAskHint').textContent =
       p3[0] + '年' + Number(p3[1]) + '月1日は' + DOW[d1.getDay()] + '曜'
       + (hints.length ? '　⚠ ' + hints.join('、') + 'です' : '');
     $('docAskHint').classList.toggle('bad', !!hints.length);
+
+    // 上書きの注意は、曜日が合うかとは別。合わないときも先に見せる
+    showOverwrite_(ym);
 
     msg.classList.remove('bad');
     if (!a3) { msg.textContent = '年月が読めません'; msg.classList.add('bad'); return; }
@@ -6420,7 +6442,57 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     msg.textContent = n + ' 日ぶん読めます'
       + (a3.missing.length ? '／' + a3.missing.length + ' 日は空' : '')
       + (a3.dropped ? '／曜日が合わない ' + a3.dropped + ' セルは読みません' : '');
+  }
 
+  /**
+   * 上書きの注意。**時期と中身の両方を見る。**
+   *
+   * 害の大きさを決めるのは「過去かどうか」より「そこに確定済みのものが
+   * 入っているか」。中身だけで出すと、来月分の差し替え（日常の操作）で
+   * 毎回止まって鬱陶しい。時期だけだと、空の過去月でも止まる。
+   *
+   *   過去月 ＋ 中身あり   … 強く出す。配り終えた記録を書き換えることになる
+   *   過去月 ＋ 空         … 軽く出す。害は小さいが、意図とは違うはず
+   *   当月以降 ＋ 中身あり … 入れ替える日数だけ知らせる。止めない
+   *   当月以降 ＋ 空       … 何も言わない
+   *
+   * 境界は**当月**。当月の入れ直しは修正としてよくあるので通す。
+   */
+  function showOverwrite_(ym) {
+    const box = $('docAskOver');
+    const face = ymFace_(ym);
+    const now = new Date();
+    const nowYm = now.getFullYear() + '-' + pad2_(now.getMonth() + 1);
+    const past = ym < nowYm;                   // 'yyyy-mm' は文字の並びで比べられる
+
+    // その月に、いま医師名が何日ぶん入っているか
+    const days = new Set();
+    values.forEach((v, k) => {
+      const q = k.split('|');
+      if (q.length === 3 && q[1] === ym && /^doc\d+$/.test(q[0]) && v) days.add(q[2]);
+    });
+    const has = days.size;
+
+    box.classList.remove('bad', 'warn');
+    $('docAskGo').textContent = '取り込む';
+    if (past && has) {
+      box.classList.add('bad');
+      box.textContent = '⚠ ' + face + 'は過ぎた月です。'
+        + 'すでに入っている ' + has + ' 日ぶんの医師名を書き換えます。'
+        + '配ったあとの記録なら、取り込まないでください'
+        + '（取り込んでも「← 戻す」で戻せます）';
+      $('docAskGo').textContent = '上書きして取り込む';
+    } else if (past) {
+      box.classList.add('warn');
+      box.textContent = face + 'は過ぎた月です。'
+        + 'いまは医師名が入っていないので、書き換わるものはありません';
+    } else if (has) {
+      box.classList.add('warn');
+      box.textContent = 'すでに入っている ' + has + ' 日ぶんの医師名を入れ替えます'
+        + '（「← 戻す」で戻せます）';
+    } else {
+      box.textContent = '';
+    }
   }
 
   /** 「取り込む」を押したとき */
@@ -6443,7 +6515,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         return;
       }
       const r = applyDoctorBook_({ ym: ym, byDay: byDay });
-      const bits = [ym.replace('-', '年') + '月を取り込みました',
+      const bits = [ymFace_(ym) + 'を取り込みました',
                     r.days + ' 日 / のべ ' + r.put + ' 人'];
       if (r.added.length) {
         bits.push('医師マスタに ' + r.added.length + ' 名を新しく登録しました: '
