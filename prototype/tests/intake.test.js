@@ -201,9 +201,18 @@ console.log('■ ブックの読み方（作りの約束）');
 {
   const f = grab('importDoctorFile');
 
-  ok('取り込む前に年月を聞く', () => {
-    assert.ok(/docAsk/.test(f), '確認の帯を出していない');
+  ok('取り込む前に年月を聞く（モーダルで止める）', () => {
+    // 帯で出していたら気づかずに素通りされた。年月を間違えると、
+    // 日にちだけ合って曜日がずれた表ができる
+    assert.ok(/showModal\(\)/.test(f), 'モーダルで止めていない');
     assert.ok(!/applyDoctorBook_/.test(f), '聞かずに入れている');
+    assert.ok(/<dialog[^>]*id="docAsk"/.test(src), 'dialog を使っていない');
+    assert.ok(/docAskFile/.test(f), 'どのファイルかを見せていない');
+  });
+
+  ok('Esc で閉じたら、待っているブックを捨てる', () => {
+    assert.ok(/'close'[\s\S]{0,80}pendingBook = null/.test(src),
+      '閉じたあとも読み込んだままになる');
   });
 
   ok('既定は ブックの日付 → ファイル名 → 開いている年月 の順', () => {
