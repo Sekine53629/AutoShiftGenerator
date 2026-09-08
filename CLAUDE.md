@@ -74,11 +74,24 @@ Never per-cell in a loop (Tier 2 prohibits it, and here it also breaks the time 
 Resolve positions once and pass the object around. The VBA version re-resolved on
 every call; that pattern does not survive the port.
 
-### Where a stamp may land is decided on the server
+### The server stores; it does not validate cell placement
 
-`WebApp.stampRejectReason_()` is the authority. The browser only greys out buttons —
-never trust it. A shift symbol that lands in the doctor block inflates `医師数(診)`
-(a `COUNTA` over that block) and throws off the required headcount for the whole month.
+This changed in 2026-09. The old web app wrote shift symbols straight into
+spreadsheet cells, so a symbol landing in the doctor block inflated `医師数(診)`
+(a `COUNTA` over that block) and threw off the whole month. `stampRejectReason_()`
+was the server-side guard against that. **That path is gone** — the view and its
+APIs were deleted because they wrote to a different place than the editor does.
+
+Shift data now goes to a JSON blob in a hidden sheet (`Store.gs`). There are no
+formulas over it, so a misplaced symbol cannot silently change a headcount; the
+browser's own `stampRejectReason()` is what keeps the grid coherent.
+
+**What the server does still own is conflict detection.** `storeWrite_()` refuses
+a write whose base revision has moved. Never bypass it — passing `force` is a
+choice the *user* makes in the conflict bar, not something the client decides.
+
+What is still missing: the server does not check *who* is writing (`Auth.gs` has
+no member reader yet). Until it does, anyone who can reach the web app can write.
 
 ### Existing input is never overwritten
 

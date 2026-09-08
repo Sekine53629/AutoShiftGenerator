@@ -151,6 +151,89 @@ ok('一度失敗しても、通れば印は戻る', () => {
   assert.strictEqual(a.api.persist(), true);
 });
 
+console.log('■ サーバへの送信と、この端末の保存を混ぜない');
+
+// サーバに送れないこと（圏外・権限・デプロイ前）と、この端末に書けないこと
+// （容量オーバー）は別。混ぜると「保存できていません」が出続ける
+ok('サーバ送信が失敗しても、この端末の保存は成立する', () => {
+  const store = makeStore();
+  const api = new Function('localStorage', [
+    line('  const CELLS_KEY'),
+    line('  let cellsPersist'),
+    'const values = new Map();',
+    'const console = { error(){} };',
+    'function syncTouchMonth(){ throw new Error("圏外"); }',
+    grab('saveCells'),
+    'return { values, saveCells, persist: () => cellsPersist };',
+  ].join('\n'))(store);
+  api.values.set('s001|2026-10|1', '○');
+  assert.strictEqual(api.saveCells(), true, 'サーバの失敗で保存が失敗扱いになった');
+  assert.strictEqual(api.persist(), true, '保存できていない印が立った');
+  assert.ok(store.dump['shiftgrid.cells.v1'], '控えが書かれていない');
+});
+
+ok('この端末に書けないときは、サーバへ送らない', () => {
+  let sent = 0;
+  const store = makeStore(10);      // 10文字しか入らない
+  const api = new Function('localStorage', 'tick', [
+    line('  const CELLS_KEY'),
+    line('  let cellsPersist'),
+    'const values = new Map();',
+    'const console = { error(){} };',
+    'function syncTouchMonth(){ tick(); }',
+    grab('saveCells'),
+    'return { values, saveCells };',
+  ].join('\n'))(store, () => { sent++; });
+  api.values.set('s001|2026-10|1', '○');
+  assert.strictEqual(api.saveCells(), false);
+  assert.strictEqual(sent, 0, '書けていないのにサーバへ送った');
+});
+
+console.log('■ 同期の配線');
+
+ok('保存待ちの控えを、送ったあとに消している', () => {
+  // 消さないと setTimeout の id が真のまま残り、「保存待ちがある」と
+  // 見なされて、ほかの人の保存を一度も取り込まなくなる（実際そうなっていた）
+  ['syncTouchDb', 'syncTouchMonth'].forEach(n => {
+    const f = grab(n);
+    assert.ok(/Wait = null/.test(f), n + ' が控えを消していない');
+  });
+});
+
+ok('取り込みの最中は保存を呼ばない', () => {
+  // 取り込み → renderGrid → recalc → saveCells と回るので、
+  // 印を立てておかないとサーバへ送り返してしまう
+  const f = grab('applyMonth_');
+  assert.ok(/SYNC\.applying = true/.test(f) && /finally/.test(f),
+    'applying の印が無い、または戻していない');
+  ['syncTouchDb', 'syncTouchMonth'].forEach(n => {
+    assert.ok(/SYNC\.applying/.test(grab(n)), n + ' が印を見ていない');
+  });
+});
+
+ok('取り込みは、その月ぶんを消してから入れる', () => {
+  // 足すだけだと、向こうで消された記号がこちらに残る
+  const f = grab('applyMonth_');
+  assert.ok(/values\.delete\(k\)/.test(f), '消してから入れていない');
+});
+
+ok('衝突したら、書かずに知らせる', () => {
+  ['syncPushDb_', 'syncPushMonth_'].forEach(n => {
+    const f = grab(n);
+    assert.ok(/res && res\.ok/.test(f) && /syncConflict_/.test(f),
+      n + ' が衝突を握りつぶしている');
+  });
+  const c = grab('syncConflict_');
+  assert.ok(/updatedBy/.test(c), '誰の編集とぶつかったか出していない');
+});
+
+ok('月を切り替えた直後に、古い版で書かない', () => {
+  const f = grab('syncPushMonth_');
+  assert.ok(/SYNC\.monthKey !== syncKey_\(\)/.test(f), '版と月の対応を見ていない');
+  assert.ok(/SYNC\.monthKey !== store \+ '\|' \+ ym/.test(f),
+    '往復の間に月が変わった場合を見ていない');
+});
+
 console.log('■ 起動の配線');
 
 ok('起動時に読み戻し、読めたときは自動生成しない', () => {
@@ -160,6 +243,24 @@ ok('起動時に読み戻し、読めたときは自動生成しない', () => {
     '起動時に loadCells を呼んでいない');
   assert.ok(/if \(!restored\) \{[\s\S]{0,200}autoGenerate\(\);/.test(boot),
     '読み戻せたときに autoGenerate を止めていない（作り直した表で上書きされる）');
+});
+
+ok('起動はサーバの読み込みを待ってから自動生成を決める', () => {
+  // 先に走らせると、ほかの人が作った表を、こちらで作り直したもので上書きする
+  const boot = src.slice(src.indexOf('/* ═══ 起動'));
+  assert.ok(/onServer\(\)/.test(boot), '起動でサーバかどうかを見ていない');
+  assert.ok(/syncBoot\(\)\.then\(/.test(boot), 'サーバの読み込みを待っていない');
+  assert.ok(/!okServer && !restored/.test(boot),
+    'サーバに繋がっているのに autoGenerate を走らせている');
+});
+
+ok('月・店舗を切り替えたら、その月をサーバから読み直す', () => {
+  // 版は「店舗×年月」に紐づく。古い版のまま書くと、別の月を上書きしかねない
+  const at = src.indexOf("['yy', 'mm'].forEach");
+  const block = src.slice(at, at + 900);
+  assert.ok(/syncLoadMonth\(\)/.test(block), '年月の切り替えで読み直していない');
+  assert.strictEqual((block.match(/syncLoadMonth\(\)/g) || []).length, 2,
+    '年月と店舗の両方で読み直していない');
 });
 
 ok('表が変わるたびに保存する', () => {

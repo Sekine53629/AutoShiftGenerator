@@ -45,6 +45,11 @@ const sandbox = {
   DriveApp: {},
   ScriptApp: {},
   HtmlService: {},
+  LockService: {
+    getScriptLock: function () {
+      return { tryLock: function () { return true; }, releaseLock: function () {} };
+    },
+  },
 };
 vm.createContext(sandbox);
 
@@ -62,11 +67,12 @@ Object.assign(sandbox, vm.runInContext(
   '({ CONFIG, LABEL, NAMED_RANGE, LAYOUT, SYM, KIND, RULE, CFG_MEMBER, CFG_SETTING,'
   + ' SETTING_DEFAULT, HOLIDAY_SHEET, CHANGELOG_SHEET, ENGINE_LIMIT, DOC_BUSY_N,'
   + ' NON_NAME_LABELS, MASK_NAMES, SHEET_BUILD, SETUP_KNOWN_HEADS,'
-  + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH, EDIT_REGION, STAMP_KIND, STAMP_REGION_RULES,'
+  + ' WORK_SYMS, WORK_SYM_PREFIX_MATCH,'
   + ' SCHEMA, FORMAT_PROFILE, FORMAT_DEFAULT, DOCTOR_MASTER, PATTERN_MASTER,'
   + ' NOTE_MASTER,'
   + ' ST_SKIP, ST_NONE, ST_WORK, ST_OFF, ST_FWORK, ST_FOFF,'
-  + ' ROLE, ROLE_RANK, FORMULA_LEADS, FORMULA_LEAD_CTRL, CELL_MAX_LEN })', sandbox));
+  + ' ROLE, ROLE_RANK, FORMULA_LEADS, FORMULA_LEAD_CTRL, CELL_MAX_LEN,'
+  + ' WEBAPP_VIEW_FILE, STORE_DB_FILE, STORE_CHUNK })', sandbox));
 
 // ---- テストランナー ----------------------------------------------------
 let passed = 0;
@@ -364,84 +370,6 @@ function layoutFor(staffRows) {
   return p;
 }
 
-test('classifyEditRegion_ が行を正しく仕分ける', function () {
-  const L = layoutFor(16);
-  const R = sandbox.EDIT_REGION;
-  assert.strictEqual(sandbox.classifyEditRegion_(L.gridTop, L), R.GRID);
-  assert.strictEqual(sandbox.classifyEditRegion_(L.gridBottom, L), R.GRID);
-  assert.strictEqual(sandbox.classifyEditRegion_(L.doctorTop, L), R.DOCTOR);
-  assert.strictEqual(sandbox.classifyEditRegion_(L.doctorBottom, L), R.DOCTOR);
-  assert.strictEqual(sandbox.classifyEditRegion_(L.doctorBottom + 1, L), R.FREE);
-  assert.strictEqual(sandbox.classifyEditRegion_(L.noteRow, L), R.NOTE);
-
-  // 書き込ませてはいけない行
-  [L.headerRow, L.dateRow, L.weekRow, L.repeatDateRow,
-   L.docRow, L.pharmRow, L.shortageRow].forEach(function (row) {
-    assert.strictEqual(sandbox.classifyEditRegion_(row, L), R.NONE, `行 ${row} は書き込み不可`);
-  });
-});
-
-test('シフト記号は入力欄の外へ出せない（医師数が水増しされるため）', function () {
-  const L = layoutFor(16);
-  const docs = ['医師A', '医師B'];   // テスト用の仮名。実名は使わない
-  const reject = function (row, value) {
-    return sandbox.stampRejectReason_({ row: row, col: L.firstCol, value: value }, L, docs);
-  };
-
-  // 入力欄には入る
-  ['○', '●', '▲', '公休', '希休', '有休'].forEach(function (sym) {
-    assert.strictEqual(reject(L.gridTop, sym), '', `入力欄に ${sym} は入る`);
-  });
-
-  // 医師名欄・備考行・自由行には入らない
-  [L.doctorTop, L.noteRow, L.doctorBottom + 1].forEach(function (row) {
-    assert.ok(reject(row, '▲') !== '', `行 ${row} に ▲ を入れさせない`);
-    assert.ok(reject(row, '公休') !== '', `行 ${row} に 公休 を入れさせない`);
-  });
-});
-
-test('医師名は医師名欄にだけ入る', function () {
-  const L = layoutFor(16);
-  const docs = ['医師A', '医師B'];
-  const reject = function (row, value) {
-    return sandbox.stampRejectReason_({ row: row, col: L.firstCol, value: value }, L, docs);
-  };
-
-  assert.strictEqual(reject(L.doctorTop, '医師A'), '', '医師名欄には入る');
-  assert.ok(reject(L.gridTop, '医師A') !== '', '入力欄には入れさせない');
-  assert.ok(reject(L.doctorTop, '知らない名前') !== '',
-    '医師名欄は N 列に登録された名前だけ');
-});
-
-test('備考行と自由行は自由記入、消去はどこでも許す', function () {
-  const L = layoutFor(16);
-  const docs = ['医師A'];
-  const reject = function (row, value) {
-    return sandbox.stampRejectReason_({ row: row, col: L.firstCol, value: value }, L, docs);
-  };
-
-  assert.strictEqual(reject(L.noteRow, '銀行'), '', '備考は自由記入');
-  assert.strictEqual(reject(L.doctorBottom + 1, '発注担当'), '', '自由行も自由記入');
-
-  // 消去（空文字）はどこでも通る。書き間違いを直せなくなるため（§6.3）
-  [L.gridTop, L.doctorTop, L.noteRow, L.doctorBottom + 1].forEach(function (row) {
-    assert.strictEqual(reject(row, ''), '', `行 ${row} で消去は許す`);
-    assert.strictEqual(reject(row, '   '), '', '空白だけも消去と同じ扱い');
-  });
-});
-
-test('書き込めない行と列は必ず弾く', function () {
-  const L = layoutFor(16);
-  const reject = function (row, col) {
-    return sandbox.stampRejectReason_({ row: row, col: col, value: '○' }, L, []);
-  };
-  assert.ok(reject(L.docRow, L.firstCol) !== '', '集計行は弾く');
-  assert.ok(reject(L.dateRow, L.firstCol) !== '', '日付行は弾く');
-  assert.ok(reject(L.gridTop, 1) !== '', 'A列（氏名）は弾く');
-  assert.ok(reject(L.gridTop, L.lastCol + 1) !== '', '日付列の右外は弾く');
-  assert.strictEqual(reject(L.gridTop, L.lastCol), '', '日付列の右端は通る');
-});
-
 test('isShiftSymbol が記号と名前を区別する', function () {
   ['○', '◯', '●', '▲', '公休', '希休', '夏休', '有休', '有休※'].forEach(function (v) {
     assert.strictEqual(sandbox.isShiftSymbol(v), true, `${v} は記号`);
@@ -449,14 +377,6 @@ test('isShiftSymbol が記号と名前を区別する', function () {
   ['', '  ', '医師A', '銀行', '発注担当'].forEach(function (v) {
     assert.strictEqual(sandbox.isShiftSymbol(v), false, `${JSON.stringify(v)} は記号ではない`);
   });
-});
-
-test('画面の出し分け表がサーバの判定と噛み合っている', function () {
-  const rules = sandbox.STAMP_REGION_RULES;
-  const R = sandbox.EDIT_REGION;
-  assert.deepStrictEqual(Array.from(rules.symbol), [R.GRID], '記号は入力欄だけ');
-  assert.deepStrictEqual(Array.from(rules.doctor), [R.DOCTOR], '医師名は医師名欄だけ');
-  assert.ok(Array.from(rules.erase).length === 4, '消去はどこでも押せる');
 });
 
 // ---- 祝日 CSV の読み取り（§7.2） -------------------------------------
@@ -1561,31 +1481,6 @@ test('医師名には既定を置かない（実名をコードに書かない�
   assert.strictEqual(block.indexOf('SEED'), -1, '医師マスタに初期値を持たせない');
 });
 
-test('マスタで足した記号もシフト記号として扱う', function () {
-  // 利用者が「シフトパターン」に独自の記号を足した場合
-  assert.strictEqual(sandbox.isShiftSymbol('研修'), false, '既定では知らない');
-  assert.strictEqual(sandbox.isShiftSymbol('研修', ['研修']), true, 'マスタにあれば記号');
-
-  // 医師名欄に押させないための判定なので、ここが効かないと表が壊れる
-  const L = layoutFor(16);
-  const reject = sandbox.stampRejectReason_(
-    { row: L.doctorTop, col: L.firstCol, value: '研修' }, L, [], ['研修']);
-  assert.ok(reject !== '', 'マスタの記号も医師名欄には入れさせない');
-});
-
-test('備考スタンプは備考行に入り、入力欄には入らない', function () {
-  const L = layoutFor(16);
-  const symbols = ['○', '公休'];   // 銀行は記号ではない
-
-  const toNote = sandbox.stampRejectReason_(
-    { row: L.noteRow, col: L.firstCol, value: '銀行' }, L, [], symbols);
-  assert.strictEqual(toNote, '', '備考行には入る');
-
-  const toGrid = sandbox.stampRejectReason_(
-    { row: L.gridTop, col: L.firstCol, value: '銀行' }, L, [], symbols);
-  assert.strictEqual(toGrid, '', '入力欄も自由記入なので通る（医師名以外なら可）');
-});
-
 // ---- Web アプリの集計（シートの数式に頼らない） -----------------------
 
 /** WebApp の内部が使う view を偽物で作る */
@@ -1629,53 +1524,6 @@ function fakeView(rows, opts) {
     at: function (grid, row, col) { return this[grid][row - 1][col - 1]; },
   };
 }
-
-test('集計列をシートの数式に頼らず数える', function () {
-  const view = fakeView([['○', '公休', '有休', '▲', '●', '希休', '夏休']]);
-  const agg = sandbox.countRowAggregates_(view, view.layout.gridTop);
-
-  // 並びは 公休 / 有休 / ○早番 / ▲遅番 / ●遅半 / 5診出勤
-  assert.strictEqual(agg[0], 2, '公休 + 希休 = ノルマ対象2');
-  assert.strictEqual(agg[1], 2, '有休 + 夏休 = ノルマ外2');
-  assert.strictEqual(agg[2], 1, '○');
-  assert.strictEqual(agg[3], 1, '▲');
-  assert.strictEqual(agg[4], 1, '●');
-});
-
-test('ノルマ外の振り分けは設定に従う', function () {
-  // L11 を「有休」だけにすると、夏休はノルマ対象へ回る
-  const view = fakeView([['公休', '有休', '夏休']], { paidSyms: '有休' });
-  const agg = sandbox.countRowAggregates_(view, view.layout.gridTop);
-  assert.strictEqual(agg[0], 2, '公休 + 夏休');
-  assert.strictEqual(agg[1], 1, '有休だけ');
-});
-
-test('5診出勤は医師数から数える', function () {
-  const view = fakeView([['○', '▲', '●']], { docCounts: [5, 4, 5] });
-  const agg = sandbox.countRowAggregates_(view, view.layout.gridTop);
-  assert.strictEqual(agg[5], 2, '1日目と3日目が医師5名');
-});
-
-test('医師数が空欄なら医師名欄から数える', function () {
-  const view = fakeView([['○']], { docCounts: [] });
-  // 医師名欄（4〜8行）の1列目に3人入れる
-  const L = sandbox.LAYOUT;
-  view.values[3][L.COL_FIRST - 1] = '医師A';
-  view.values[4][L.COL_FIRST - 1] = '医師B';
-  view.values[5][L.COL_FIRST - 1] = '医師C';
-
-  assert.strictEqual(sandbox.readDocCount_(view, L.COL_FIRST), 3,
-    'シートに値が無ければ医師名欄を数える');
-});
-
-test('日ごとの薬剤師出勤数を数える', function () {
-  const view = fakeView([['○', '公休'], ['▲', '●'], ['○', '○']],
-    { kinds: [sandbox.KIND.PHARM, sandbox.KIND.PHARM, sandbox.KIND.CLERK] });
-  const counts = sandbox.countPharmPerDay_(view);
-
-  assert.strictEqual(counts[0], 2, '1日目は薬剤師2人（事務員は数えない）');
-  assert.strictEqual(counts[1], 1, '2日目は1人');
-});
 
 test('出力ファイル名が実物の命名に合う', function () {
   // さくら薬局北口店R08.09月シフト.pdf の形。店名はテストでも出さない
@@ -2133,6 +1981,268 @@ test('列幅と行高の換算', function () {
   assert.strictEqual(sandbox.exportColPx_(5.5), 44);     // 日付列
   assert.strictEqual(sandbox.exportColPx_(12.4), 92);    // 氏名列
   assert.strictEqual(sandbox.exportRowPx_(18), 24);      // 既定の行高
+});
+
+const STORE_DB_FILE_ = 'masters.json';
+
+// ---- 複数の PC から編集する（Store.gs）--------------------------------
+//
+// 保存は Drive の JSON ファイル。読んだときの版（rev）と今の版を突き合わせ、
+// 違っていたら書かない。ここが緩いと、2人目の保存で1人目の編集が消える。
+
+// 偽のスプレッドシート。保存は隠しシートの1行なので、行の中身を持てば足りる
+function fakeSs() {
+  const rows = [['名前', '版', '更新時刻', '更新者']];
+  const sheet = {
+    getLastRow: () => rows.length,
+    getLastColumn: () => rows.reduce((n, r) => Math.max(n, r.length), 4),
+    setFrozenRows: () => sheet,
+    hideSheet: () => sheet,
+    protect: () => ({ setDescription: () => ({ setWarningOnly: () => {} }) }),
+    getRange: (r, c, nr, nc) => ({
+      getValues: () => {
+        const out = [];
+        for (let i = 0; i < nr; i++) {
+          const src = rows[r - 1 + i] || [];
+          const line = [];
+          for (let j = 0; j < nc; j++) line.push(src[c - 1 + j] === undefined ? '' : src[c - 1 + j]);
+          out.push(line);
+        }
+        return out;
+      },
+      setValues: v => {
+        for (let i = 0; i < v.length; i++) {
+          const at = r - 1 + i;
+          while (rows.length <= at) rows.push([]);
+          for (let j = 0; j < v[i].length; j++) rows[at][c - 1 + j] = v[i][j];
+        }
+        return { setFontWeight: () => {} };
+      },
+      setFontWeight: () => ({}),
+    }),
+  };
+  let made = null;
+  const ss = {
+    getSheetByName: n => (made === n ? sheet : null),
+    insertSheet: n => { made = n; return sheet; },
+  };
+  return { ss: ss, rows: rows, sheet: sheet };
+}
+
+function withDrive(fn) {
+  const d = fakeSs();
+  const keepSs = sandbox.SpreadsheetApp.getActive;
+  const keepLock = sandbox.LockService;
+  const keepSession = sandbox.Session;
+  sandbox.SpreadsheetApp.getActive = () => d.ss;
+  sandbox.LockService = {
+    getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }),
+  };
+  sandbox.Session = { getActiveUser: () => ({ getEmail: () => 'a@example.com' }) };
+  try { return { out: fn(d), drive: d }; }
+  finally {
+    sandbox.SpreadsheetApp.getActive = keepSs;
+    sandbox.LockService = keepLock;
+    sandbox.Session = keepSession;
+  }
+}
+
+test('まだ無い名前は rev 0 と null', function () {
+  const r = withDrive(function () { return sandbox.storeRead_(STORE_DB_FILE_); });
+  assert.strictEqual(r.out.rev, 0);
+  assert.strictEqual(r.out.data, null);
+});
+
+test('書いたものが読み戻せる。版は1つ上がる', function () {
+  withDrive(function () {
+    const w = sandbox.storeWrite_(STORE_DB_FILE_, 0, { staff: [1, 2] }, false);
+    assert.strictEqual(w.ok, true);
+    assert.strictEqual(w.rev, 1);
+    const r = sandbox.storeRead_(STORE_DB_FILE_);
+    assert.strictEqual(r.rev, 1);
+    assert.deepStrictEqual(Array.from(r.data.staff), [1, 2]);
+    assert.strictEqual(r.updatedBy, 'a@example.com');
+    assert.ok(r.updatedAt, '時刻が入っていない');
+  });
+});
+
+test('古い版で書こうとしたら、書かずに今の中身を返す', function () {
+  withDrive(function () {
+    sandbox.storeWrite_('m', 0, { v: 'A さんの編集' }, false);   // rev 1
+    // B さんは rev 0 のときに読んでいた
+    const w = sandbox.storeWrite_('m', 0, { v: 'B さんの編集' }, false);
+    assert.strictEqual(w.ok, false, '上書きしてしまった');
+    assert.strictEqual(w.rev, 1);
+    assert.strictEqual(w.conflict.data.v, 'A さんの編集', '今の中身を返していない');
+    assert.strictEqual(w.conflict.updatedBy, 'a@example.com', '誰の編集か返していない');
+    // 中身は A さんのまま
+    assert.strictEqual(sandbox.storeRead_('m').data.v, 'A さんの編集');
+  });
+});
+
+test('force を付けたときだけ上書きする', function () {
+  withDrive(function () {
+    sandbox.storeWrite_('m', 0, { v: 'A' }, false);
+    const w = sandbox.storeWrite_('m', 0, { v: 'B' }, true);
+    assert.strictEqual(w.ok, true);
+    assert.strictEqual(w.rev, 2, '版は進める（次の人がまた衝突を検知できる）');
+    assert.strictEqual(sandbox.storeRead_('m').data.v, 'B');
+  });
+});
+
+test('続けて書けば版が積み上がる', function () {
+  withDrive(function () {
+    let rev = 0;
+    for (let i = 0; i < 5; i++) rev = sandbox.storeWrite_('m', rev, { i: i }, false).rev;
+    assert.strictEqual(rev, 5);
+    assert.strictEqual(sandbox.storeRead_('m').data.i, 4);
+  });
+});
+
+test('壊れた中身を「無い」扱いにしない', function () {
+  // 「無い」として扱うと、次の保存で内容を消してしまう
+  quiet(function () {
+    withDrive(function (d) {
+      sandbox.storeWrite_('m', 0, { v: 1 }, false);
+      d.rows[1][4] = '{壊れている';
+      assert.throws(function () { sandbox.storeRead_('m'); }, /JSON として読めません/);
+    });
+  });
+});
+
+test('5万文字を超える中身は、右の列へ分けて入れる', function () {
+  withDrive(function (d) {
+    const big = { memo: 'あ'.repeat(60000) };
+    sandbox.storeWrite_('m', 0, big, false);
+    assert.ok(d.rows[1].length > 5, '1セルに詰め込んでいる');
+    d.rows[1].slice(4).forEach(function (c) {
+      assert.ok(String(c).length <= 50000, 'セルの上限を超えた: ' + String(c).length);
+    });
+    assert.strictEqual(sandbox.storeRead_('m').data.memo.length, 60000);
+  });
+});
+
+test('短くなったとき、古い断片が後ろに残らない', function () {
+  withDrive(function () {
+    sandbox.storeWrite_('m', 0, { memo: 'あ'.repeat(60000) }, false);
+    sandbox.storeWrite_('m', 1, { memo: '短い' }, false);
+    // 残っていると JSON の後ろにゴミが付いて読めなくなる
+    assert.strictEqual(sandbox.storeRead_('m').data.memo, '短い');
+  });
+});
+
+test('保存データのシートは隠し、手書きには警告を出す', function () {
+  // 非表示は事故を防ぐだけで、隠すことにはならない
+  //（「表示 → 非表示のシート」で誰でも開ける）。行を消されると保存が壊れる
+  const f = sandbox.storeSheet_.toString();
+  assert.ok(/hideSheet\(\)/.test(f), '隠していない');
+  assert.ok(/CONFIG\.SHEET_DATA/.test(f), 'シート名を直書きしている');
+  assert.ok(/setWarningOnly\(true\)/.test(f), '手書きへの警告が無い');
+  // 完全な保護にすると、実行ユーザー本人が書けなくなる
+  assert.ok(!/setWarningOnly\(false\)/.test(f), '保護が強すぎる');
+});
+
+test('保存の単位は 店舗×年月。別の月とはぶつからない', function () {
+  assert.strictEqual(sandbox.storeCellsFile_('st1', '2026-10'), 'cells-st1-2026-10');
+  assert.notStrictEqual(sandbox.storeCellsFile_('st1', '2026-10'),
+    sandbox.storeCellsFile_('st1', '2026-11'));
+  assert.notStrictEqual(sandbox.storeCellsFile_('st1', '2026-10'),
+    sandbox.storeCellsFile_('st2', '2026-10'));
+});
+
+test('画面から来た店舗 ID と年月は、そのままファイル名にしない', function () {
+  // '../' や '/' を通すと、フォルダの外を指せてしまう
+  quiet(function () {
+    ['../secret', 'st1/../x', 'st 1', '', 'a'.repeat(50)].forEach(function (bad) {
+      assert.throws(function () { sandbox.storeCellsFile_(bad, '2026-10'); },
+        /店舗 ID が不正/, '通してしまった: ' + bad);
+    });
+    ['2026-1', '26-10', '2026/10', '', '2026-10-01'].forEach(function (bad) {
+      assert.throws(function () { sandbox.storeCellsFile_('st1', bad); },
+        /年月が不正/, '通してしまった: ' + bad);
+    });
+  });
+});
+
+test('ロックを取れなければ書かない', function () {
+  quiet(function () {
+    const d = fakeSs();
+    const keepSs = sandbox.SpreadsheetApp.getActive;
+    const keepLock = sandbox.LockService;
+    sandbox.SpreadsheetApp.getActive = () => d.ss;
+    sandbox.LockService = {
+      getScriptLock: () => ({ tryLock: () => false, releaseLock: () => {} }),
+    };
+    try {
+      assert.throws(function () { sandbox.storeWrite_('m', 0, { v: 1 }, false); },
+        /待てませんでした/);
+      assert.strictEqual(d.rows.length, 1, '書いてしまった');
+    } finally {
+      sandbox.SpreadsheetApp.getActive = keepSs;
+      sandbox.LockService = keepLock;
+    }
+  });
+});
+
+test('マスタの形が違えば断る', function () {
+  quiet(function () {
+    withDrive(function () {
+      assert.throws(function () { sandbox.apiDbSave(0, null, false); }, /形が違います/);
+      assert.throws(function () { sandbox.apiDbSave(0, [1, 2], false); }, /形が違います/);
+      assert.throws(function () { sandbox.apiMonthSave('st1', '2026-10', 0, 'x', false); },
+        /形が違います/);
+    });
+  });
+});
+
+test('API はそのまま読み書きに繋がっている', function () {
+  withDrive(function () {
+    const w = sandbox.apiMonthSave('st1', '2026-10', 0, { 's1|2026-10|1': '○' }, false);
+    assert.strictEqual(w.ok, true);
+    const r = sandbox.apiMonthLoad('st1', '2026-10');
+    assert.strictEqual(r.data['s1|2026-10|1'], '○');
+    assert.strictEqual(r.rev, 1);
+    // 別の月は空のまま
+    assert.strictEqual(sandbox.apiMonthLoad('st1', '2026-11').rev, 0);
+  });
+});
+
+// ---- Web アプリが出す画面 ---------------------------------------------
+//
+// 「デプロイしたのに古い画面が出る」を作らない。
+// 実際、.claspignore が直下の *.html しか送らず、エディタ本体
+// （prototype/ShiftGrid.html）が一度も push されていなかった。
+
+test('doGet はエディタ本体を出す', function () {
+  const src = fs.readFileSync(path.join(ROOT, 'WebApp.gs'), 'utf8');
+  const at = src.indexOf('function doGet');
+  const body = src.slice(at, src.indexOf('\nfunction ', at + 10));
+  assert.ok(/WEBAPP_VIEW_FILE/.test(body), 'doGet が画面を指していない');
+  assert.strictEqual(sandbox.WEBAPP_VIEW_FILE, 'prototype/ShiftGrid');
+  // テンプレートに通すと <?xml ?> がスクリプトレットとして解釈されて壊れる
+  assert.ok(/createHtmlOutputFromFile\(WEBAPP_VIEW_FILE\)/.test(body),
+    'エディタをテンプレートに通している');
+});
+
+test('エディタは clasp で送られる', function () {
+  const ig = fs.readFileSync(path.join(ROOT, '.claspignore'), 'utf8');
+  assert.ok(/^!prototype\/ShiftGrid\.html$/m.test(ig),
+    '.claspignore にエディタを送る指定が無い（push されず旧画面が出る）');
+});
+
+test('エディタはテンプレートに通せない形をしている', function () {
+  // 通せない、を確かめておく。通せる形に戻ったら createTemplateFromFile に
+  // 変えてよいが、そのときはこのテストが落ちて気づける
+  const html = fs.readFileSync(path.join(ROOT, 'prototype', 'ShiftGrid.html'), 'utf8');
+  assert.ok(html.indexOf('<?') >= 0,
+    'スクリプトレットに見える文字列が無くなった。doGet を見直すこと');
+});
+
+test('画面のファイル名は .gs と衝突しない', function () {
+  // Apps Script は名前が拡張子をまたいで一意でなければならない。
+  // prototype/ShiftGrid.gs があると、どちらかが載らない
+  const dup = fs.existsSync(path.join(ROOT, 'prototype', 'ShiftGrid.gs'));
+  assert.strictEqual(dup, false, '同じ名前の .gs がある');
 });
 
 // ---- 結果 -------------------------------------------------------------

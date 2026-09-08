@@ -280,6 +280,7 @@ console.log('■ 印刷の倍率と行の高さ');
 const fitRun = new Function([
   L('  const PRINT_W ='), L('  const PRINT_H ='),
   L('  const PRINT_MIN_ZOOM ='), L('  const PRINT_CELL_MIN ='),
+  L('  const PRINT_TEXT_MIN ='),
   "const PRINT_SIZES = { '--cell-h': '15px' };",
   'let printZoom = 1; let W = 0, H = 0; let CELL = null;',
   // 印刷指定の写しは DOM が要る。ここでは着せずに素通りさせる
@@ -288,7 +289,9 @@ const fitRun = new Function([
   '  setProperty(k, v){ if (k === "--cell-h") { CELL = parseFloat(v);',
   '    H = H * (CELL / 15); } },',
   '  removeProperty(){} } } };',
-  'const $ = () => ({ scrollWidth: W, get scrollHeight(){ return H; } });',
+  'const $ = () => ({ scrollWidth: W, get scrollHeight(){ return H; },',
+  '  querySelectorAll: () => [] });',
+  grab('widthEm_'),
   'document.querySelector = () => ({ offsetHeight: 0 });',
   grab('fitPrint_'),
   'return { set: (w,h) => { W=w; H=h; CELL=null; }, fitPrint_,',
@@ -334,6 +337,49 @@ check(fitRun.zoom() >= 0.5, '倍率の下限は守る', String(fitRun.zoom()));
   // 印刷の寸法は一箇所からしか出ない。二重に書くと片方だけ直して食い違う
   check(!/@media print\{:root\{[^}]*--cell-h:\s*\d/.test(src.replace(/\s+/g, '')),
     '印刷の寸法を CSS に直書きしていない');
+}
+
+// スクロールしたまま刷ると、貼り付いた見出しと氏名列がその量ぶんずれて
+// 表の中に降りてくる（氏名列が真ん中に重なり、日付行が4行目に出ていた）
+{
+  const print = src.slice(src.indexOf('@media print'));
+  check(/#grid thead th[^{]*\{[^}]*position: static !important/.test(print),
+    '紙でも見出しを貼り付けたままにしている');
+  check(/#grid \.nm/.test(print.slice(print.indexOf('position: static !important') - 200,
+    print.indexOf('position: static !important'))),
+    '氏名列の貼り付けを外していない');
+  const fp = grab('fitPrint_');
+  check(/scrollLeft = 0/.test(fp) && /scrollTop = 0/.test(fp),
+    'スクロール位置を戻していない');
+}
+
+// 医師名は input に入れていたが、input は中身がはみ出すと左端から見せる。
+// 実測で2文字（25px の枠に27px）でも切れ、中央にも寄っていなかった
+{
+  const print = src.slice(src.indexOf('@media print'));
+  check(/#grid td\.text input \{ display: none !important; \}/.test(print),
+    '紙でも input のまま出している');
+  check(/#grid td\.text \.pv/.test(print), '文字として出す欄が無い');
+  check(/text-align: center/.test(print.slice(print.indexOf('.pv'),
+    print.indexOf('.pv') + 400)), '中央に寄せていない');
+  const build = grab('buildBody');
+  check(/el\('span', 'pv', get\(row, c\)\)/.test(build),
+    '組み立て時に中身を入れていない（空のまま刷られる）');
+  const fill = grab('fillCell_');
+  check(/pv\.textContent = t/.test(fill), '書き換えたときに合わせていない');
+  const fp = grab('fitPrint_');
+  check(/--print-text-fs/.test(fp), '字の大きさを決めていない');
+  check(/em <= 3/.test(fp), '3文字が入る大きさにしていない');
+}
+
+// 幅の見積もり。全角1・半角0.5で数える
+{
+  const w = new Function(grab('widthEm_') + ' return widthEm_;')();
+  check(w('医A') === 1.5, '全角＋半角', String(w('医A')));
+  check(w('医師名') === 3, '全角3文字', String(w('医師名')));
+  check(w('秋山 貴由') === 4.5, '空白入りの氏名', String(w('秋山 貴由')));
+  check(w('ﾊﾝｶｸ') === 2, '半角カナ', String(w('ﾊﾝｶｸ')));
+  check(w('') === 0, '空');
 }
 
 console.log('');
