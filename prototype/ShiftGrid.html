@@ -721,8 +721,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         title="送られてきた「◯年◯月医師シフト.xlsx」を読んで、医師名欄を埋めます"
         >医師シフトを取り込む</button>
       <input type="file" id="docInFile" accept=".xlsx" hidden>
-      <button id="docAdd" hidden
-        title="取り込んだ名前のうち、医師マスタに無いものを足します">医師マスタに追加</button>
       <button id="clearDoc" title="開いている月の医師名欄だけを消します。スタッフのシフトは残ります"
         >医師シフトを消す</button>
       <button id="clearStaff" title="開いている月のスタッフ・派遣・事務・備考・色の印を消します。医師名欄は残ります"
@@ -4228,7 +4226,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         dl.appendChild(o);
       });
     };
-    fill('dlDoctor', DB.doctors.slice().sort((a, b) => a.order - b.order).map(d => d.name));
+    // セルに入るのは略称（姓）なので、候補もそれに合わせる
+    fill('dlDoctor', DB.doctors.slice().sort((a, b) => a.order - b.order)
+      .map(d => String(d.short || '').trim() || surnameOf_(d.name)));
     fill('dlNote', DB.notes.slice().sort((a, b) => a.order - b.order).map(n => n.text));
   }
 
@@ -6050,13 +6050,26 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
    * スタッフのシフトには触らない。
    */
   function applyDoctorBook_(book) {
-    const rows = ROWS.filter(r => r.kind === 'doctor');
-    const known = DB.doctors.map(d => ({ raw: d.name, key: normName_(d.name) }));
-    const unknown = [];
     const overflow = [];
     let put = 0, days = 0;
 
     snapshot_('医師シフト取り込みの直前');
+
+    // ブックに出てくる名前のうち、マスタに無いものを先に登録する。
+    // 登録しておかないと、入れるべき略称が決まらない
+    const seen = [];
+    Object.keys(book.byDay).forEach(d => {
+      book.byDay[d].forEach(n => { if (seen.indexOf(n) < 0) seen.push(n); });
+    });
+    const have = new Set(DB.doctors.map(d => normName_(d.name)));
+    const added = registerDoctors_(seen.filter(n => !have.has(normName_(n))));
+
+    // 略称で引けるようにする。**シフト表に入れるのは姓（略称）だけ**
+    const short = {};
+    DB.doctors.forEach(d => {
+      short[normName_(d.name)] = String(d.short || '').trim() || surnameOf_(d.name);
+    });
+    const rows = ROWS.filter(r => r.kind === 'doctor');
 
     // いま開いている月に入れる。ファイルの年月に合わせて画面も動かす
     const p = book.ym.split('-');
@@ -6076,19 +6089,18 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       if (!names.length) return;
       days++;
       names.forEach((raw, i) => {
-        const hit = known.find(k => k.key === normName_(raw));
-        if (!hit && unknown.indexOf(raw) < 0) unknown.push(raw);
         if (i >= rows.length) {
           if (overflow.indexOf(day) < 0) overflow.push(day);
           return;
         }
-        values.set(rows[i].key + '|' + curYm + '|' + day, hit ? hit.raw : raw);
+        values.set(rows[i].key + '|' + curYm + '|' + day,
+          short[normName_(raw)] || surnameOf_(raw));
         put++;
       });
     });
 
     renderGrid();
-    return { put: put, days: days, unknown: unknown, overflow: overflow };
+    return { put: put, days: days, added: added, overflow: overflow };
   }
 
   /** 取り込みの入口。ファイルを選んだら走る */
@@ -6104,11 +6116,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const r = applyDoctorBook_(book);
       const bits = [book.ym.replace('-', '年') + '月を取り込みました',
                     r.days + ' 日 / のべ ' + r.put + ' 人'];
-      intakeUnknown = r.unknown.slice();
-      $('docAdd').hidden = !r.unknown.length;
-      if (r.unknown.length) {
-        bits.push('医師マスタに無い名前 ' + r.unknown.length + ' 件: '
-          + r.unknown.slice(0, 5).join('、') + (r.unknown.length > 5 ? ' ほか' : ''));
+      if (r.added.length) {
+        bits.push('医師マスタに ' + r.added.length + ' 名を新しく登録しました: '
+          + r.added.join('、') + '（略称は姓。医師マスタで直せます）');
       }
       if (book.extraBlocks) {
         bits.push('この下にもう ' + book.extraBlocks + ' つ暦がありましたが、'
@@ -6127,37 +6137,44 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
   }
 
-  /** 直前の取り込みで、マスタに無かった名前 */
-  let intakeUnknown = [];
+  /**
+   * 姓を取り出す。「秋山 貴由」→「秋山」。
+   *
+   * シフト表の医師欄に入れるのは**姓だけ**。列は26pxしかなく、
+   * フルネームは入らない（実測で5文字＝34px）。実物も短い表記を使っている。
+   * 空白で区切られていなければ、そのまま短く切る。
+   */
+  function surnameOf_(full) {
+    const t = String(full || '').trim();
+    const m = /^([^\s　]+)[\s　]/.exec(t);
+    if (m) return m[1];
+    return t.length > 4 ? t.slice(0, 4) : t;
+  }
 
   /**
-   * 取り込んだ名前を医師マスタに足す。**押したときだけ。**
-   * 氏名は個人情報なので、黙って増やさない。
+   * 取り込んだ名前のうち、医師マスタに無いものを登録する。
    *
-   * 略称は姓の1文字目から作る。かぶったら数字を足す
-   * （実物のシフト表は「医A」のような短い表記で、狭い欄に収める必要がある）。
+   * **黙って足さない。**足した名前は取り込みの結果に並べて出す
+   * （氏名を勝手に増やしたように見えないように）。
+   *
+   * 略称は姓。同じ姓が既にいたら数字を足して見分けられるようにする。
+   * @return {Array<string>} 新しく登録した氏名
    */
-  function addUnknownDoctors() {
-    if (!intakeUnknown.length) return;
+  function registerDoctors_(names) {
     const used = new Set(DB.doctors.map(d => String(d.short || '')));
     let order = DB.doctors.reduce((n, d) => Math.max(n, Number(d.order) || 0), 0);
-    intakeUnknown.forEach(name => {
-      let base = String(name).trim().charAt(0) || '医';
+    const added = [];
+    names.forEach(name => {
+      const base = surnameOf_(name) || '医師';
       let short = base;
       for (let i = 2; used.has(short); i++) short = base + i;
       used.add(short);
       DB.doctors.push({ id: newId('d'), name: name, short: short, order: ++order, memo: '' });
+      added.push(name);
     });
-    const n = intakeUnknown.length;
-    intakeUnknown = [];
-    save();
-    renderMaster('doctor');
-    renderDatalists();
-    $('docAdd').hidden = true;
-    intakeStat_('医師マスタに ' + n + ' 名を足しました。略称と表示順はマスタで直せます');
+    if (added.length) { save(); renderMaster('doctor'); renderDatalists(); }
+    return added;
   }
-
-  $('docAdd').addEventListener('click', addUnknownDoctors);
 
   $('docInFile').addEventListener('change', ev => {
     const f = ev.target.files && ev.target.files[0];

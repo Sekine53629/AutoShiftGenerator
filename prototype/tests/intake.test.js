@@ -186,16 +186,52 @@ console.log('■ ブックの読み方（作りの約束）');
 }
 
 {
-  const f = grab('addUnknownDoctors');
+  const f = grab('registerDoctors_');
 
-  ok('マスタへの追加は押したときだけ', () => {
-    // 氏名は個人情報。取り込みで黙って増やさない
-    assert.ok(/docAdd/.test(src), '追加ボタンが無い');
-    assert.ok(/intakeUnknown\.length/.test(f), '対象が無いときも動く');
+  ok('マスタに無い医師は、その場で登録する', () => {
+    // 登録しておかないと、シフト表に入れるべき略称が決まらない
+    assert.ok(/DB\.doctors\.push/.test(f), '登録していない');
+    assert.ok(/added\.push/.test(f), '足した名前を持ち帰っていない');
   });
 
-  ok('略称がかぶったら数字を足す', () => {
+  ok('登録したことを黙らない', () => {
+    // 氏名を勝手に増やしたように見えないよう、足した名前を並べて出す
+    const imp = grab('importDoctorFile');
+    assert.ok(/新しく登録しました/.test(imp), '知らせていない');
+    assert.ok(/r\.added\.join/.test(imp), '名前を並べていない');
+  });
+
+  ok('略称は姓。かぶったら数字を足す', () => {
+    assert.ok(/surnameOf_\(name\)/.test(f), '姓を使っていない');
     assert.ok(/used\.has\(short\)/.test(f), 'かぶりを見ていない');
+  });
+}
+
+{
+  // シフト表の医師欄は26pxしかない。フルネームは入らない（実測5文字＝34px）
+  const api2 = new Function(grab('surnameOf_') + ' return surnameOf_;')();
+
+  ok('姓を取り出す', () => {
+    assert.strictEqual(api2('秋山 貴由'), '秋山');
+    assert.strictEqual(api2('秋山　貴由'), '秋山');      // 全角空白
+    assert.strictEqual(api2('  西本 紀之  '), '西本');
+  });
+
+  ok('区切りが無ければ、そのまま短く切る', () => {
+    assert.strictEqual(api2('山田'), '山田');
+    assert.strictEqual(api2('医A'), '医A');
+    assert.strictEqual(api2('とてもながいなまえ'), 'とてもな');
+    assert.strictEqual(api2(''), '');
+  });
+}
+
+{
+  ok('シフト表に入れるのは略称（姓）', () => {
+    const f2 = grab('applyDoctorBook_');
+    assert.ok(/short\[normName_\(raw\)\]/.test(f2), 'フルネームを入れている');
+    // 入力候補も、セルに入るものに合わせる
+    const dl = grab('renderDatalists');
+    assert.ok(/d\.short/.test(dl), '候補がフルネームのまま');
   });
 }
 
