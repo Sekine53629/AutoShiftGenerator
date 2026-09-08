@@ -126,7 +126,7 @@ console.log('■ ブックの読み方（作りの約束）');
 // ここから下は、実物で踏んだ落とし穴が塞がっているかを見る。
 // どれも「翌月のファイルで静かに壊れる」たぐいのもの
 {
-  const f = grab('readDoctorBook_');
+  const f = grab('scanDoctorBook_');
 
   ok('曜日の見出し行を目印にする（行番号を決め打ちしない）', () => {
     assert.ok(/DOW_SET\.indexOf/.test(f), '曜日を探していない');
@@ -140,25 +140,129 @@ console.log('■ ブックの読み方（作りの約束）');
     assert.ok(/blockEnd/.test(f), '次の暦の手前で切っていない');
   });
 
-  ok('A1・A2 を見ない', () => {
+  ok('A1・A2 を番地で読まない', () => {
     // 実物の A1 には前の月の日付が残っていた。どの式からも参照されていない
-    // 番地を名指しして読んでいないこと（注記に A1 と書くのは構わない）
-    assert.ok(!/cells\[\s*['"][A-Z]+\d/.test(f),
-      'セルを番地で名指しして読んでいる');
+    assert.ok(!/cells\[\s*['"][A-Z]+\d/.test(f), 'セルを番地で名指しして読んでいる');
     assert.ok(/p2\.row <= headRow/.test(f), '見出しより上を外していない');
   });
 
-  ok('年月は日付そのものから決める', () => {
-    assert.ok(/tally\[k\]/.test(f) && /sort/.test(f), '多数決で決めていない');
+  ok('日付は通し番号でも 1〜31 の数値でも読む', () => {
+    // 実物には、日付が通し番号ではなく数値で入っているものがあった
+    assert.ok(/XL_DAY_MIN/.test(f), '通し番号を見ていない');
+    assert.ok(/n >= 1 && n <= 31/.test(f), '数値の日付を見ていない');
+    assert.ok(/dowOfCol\[p2\.col\] === undefined/.test(f),
+      '暦の列以外の数値まで拾っている');
   });
 
-  ok('式を先に見る（計算されていないブックでも読める）', () => {
-    assert.ok(/nameInFormula_\(cell\.f\) \|\| cell\.v/.test(f),
-      '計算済みの値だけを見ている');
+  ok('年月はここで決めない（取り込む人に確かめる）', () => {
+    assert.ok(/suggest/.test(f), '見当を返していない');
+    assert.ok(!/byDay/.test(f), 'ここで中身まで組んでいる');
+  });
+}
+
+{
+  const f = grab('alignDays_');
+
+  ok('曜日と日にちの帳尻を見る', () => {
+    // 年月を1つ間違えると、日にちだけ合って曜日が丸ごとずれた表になる。
+    // 日にちは合っているので、刷るまで気づけない
+    assert.ok(/getDay\(\) !== scan\.dowOfCol/.test(f)
+      || /getDay\(\) === scan\.dowOfCol/.test(f), '曜日を突き合わせていない');
   });
 
-  ok('曜日や数字を名前として拾わない', () => {
-    assert.ok(/DOW_SET\.indexOf\(name\)/.test(f), '曜日を弾いていない');
+  ok('合わない行だけを落とす（全体を諦めない）', () => {
+    // 下の暦の1セルが上の範囲にはみ出しているブックがあり、
+    // それだけで「合わない」と判定されていた
+    assert.ok(/dropped/.test(f), '落とした数を数えていない');
+    assert.ok(/rows\[r\]\.every/.test(f), '行ごとに見ていない');
+  });
+
+  ok('照合はモーダルに入れた年月で行う', () => {
+    // 画面で開いている月や、ブックの中の日付ではなく、入力された年月で見る
+    const pv = grab('askPreview_');
+    assert.ok(/docAskY[\s\S]{0,80}docAskM/.test(pv), '入力欄から年月を取っていない');
+    assert.ok(/alignDays_\(pendingBook, ym\)/.test(pv), '入力された年月で照合していない');
+    const run = grab('runIntake_');
+    assert.ok(/docAskY[\s\S]{0,80}docAskM/.test(run), '取り込みも入力欄から取っていない');
+    assert.ok(/alignDays_\(scan, ym\)/.test(run), '取り込み前に照合していない');
+  });
+
+  ok('曜日が合っても月は決まらないので、手がかりを添える', () => {
+    // 暦の並びが同じ月はほかにもある（2026年10月と2026年1月）。
+    // 1日の曜日を出し、ブックやファイル名と食い違えば知らせる
+    const pv = grab('askPreview_');
+    assert.ok(/docAskHint/.test(pv), '1日の曜日を出していない');
+    assert.ok(/pendingBook\.suggest/.test(pv) && /pendingBook\.fileYm/.test(pv),
+      '手がかりと突き合わせていない');
+    // 合わないときも手がかりは出す（早期 return の後ろに置くと古いまま残る）
+    assert.ok(pv.indexOf('docAskHint') < pv.indexOf('a3.fits'),
+      '合わないときに手がかりが更新されない');
+  });
+
+  ok('過去の月を上書きするときに注意を出す', () => {
+    // 害の大きさを決めるのは「過去かどうか」より「そこに確定済みのものが
+    // 入っているか」。中身だけで出すと来月分の差し替えで毎回止まり、
+    // 時期だけだと空の過去月でも止まる。両方を見て強さを変える
+    const f2 = grab('showOverwrite_');
+    assert.ok(/ym < nowYm/.test(f2), '当月と比べていない');
+    assert.ok(/days\.size/.test(f2) || /const has/.test(f2), '中身の量を見ていない');
+    assert.ok(/past && has/.test(f2), '過去かつ中身ありを分けていない');
+    assert.ok(/上書きして取り込む/.test(f2), 'ボタンの言い方を変えていない');
+    assert.ok(/戻す/.test(f2), '取り消せることを言っていない');
+    // 曜日が合うかとは別。合わないときも先に見せる
+    const pv = grab('askPreview_');
+    assert.ok(pv.indexOf('showOverwrite_') < pv.indexOf('a3.fits'),
+      '曜日が合わないと上書きの注意が出ない');
+  });
+
+  ok('医師名欄しか触らない（スタッフのシフトは書き換えない）', () => {
+    // 間違って取り込んでも、被害はここまでに収まる
+    const f3 = grab('showOverwrite_');
+    assert.ok(/\^doc/.test(f3), '医師の行だけを数えていない');
+  });
+
+  ok('半端にしか合わなければ、その年月ではないと判断する', () => {
+    // 1日だけ合った状態で取り込むと、ほとんど空の表ができる
+    assert.ok(/last - 1/.test(f), 'そろっているかを見ていない');
+    assert.ok(/fits/.test(f), '判定を返していない');
+  });
+}
+
+{
+  const f = grab('runIntake_');
+
+  ok('帳尻が合わなければ取り込まない', () => {
+    assert.ok(/!aligned \|\| !aligned\.fits/.test(f), '合わなくても入れている');
+    assert.ok(/年月を確かめてください/.test(f), '理由を出していない');
+  });
+
+  ok('読めなかった日と、落としたセルを黙らない', () => {
+    assert.ok(/aligned\.missing/.test(f), '読めなかった日を出していない');
+    assert.ok(/aligned\.dropped/.test(f), '落としたセルを出していない');
+  });
+}
+
+{
+  const f = grab('importDoctorFile');
+
+  ok('取り込む前に年月を聞く（モーダルで止める）', () => {
+    // 帯で出していたら気づかずに素通りされた。年月を間違えると、
+    // 日にちだけ合って曜日がずれた表ができる
+    assert.ok(/showModal\(\)/.test(f), 'モーダルで止めていない');
+    assert.ok(!/applyDoctorBook_/.test(f), '聞かずに入れている');
+    assert.ok(/<dialog[^>]*id="docAsk"/.test(src), 'dialog を使っていない');
+    assert.ok(/docAskFile/.test(f), 'どのファイルかを見せていない');
+  });
+
+  ok('Esc で閉じたら、待っているブックを捨てる', () => {
+    assert.ok(/'close'[\s\S]{0,80}pendingBook = null/.test(src),
+      '閉じたあとも読み込んだままになる');
+  });
+
+  ok('既定は ブックの日付 → ファイル名 → 開いている年月 の順', () => {
+    assert.ok(/scan\.suggest/.test(f), 'ブックの日付を見ていない');
+    assert.ok(/file\.name/.test(f), 'ファイル名を見ていない');
+    assert.ok(/\$\('yy'\)\.value/.test(f), '開いている年月を見ていない');
   });
 }
 
@@ -196,9 +300,9 @@ console.log('■ ブックの読み方（作りの約束）');
 
   ok('登録したことを黙らない', () => {
     // 氏名を勝手に増やしたように見えないよう、足した名前を並べて出す
-    const imp = grab('importDoctorFile');
-    assert.ok(/新しく登録しました/.test(imp), '知らせていない');
-    assert.ok(/r\.added\.join/.test(imp), '名前を並べていない');
+    const run = grab('runIntake_');
+    assert.ok(/新しく登録しました/.test(run), '知らせていない');
+    assert.ok(/r\.added\.join/.test(run), '名前を並べていない');
   });
 
   ok('略称の作り方は共通の道具に任せる', () => {

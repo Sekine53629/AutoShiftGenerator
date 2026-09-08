@@ -642,6 +642,46 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   .page-head h1 { font-size: 20px; }
 }
 
+/* 確認のモーダル。押し切ってもらう必要があるものだけに使う */
+.modal {
+  border: 1px solid var(--rule); border-radius: 6px; padding: 22px 24px;
+  background: var(--surface); color: var(--ink); max-width: 420px; width: calc(100% - 32px);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .28);
+}
+.modal::backdrop { background: rgba(0, 0, 0, .45); }
+.modal h2 { margin: 0 0 4px; font-size: 17px; }
+.modal .modal-file {
+  margin: 0 0 16px; font-size: 12px; color: var(--ink-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.modal .modal-ym { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.modal .modal-ym label { font-size: 13px; font-weight: 600; margin-right: 4px; }
+.modal .modal-ym input { width: 88px; text-align: right; }
+.modal .modal-ym input#docAskM { width: 62px; }
+.modal .modal-msg {
+  margin: 14px 0 0; padding: 9px 11px; border-radius: 4px;
+  background: var(--agg); font-size: 13px; line-height: 1.6;
+}
+.modal .modal-msg.bad { background: var(--warn-bg); color: var(--ink); font-weight: 600; }
+.modal .modal-hint { margin: 7px 0 0; font-size: 12px; color: var(--ink-soft); }
+.modal .modal-hint.bad { color: var(--danger); font-weight: 600; }
+/* 上書きの注意。何も無いときは場所も取らない */
+.modal .modal-over { margin: 0; font-size: 13px; line-height: 1.6; }
+.modal .modal-over:empty { display: none; }
+.modal .modal-over.warn {
+  margin: 10px 0 0; padding: 9px 11px; border-radius: 4px;
+  background: var(--warn-bg); color: var(--ink);
+}
+.modal .modal-over.bad {
+  margin: 10px 0 0; padding: 10px 12px; border-radius: 4px;
+  background: var(--warn-bg); color: var(--danger);
+  border: 1px solid var(--danger); font-weight: 600;
+}
+.modal .modal-note { margin: 12px 0 0; font-size: 11.5px; color: var(--ink-faint); line-height: 1.6; }
+.modal .modal-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.modal .modal-act button { min-height: 34px; padding: 0 16px; }
+@media print { .modal { display: none !important; } }
+
 /* 保存の状態。黙って失敗しているのがいちばん困るので、常に一言出す */
 .syncbar {
   display: flex; align-items: center; gap: 8px;
@@ -671,6 +711,36 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   <button id="toolMore" class="more" aria-expanded="true"
     title="下の段をたたむ">操作 ▴</button>
 </header>
+
+<!--
+  取り込む年月の確認。**モーダルにする。**
+  帯で出していたら気づかずに素通りされた。年月を間違えると、日にちだけ
+  合って曜日がずれた表ができるので、ここは止めて確かめてもらう。
+-->
+<dialog class="modal" id="docAsk">
+  <h2>医師シフトを取り込む</h2>
+  <p class="modal-file" id="docAskFile"></p>
+  <div class="modal-ym">
+    <label for="docAskY">取り込む年月</label>
+    <input type="number" id="docAskY" min="2000" max="2100" step="1">
+    <span>年</span>
+    <input type="number" id="docAskM" min="1" max="12" step="1">
+    <span>月</span>
+  </div>
+  <p class="modal-msg" id="docAskMsg"></p>
+  <p class="modal-hint" id="docAskHint"></p>
+  <p class="modal-over" id="docAskOver"></p>
+  <p class="modal-note">
+    ブックの曜日と日にちが、この年月と合うかを確かめています。合わないまま入れると、
+    日にちだけ合って曜日がずれた表になります。<b>ただし、暦の並びが同じ月は
+    ほかにもあります</b>（2026年10月と2026年1月はどちらも1日が木曜で31日）。
+    上の曜日を見て確かめてください。
+  </p>
+  <div class="modal-act">
+    <button id="docAskNo">やめる</button>
+    <button id="docAskGo" class="primary">取り込む</button>
+  </div>
+</dialog>
 
 <div class="syncbar" id="syncBar" hidden>
   <span id="syncMsg"></span>
@@ -5969,14 +6039,19 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const DOW_SET = ['日', '月', '火', '水', '木', '金', '土'];
 
   /**
-   * 医師シフトのブックから「日 → 医師名の並び」を読む。
+   * ブックの構造だけを読む。**年月はまだ決めない。**
    *
    * 行や列の位置は決め打ちしない。**曜日の見出し行を目印にする。**
    * その上にある A1・A2 は、間違っていても関係なくなる。
    *
-   * @return {{ym:string, byDay:Object, roster:Array<string>, sheet:string}}
+   * 日付の入り方は2通りある。
+   *
+   *   通し番号（46296 のような Excel の日付）… 年月がそのまま分かる
+   *   ただの数値（1〜31）                  … 年月が分からない
+   *
+   * どちらでも読めるようにして、年月は取り込む人に確かめる。
    */
-  function readDoctorBook_(files) {
+  function scanDoctorBook_(files) {
     const wb = xml_(files['xl/workbook.xml']);
     if (!wb || wb.getElementsByTagName('sheet').length === 0) {
       throw new Error('ブックの構造が読めません');
@@ -5984,7 +6059,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const shared = sharedStrings_(files['xl/sharedStrings.xml']
       ? xml_(files['xl/sharedStrings.xml']) : null);
 
-    // 1枚目を暦として読む。名前の一覧が2枚目にあることがある
+    // 1枚目を暦として読む
     const cells = sheetCells_(xml_(files['xl/worksheets/sheet1.xml']), shared);
 
     const byRow = {};
@@ -6008,39 +6083,115 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const headRow = heads[0];
     const blockEnd = heads.length > 1 ? heads[1] : Infinity;   // 次の暦の手前まで
 
-    // 見出しより下・次の暦より上で、日付の通し番号が入っているセルを集める。
-    // A1・A2 は見出しより上なので、ここで自然に外れる
-    const dateCells = [];
+    // 列ごとの曜日。帳尻を合わせるのに使う
+    const dowOfCol = {};
+    byRow[headRow].forEach(x => {
+      const i = DOW_SET.indexOf((cells[x.ref].v || '').trim());
+      if (i >= 0) dowOfCol[x.col] = i;
+    });
+
+    // 見出しより下・次の暦より上の数値を集める。A1・A2 はここで外れる
+    const serials = [];
+    const dayCells = [];
     Object.keys(cells).forEach(ref => {
       const p2 = refOf_(ref);
       if (!p2 || p2.row <= headRow || p2.row >= blockEnd) return;
+      if (dowOfCol[p2.col] === undefined) return;      // 暦の列だけを見る
       const raw = cells[ref].v;
       if (!/^\d+(\.\d+)?$/.test(raw)) return;
       const n = Number(raw);
-      if (n < XL_DAY_MIN || n > XL_DAY_MAX) return;
-      dateCells.push({ col: p2.col, row: p2.row, day: xlDate_(n) });
+      if (n >= XL_DAY_MIN && n <= XL_DAY_MAX) {
+        const d = xlDate_(n);
+        serials.push({ col: p2.col, row: p2.row, d: d.d, ym: d.y + '-' + pad2_(d.m) });
+      } else if (Number.isInteger(n) && n >= 1 && n <= 31) {
+        dayCells.push({ col: p2.col, row: p2.row, d: n });
+      }
     });
-    if (!dateCells.length) throw new Error('日付の行が見つかりません');
+    if (!serials.length && !dayCells.length) {
+      throw new Error('日付の行が見つかりません');
+    }
 
-    // 年月は日付そのものから決める。A1 も A2 も見ない
-    const tally = {};
-    dateCells.forEach(x => {
-      const k = x.day.y + '-' + String(x.day.m).padStart(2, '0');
-      tally[k] = (tally[k] || 0) + 1;
+    // 通し番号があれば、それが年月の見当になる（いちばん多い年月）
+    let suggest = '';
+    if (serials.length) {
+      const tally = {};
+      serials.forEach(x => { tally[x.ym] = (tally[x.ym] || 0) + 1; });
+      suggest = Object.keys(tally).sort((x, y) => tally[y] - tally[x])[0];
+    }
+
+    return {
+      cells: cells, dowOfCol: dowOfCol, blockEnd: blockEnd,
+      // 通し番号があるならそちらを使う。無ければ 1〜31 の数値
+      days: serials.length ? serials : dayCells,
+      fromSerial: !!serials.length,
+      suggest: suggest,
+      extraBlocks: heads.length - 1
+    };
+  }
+
+  const pad2_ = n => String(n).padStart(2, '0');
+
+  /** 'yyyy-mm' を「2026年8月」にする。ゼロ詰めのまま出すと読みにくい */
+  const ymFace_ = ym => {
+    const p = String(ym).split('-');
+    return p[0] + '年' + Number(p[1]) + '月';
+  };
+
+  /**
+   * その年月で、日にちと曜日の帳尻が合うセルだけを選ぶ。
+   *
+   * 1〜31 の数値しか無いブックは、年月を1つ間違えると**曜日が丸ごとずれた表**に
+   * なる。日にちだけは合っているので、刷るまで気づけない。ここで弾く。
+   *
+   * 合わない行は落とす。実物には、下の暦の1セルだけが上の暦の範囲に
+   * はみ出しているものがあった（それだけで全体が「合わない」と判定されていた）。
+   *
+   * @return {{cells:Array, missing:Array<number>, dropped:number}|null}
+   */
+  function alignDays_(scan, ym) {
+    const p = String(ym).split('-');
+    const y = Number(p[0]), m = Number(p[1]);
+    if (!(y >= 2000 && y <= 2100 && m >= 1 && m <= 12)) return null;
+    const last = new Date(y, m, 0).getDate();
+
+    // 行ごとに見て、その行が丸ごと合うときだけ採る
+    const rows = {};
+    scan.days.forEach(x => { (rows[x.row] = rows[x.row] || []).push(x); });
+    const good = [];
+    let dropped = 0;
+    Object.keys(rows).map(Number).sort((a, b) => a - b).forEach(r => {
+      const ok = rows[r].every(x => x.d <= last
+        && new Date(y, m - 1, x.d).getDay() === scan.dowOfCol[x.col]);
+      if (ok) rows[r].forEach(x => good.push(x));
+      else dropped += rows[r].length;
     });
-    const ym = Object.keys(tally).sort((x, y) => tally[y] - tally[x])[0];
 
-    // 名前を拾う範囲は「次の日付行の手前」まで
-    const dateRows = Array.from(new Set(dateCells.map(x => x.row))).sort((x, y) => x - y);
+    const seen = new Set(good.map(x => x.d));
+    const missing = [];
+    for (let d = 1; d <= last; d++) if (!seen.has(d)) missing.push(d);
+    /**
+     * 暦なのだから、その月の日はひととおり並んでいるはず。
+     * **半端にしか合わないときは、年月が違う。** 1日だけ合った状態で
+     * 取り込むと、ほとんど空の表ができあがる（実測で、10月のブックに
+     * 11月を指定すると1日だけ合った）。
+     */
+    const fits = good.length >= last - 1;
+    return { cells: good, missing: missing, dropped: dropped, last: last, fits: fits };
+  }
 
+  /**
+   * 決まった年月で「日 → 医師名の並び」を組む。
+   * 名前を拾う範囲は、その日付行の下から次の日付行の手前まで。
+   */
+  function buildByDay_(scan, aligned) {
+    const rows = Array.from(new Set(aligned.cells.map(x => x.row))).sort((a, b) => a - b);
     const byDay = {};
-    dateCells.forEach(x => {
-      if (x.day.y + '-' + String(x.day.m).padStart(2, '0') !== ym) return;
-      const next = dateRows.find(r => r > x.row);
-      const stop = Math.min(next === undefined ? x.row + 12 : next, blockEnd);
+    aligned.cells.forEach(x => {
+      const next = rows.find(r => r > x.row);
+      const stop = Math.min(next === undefined ? x.row + 12 : next, scan.blockEnd);
       const names = [];
       for (let r = x.row + 1; r < stop; r++) {
-        const cell = cells[colName_(x.col - 1) + r];
+        const cell = scan.cells[colName_(x.col - 1) + r];
         if (!cell) continue;
         // 式の中の名前を先に見る。計算されていないブックでも読めるようにする
         const name = (nameInFormula_(cell.f) || cell.v || '').trim();
@@ -6048,19 +6199,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         if (DOW_SET.indexOf(name) >= 0) continue;
         if (names.indexOf(name) < 0) names.push(name);
       }
-      byDay[x.day.d] = names;
+      byDay[x.d] = names;
     });
-
-    // 2枚目に医師の一覧があれば、マスタに足す候補として持ち帰る
-    const roster = [];
-    if (files['xl/worksheets/sheet2.xml']) {
-      const s2 = sheetCells_(xml_(files['xl/worksheets/sheet2.xml']), shared);
-      Object.keys(s2).sort().forEach(ref => {
-        const t = (s2[ref].v || '').trim();
-        if (t && !/^\d/.test(t) && roster.indexOf(t) < 0) roster.push(t);
-      });
-    }
-    return { ym: ym, byDay: byDay, roster: roster, extraBlocks: heads.length - 1 };
+    return byDay;
   }
 
   function intakeStat_(text) {
@@ -6068,101 +6209,6 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (el2) el2.textContent = text || '';
   }
 
-  /**
-   * 読んだ内容を医師名欄に入れる。
-   *
-   * **その月の医師名欄をいったん消してから入れる。** 足すだけだと、
-   * 前に入れていた医師が消えた日に残ってしまう。
-   * スタッフのシフトには触らない。
-   */
-  function applyDoctorBook_(book) {
-    const overflow = [];
-    let put = 0, days = 0;
-
-    snapshot_('医師シフト取り込みの直前');
-
-    // ブックに出てくる名前のうち、マスタに無いものを先に登録する。
-    // 登録しておかないと、入れるべき略称が決まらない
-    const seen = [];
-    Object.keys(book.byDay).forEach(d => {
-      book.byDay[d].forEach(n => { if (seen.indexOf(n) < 0) seen.push(n); });
-    });
-    const have = new Set(DB.doctors.map(d => normName_(d.name)));
-    const added = registerDoctors_(seen.filter(n => !have.has(normName_(n))));
-
-    // 略称で引けるようにする。**シフト表に入れるのは姓（略称）だけ**
-    const short = {};
-    DB.doctors.forEach(d => {
-      short[normName_(d.name)] = String(d.short || '').trim() || surnameOf_(d.name);
-    });
-    const rows = ROWS.filter(r => r.kind === 'doctor');
-
-    // いま開いている月に入れる。ファイルの年月に合わせて画面も動かす
-    const p = book.ym.split('-');
-    $('yy').value = Number(p[0]);
-    $('mm').value = Number(p[1]);
-    renderGrid();                       // curYm を書き換える
-
-    // その月の医師名欄を消す
-    Array.from(values.keys()).forEach(k => {
-      const q = k.split('|');
-      if (q.length === 3 && q[1] === curYm && /^doc\d+$/.test(q[0])) values.delete(k);
-    });
-
-    Object.keys(book.byDay).forEach(dayStr => {
-      const day = Number(dayStr);
-      const names = book.byDay[dayStr];
-      if (!names.length) return;
-      days++;
-      names.forEach((raw, i) => {
-        if (i >= rows.length) {
-          if (overflow.indexOf(day) < 0) overflow.push(day);
-          return;
-        }
-        values.set(rows[i].key + '|' + curYm + '|' + day,
-          short[normName_(raw)] || surnameOf_(raw));
-        put++;
-      });
-    });
-
-    renderGrid();
-    return { put: put, days: days, added: added, overflow: overflow };
-  }
-
-  /** 取り込みの入口。ファイルを選んだら走る */
-  async function importDoctorFile(file) {
-    if (!file) return;
-    intakeStat_('読んでいます…');
-    try {
-      const files = await unzip_(await file.arrayBuffer());
-      const book = readDoctorBook_(files);
-      const n = Object.keys(book.byDay).length;
-      if (!n) throw new Error('日付と医師名の組み合わせが1つも読めませんでした');
-
-      const r = applyDoctorBook_(book);
-      const bits = [book.ym.replace('-', '年') + '月を取り込みました',
-                    r.days + ' 日 / のべ ' + r.put + ' 人'];
-      if (r.added.length) {
-        bits.push('医師マスタに ' + r.added.length + ' 名を新しく登録しました: '
-          + r.added.join('、')
-          + '。略称は姓、同じ姓がいるときは 姓(名の1文字目)。医師マスタで直せます');
-      }
-      if (book.extraBlocks) {
-        bits.push('この下にもう ' + book.extraBlocks + ' つ暦がありましたが、'
-          + 'いちばん上の暦だけを取り込みました');
-      }
-      if (r.overflow.length) {
-        bits.push('医師名欄の行数（' + docRowCount_() + '）を超えた日: '
-          + r.overflow.join('、') + '。自動生成ルールで行数を増やしてください');
-      }
-      intakeStat_(bits.join(' / '));
-      markEdited_();
-      recalc();
-    } catch (e) {
-      console.error('[importDoctorFile] ' + e.message + ' / ' + e.stack);
-      intakeStat_('取り込めませんでした: ' + e.message);
-    }
-  }
 
   /**
    * 姓を取り出す。「秋山 貴由」→「秋山」。
@@ -6246,6 +6292,280 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     if (added.length) { save(); renderMaster('doctor'); renderDatalists(); }
     return added;
   }
+
+  /**
+   * 読んだ内容を医師名欄に入れる。
+   *
+   * **その月の医師名欄をいったん消してから入れる。** 足すだけだと、
+   * 前に入れていた医師が消えた日に残ってしまう。
+   * スタッフのシフトには触らない。
+   */
+  function applyDoctorBook_(book) {
+    const overflow = [];
+    let put = 0, days = 0;
+
+    snapshot_('医師シフト取り込みの直前');
+
+    // ブックに出てくる名前のうち、マスタに無いものを先に登録する。
+    // 登録しておかないと、入れるべき略称が決まらない
+    const seen = [];
+    Object.keys(book.byDay).forEach(d => {
+      book.byDay[d].forEach(n => { if (seen.indexOf(n) < 0) seen.push(n); });
+    });
+    const have = new Set(DB.doctors.map(d => normName_(d.name)));
+    const added = registerDoctors_(seen.filter(n => !have.has(normName_(n))));
+
+    // 略称で引けるようにする。**シフト表に入れるのは姓（略称）だけ**
+    const short = {};
+    DB.doctors.forEach(d => {
+      short[normName_(d.name)] = String(d.short || '').trim() || surnameOf_(d.name);
+    });
+    const rows = ROWS.filter(r => r.kind === 'doctor');
+
+    // いま開いている月に入れる。ファイルの年月に合わせて画面も動かす
+    const p = book.ym.split('-');
+    $('yy').value = Number(p[0]);
+    $('mm').value = Number(p[1]);
+    renderGrid();                       // curYm を書き換える
+
+    // その月の医師名欄を消す
+    Array.from(values.keys()).forEach(k => {
+      const q = k.split('|');
+      if (q.length === 3 && q[1] === curYm && /^doc\d+$/.test(q[0])) values.delete(k);
+    });
+
+    Object.keys(book.byDay).forEach(dayStr => {
+      const day = Number(dayStr);
+      const names = book.byDay[dayStr];
+      if (!names.length) return;
+      days++;
+      names.forEach((raw, i) => {
+        if (i >= rows.length) {
+          if (overflow.indexOf(day) < 0) overflow.push(day);
+          return;
+        }
+        values.set(rows[i].key + '|' + curYm + '|' + day,
+          short[normName_(raw)] || surnameOf_(raw));
+        put++;
+      });
+    });
+
+    renderGrid();
+    return { put: put, days: days, added: added, overflow: overflow };
+  }
+
+  /** 読み終えて、年月の確認を待っているブック */
+  let pendingBook = null;
+
+  /**
+   * 取り込みの入口。ファイルを選んだら、まず読んで**年月を確かめる。**
+   *
+   * 日付が 1〜31 の数値だけのブックは、年月が書いていない。
+   * 通し番号があるブックでも、送り主が前月のものを直し忘れていることがある。
+   * どちらにしても、入れる前に一度見せて決めてもらう。
+   */
+  async function importDoctorFile(file) {
+    if (!file) return;
+    intakeStat_('読んでいます…');
+    try {
+      const files = await unzip_(await file.arrayBuffer());
+      const scan = scanDoctorBook_(files);
+      pendingBook = scan;
+
+      // 見当の順: ブックの通し番号 → ファイル名 → いま開いている年月
+      const fm = /(\d{4})\s*年\s*(\d{1,2})\s*月/.exec(String(file.name || ''));
+      const ym = scan.suggest
+        || (fm ? fm[1] + '-' + pad2_(Number(fm[2])) : '')
+        || ($('yy').value + '-' + pad2_(Number($('mm').value)));
+      // 手がかりを覚えておく。入力された年月と食い違ったら知らせる
+      scan.fileYm = fm ? fm[1] + '-' + pad2_(Number(fm[2])) : '';
+      const p2 = ym.split('-');
+      $('docAskY').value = Number(p2[0]);
+      $('docAskM').value = Number(p2[1]);
+      $('docAskFile').textContent = file.name;
+      askPreview_();
+      intakeStat_('');
+      $('docAsk').showModal();
+      $('docAskY').focus();
+      $('docAskY').select();
+    } catch (e) {
+      console.error('[importDoctorFile] ' + e.message + ' / ' + e.stack);
+      pendingBook = null;
+      closeAsk_();
+      intakeStat_('取り込めませんでした: ' + e.message);
+    }
+  }
+
+  /** 年月を変えるたびに、帳尻が合うかを見せる */
+  function askPreview_() {
+    if (!pendingBook) return;
+    const ym = $('docAskY').value + '-' + pad2_(Number($('docAskM').value));
+    const a3 = alignDays_(pendingBook, ym);
+    const msg = $('docAskMsg');
+
+    /**
+     * 曜日が合っても、月が決まるわけではない。
+     *
+     * 暦の並び（1日の曜日と日数）が同じ月は、ほかにもある。
+     * たとえば 2026年10月と2026年1月は、どちらも1日が木曜で31日まである。
+     * **どちらを指定しても「合う」。** だから、
+     *
+     *   ・その月の1日が何曜になるかを出して、目で確かめられるようにする
+     *   ・ブックやファイル名の手がかりと食い違ったら、そう言う
+     */
+    const p3 = ym.split('-');
+    const d1 = new Date(Number(p3[0]), Number(p3[1]) - 1, 1);
+    const hints = [];
+    if (pendingBook.suggest && pendingBook.suggest !== ym) {
+      hints.push('ブックの日付は ' + ymFace_(pendingBook.suggest));
+    }
+    if (pendingBook.fileYm && pendingBook.fileYm !== ym) {
+      hints.push('ファイル名は ' + ymFace_(pendingBook.fileYm));
+    }
+    $('docAskHint').textContent =
+      p3[0] + '年' + Number(p3[1]) + '月1日は' + DOW[d1.getDay()] + '曜'
+      + (hints.length ? '　⚠ ' + hints.join('、') + 'です' : '');
+    $('docAskHint').classList.toggle('bad', !!hints.length);
+
+    // 上書きの注意は、曜日が合うかとは別。合わないときも先に見せる
+    showOverwrite_(ym);
+
+    msg.classList.remove('bad');
+    if (!a3) { msg.textContent = '年月が読めません'; msg.classList.add('bad'); return; }
+    const n = a3.cells.length;
+    if (!a3.fits) {
+      msg.classList.add('bad');
+      msg.textContent = '⚠ この年月では曜日と合いません'
+        + '（合ったのは ' + n + ' 日 / ' + a3.last + ' 日）。年月を確かめてください';
+      return;
+    }
+    msg.textContent = n + ' 日ぶん読めます'
+      + (a3.missing.length ? '／' + a3.missing.length + ' 日は空' : '')
+      + (a3.dropped ? '／曜日が合わない ' + a3.dropped + ' セルは読みません' : '');
+  }
+
+  /**
+   * 上書きの注意。**時期と中身の両方を見る。**
+   *
+   * 害の大きさを決めるのは「過去かどうか」より「そこに確定済みのものが
+   * 入っているか」。中身だけで出すと、来月分の差し替え（日常の操作）で
+   * 毎回止まって鬱陶しい。時期だけだと、空の過去月でも止まる。
+   *
+   *   過去月 ＋ 中身あり   … 強く出す。配り終えた記録を書き換えることになる
+   *   過去月 ＋ 空         … 軽く出す。害は小さいが、意図とは違うはず
+   *   当月以降 ＋ 中身あり … 入れ替える日数だけ知らせる。止めない
+   *   当月以降 ＋ 空       … 何も言わない
+   *
+   * 境界は**当月**。当月の入れ直しは修正としてよくあるので通す。
+   */
+  function showOverwrite_(ym) {
+    const box = $('docAskOver');
+    const face = ymFace_(ym);
+    const now = new Date();
+    const nowYm = now.getFullYear() + '-' + pad2_(now.getMonth() + 1);
+    const past = ym < nowYm;                   // 'yyyy-mm' は文字の並びで比べられる
+
+    // その月に、いま医師名が何日ぶん入っているか
+    const days = new Set();
+    values.forEach((v, k) => {
+      const q = k.split('|');
+      if (q.length === 3 && q[1] === ym && /^doc\d+$/.test(q[0]) && v) days.add(q[2]);
+    });
+    const has = days.size;
+
+    box.classList.remove('bad', 'warn');
+    $('docAskGo').textContent = '取り込む';
+    if (past && has) {
+      box.classList.add('bad');
+      box.textContent = '⚠ ' + face + 'は過ぎた月です。'
+        + 'すでに入っている ' + has + ' 日ぶんの医師名を書き換えます。'
+        + '配ったあとの記録なら、取り込まないでください'
+        + '（取り込んでも「← 戻す」で戻せます）';
+      $('docAskGo').textContent = '上書きして取り込む';
+    } else if (past) {
+      box.classList.add('warn');
+      box.textContent = face + 'は過ぎた月です。'
+        + 'いまは医師名が入っていないので、書き換わるものはありません';
+    } else if (has) {
+      box.classList.add('warn');
+      box.textContent = 'すでに入っている ' + has + ' 日ぶんの医師名を入れ替えます'
+        + '（「← 戻す」で戻せます）';
+    } else {
+      box.textContent = '';
+    }
+  }
+
+  /** 「取り込む」を押したとき */
+  function runIntake_() {
+    const scan = pendingBook;
+    if (!scan) return;
+    const ym = $('docAskY').value + '-' + pad2_(Number($('docAskM').value));
+    try {
+      const aligned = alignDays_(scan, ym);
+      if (!aligned || !aligned.fits) {
+        intakeStat_('この年月では曜日と日付の帳尻が合いません'
+          + (aligned ? '（合ったのは ' + aligned.cells.length + ' 日 / '
+             + aligned.last + ' 日）' : '')
+          + '。年月を確かめてください');
+        return;
+      }
+      const byDay = buildByDay_(scan, aligned);
+      if (!Object.keys(byDay).length) {
+        intakeStat_('日付と医師名の組み合わせが1つも読めませんでした');
+        return;
+      }
+      const r = applyDoctorBook_({ ym: ym, byDay: byDay });
+      const bits = [ymFace_(ym) + 'を取り込みました',
+                    r.days + ' 日 / のべ ' + r.put + ' 人'];
+      if (r.added.length) {
+        bits.push('医師マスタに ' + r.added.length + ' 名を新しく登録しました: '
+          + r.added.join('、')
+          + '。略称は姓、同じ姓がいるときは 姓(名の1文字目)。医師マスタで直せます');
+      }
+      if (aligned.missing.length) {
+        bits.push('読めなかった日: ' + aligned.missing.join('、'));
+      }
+      if (aligned.dropped) {
+        bits.push('曜日が合わない ' + aligned.dropped + ' セルは読みませんでした');
+      }
+      if (scan.extraBlocks) {
+        bits.push('この下にもう ' + scan.extraBlocks + ' つ暦がありましたが、'
+          + 'いちばん上の暦だけを取り込みました');
+      }
+      if (r.overflow.length) {
+        bits.push('医師名欄の行数（' + docRowCount_() + '）を超えた日: '
+          + r.overflow.join('、') + '。自動生成ルールで行数を増やしてください');
+      }
+      intakeStat_(bits.join(' / '));
+      markEdited_();
+      recalc();
+    } catch (e) {
+      console.error('[runIntake_] ' + e.message + ' / ' + e.stack);
+      intakeStat_('取り込めませんでした: ' + e.message);
+    }
+    pendingBook = null;
+    closeAsk_();
+  }
+
+  /** モーダルを閉じる。開いていないときに close すると例外になる */
+  function closeAsk_() {
+    const d = $('docAsk');
+    if (d.open) d.close();
+  }
+
+  ['docAskY', 'docAskM'].forEach(id => $(id).addEventListener('input', askPreview_));
+  $('docAskGo').addEventListener('click', runIntake_);
+  $('docAskNo').addEventListener('click', () => {
+    pendingBook = null;
+    closeAsk_();
+    intakeStat_('取り込みをやめました');
+  });
+  // Esc で閉じたときも、待っているブックを捨てる
+  $('docAsk').addEventListener('close', () => { pendingBook = null; });
+  // 年月を打ってそのまま Enter で進めるように
+  ['docAskY', 'docAskM'].forEach(id => $(id).addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); runIntake_(); }
+  }));
 
   $('docInFile').addEventListener('change', ev => {
     const f = ev.target.files && ev.target.files[0];
