@@ -378,6 +378,7 @@ td.text input {
   text-align: center; padding: 0 1px; border-radius: 0;
 }
 td.text input:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+td.text .pv { display: none; }          /* 画面は input を見せる。これは紙用 */
 td.locked { background: var(--outside); cursor: not-allowed; }
 
 tr.aggrow td, tr.aggrow th { background: var(--agg); font-weight: 500; }
@@ -590,10 +591,17 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   #grid { font-size: 7.5pt; }
   #grid td.cell .v { font-size: 8pt; }
   #grid td.cell .v.small { font-size: 6.5pt; }
-  /* 医師名・備考は input。枠と余白を外さないと2文字目が切れる */
-  #grid td.text input {
-    font-size: 7pt; padding: 0; border: 0; background: transparent;
-    text-align: center; letter-spacing: -.03em;
+  /**
+   * 医師名・備考は、紙では文字として出す（input は隠す）。
+   * 大きさは fitPrint_ が決める。**3文字が入る大きさ**まで縮める。
+   */
+  #grid td.text input { display: none !important; }
+  #grid td.text .pv {
+    display: block; width: 100%;
+    font-family: "Yu Gothic UI", "Meiryo", sans-serif;
+    font-size: var(--print-text-fs, 7pt);
+    line-height: var(--cell-h); text-align: center; white-space: nowrap;
+    letter-spacing: -.03em; overflow: hidden;
   }
   .page-head h1 { font-size: 18px; }
   .printnote { font-size: 7pt; gap: 14px; }
@@ -2088,10 +2096,20 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
           inp.addEventListener('input', () => {
             markEdited_();
             setV(row, c, inp.value.trim());
+            const pv = cell.querySelector('.pv');
+            if (pv) pv.textContent = inp.value.trim();
             recalc();
           });
           inp.addEventListener('focus', () => select(row.index, c, false));
           cell.appendChild(inp);
+          /**
+           * 紙に出すのは input ではなくこちら。
+           *
+           * input は中身がはみ出すと左端から見せる（スクロールする）ので、
+           * 切れたうえ中央にも寄らない。実測で2文字（25pxの枠に27px）でも
+           * はみ出していた。文字として置けば、中央に寄るし縮められる。
+           */
+          cell.appendChild(el('span', 'pv', get(row, c)));
           tr.appendChild(cell);
           continue;
         }
@@ -2209,7 +2227,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   function fillCell_(cell, row, c) {
     const t = get(row, c);
     const inp = cell.querySelector('input');
-    if (inp) { inp.value = t; return; }   // 医師名欄・備考行は入力欄
+    if (inp) {                            // 医師名欄・備考行は入力欄
+      inp.value = t;
+      const pv = cell.querySelector('.pv');
+      if (pv) pv.textContent = t;         // 紙に出すのはこちら
+      return;
+    }
     const v = cell.querySelector('.v');
     if (!v) return;
     v.textContent = t;
@@ -2433,6 +2456,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const PRINT_MIN_ZOOM = 0.5;
   /** 行の高さの下限。これ以下に詰めると記号が潰れる */
   const PRINT_CELL_MIN = 9;
+  /** 医師名・備考の字の大きさ。下限と上限（px）。7pt = 9.33px */
+  const PRINT_TEXT_MIN = 6, PRINT_TEXT_MAX = 9.33;
+
+  /**
+   * 文字列の幅を「全角いくつぶん」で見積もる。
+   * 全角（漢字・かな・全角記号）は1、半角は0.5として数える。
+   */
+  function widthEm_(t) {
+    let n = 0;
+    for (let i = 0; i < t.length; i++) {
+      const c = t.charCodeAt(i);
+      // 半角（ASCII・ラテン・半角カナ）は 0.5、それ以外は全角として 1
+      const half = (c >= 0x20 && c <= 0x00FF) || (c >= 0xFF61 && c <= 0xFF9F);
+      n += half ? 0.5 : 1;
+    }
+    return n;
+  }
   let printZoom = 1;
 
   /**
@@ -2562,7 +2602,36 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     clear();
     printMetrics_(false);
 
+    /**
+     * 医師名・備考の字の大きさ。**3文字が入るところまで縮める。**
+     *
+     * 全角1文字はだいたい font-size ぶんの幅を取る。字間を少し詰めてあるので
+     * 3文字で 2.9em ほど。列の幅（罫線と余白を引いたぶん）に収まる大きさを出す。
+     * 縮めすぎると紙で読めないので下限を置く。4文字以上の名前は入りきらない
+     * ——医師マスタの略称を短くするか、医師名欄の使い方を決めること。
+     */
+    const inner = Math.max(6, cellW - 2);
+    const textFs = Math.max(PRINT_TEXT_MIN,
+      Math.min(PRINT_TEXT_MAX, inner / (3 * 0.97)));
+
+    /**
+     * 長い名前は、そのセルだけさらに縮める。
+     *
+     * 測らずに文字種から幅を見積もる。全角は1文字ぶん、半角は半分。
+     * 200近いセルの寸法を1つずつ読むと、刷るたびに待たされる。
+     */
+    Array.from(grid.querySelectorAll('td.text .pv')).forEach(pv => {
+      pv.style.fontSize = '';
+      const t = (pv.textContent || '').trim();
+      if (!t) return;
+      const em = widthEm_(t);
+      if (em <= 3) return;                       // 3文字までは全体の大きさで入る
+      const fit = Math.max(PRINT_TEXT_MIN, inner / (em * 0.97));
+      if (fit < textFs) pv.style.fontSize = fit.toFixed(2) + 'px';
+    });
+
     printZoom = z;
+    root.style.setProperty('--print-text-fs', textFs.toFixed(2) + 'px');
     root.style.setProperty('--print-zoom', printZoom.toFixed(3));
     root.style.setProperty('--print-cell-h', cellH.toFixed(2) + 'px');
     root.style.setProperty('--print-cell-w', cellW.toFixed(2) + 'px');
