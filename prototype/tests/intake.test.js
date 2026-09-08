@@ -201,9 +201,45 @@ console.log('■ ブックの読み方（作りの約束）');
     assert.ok(/r\.added\.join/.test(imp), '名前を並べていない');
   });
 
-  ok('略称は姓。かぶったら数字を足す', () => {
-    assert.ok(/surnameOf_\(name\)/.test(f), '姓を使っていない');
-    assert.ok(/used\.has\(short\)/.test(f), 'かぶりを見ていない');
+  ok('略称の作り方は共通の道具に任せる', () => {
+    assert.ok(/shortNameOf_\(name, used\)/.test(f), '共通の道具を使っていない');
+  });
+}
+
+{
+  // 同じ姓の人がいると、姓だけでは見分けられない。
+  // 括弧は半角。全角にすると2文字ぶんの幅を取り、26px の列に収まらない
+  const mk = new Function(
+    grab('surnameOf_') + grab('shortNameOf_') + ' return shortNameOf_;')();
+
+  ok('かぶらなければ姓だけ', () => {
+    assert.strictEqual(mk('秋山 貴由', new Set()), '秋山');
+  });
+
+  ok('姓がかぶったら 姓(名の1文字目)', () => {
+    assert.strictEqual(mk('西本 紀之', new Set(['西本'])), '西本(紀)');
+    assert.strictEqual(mk('佐藤 健太', new Set(['佐藤'])), '佐藤(健)');
+  });
+
+  ok('括弧は半角（全角だと列に収まらない）', () => {
+    const t = mk('西本 紀之', new Set(['西本']));
+    assert.ok(t.indexOf('(') >= 0 && t.indexOf('（') < 0, '全角の括弧を使っている: ' + t);
+  });
+
+  ok('それでもかぶるときだけ数字を足す', () => {
+    assert.strictEqual(mk('西本 紀之', new Set(['西本', '西本(紀)'])), '西本(紀)2');
+    // 名が無い（区切りの無い）名前は、姓に数字
+    assert.strictEqual(mk('西本', new Set(['西本'])), '西本2');
+  });
+
+  ok('マスタごとに見る（社員と医師で同じ姓がいても構わない）', () => {
+    const taken = new Function(grab('surnameOf_') + grab('takenShorts_')
+      + ' return takenShorts_;')();
+    const list = [{ name: '秋山 貴由', short: '秋山' }, { name: '西本 紀之', short: '' }];
+    const set = taken(list, null);
+    assert.ok(set.has('秋山') && set.has('西本'), '略称が空の行を見ていない');
+    // 自分の行は外す。編集中に自分とかぶったことにならないよう
+    assert.ok(!taken(list, list[0]).has('秋山'), '自分の行を外していない');
   });
 }
 

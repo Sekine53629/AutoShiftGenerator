@@ -55,9 +55,10 @@ const run = new Function('staff', 'y', 'm', [
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const dow = (...ok) => [0, 1, 2, 3, 4, 5, 6].map(d => (ok.indexOf(d) >= 0 ? 1 : 0));
 const ALL = [1, 1, 1, 1, 1, 1, 1], NONE = [0, 0, 0, 0, 0, 0, 0];
-const P = (id, name, rule, week, avail, fixed, cons) => ({
+const P = (id, name, rule, week, avail, fixed, cons, wantOff) => ({
   id, name, kind: '薬剤師', employment: '社員', weekDays: week, maxCons: cons || 5,
-  patterns: ['○', '●', '▲'], availDow: avail, fixedDow: fixed, canClose: true,
+  patterns: ['○', '●', '▲'], availDow: avail, fixedDow: fixed,
+  wantOffDow: wantOff || NONE, canClose: true,
   from: '', to: '', rule, memo: '', annualOff: '', hq: false, stores: ['st1']
 });
 
@@ -69,6 +70,7 @@ const staff = [
   P('e', '固定曜日・月水金', '固定曜日', 3, ALL, dow(1, 3, 5)),
   P('f', '固定曜日・指定なし', '固定曜日', 3, dow(1, 2, 5, 6), NONE),
   P('g', '通常・出られない日を必須', '通常', 5, dow(1, 2, 3, 4, 5), dow(0)),
+  P('h', '通常・水木は休みたい', '通常', 5, ALL, NONE, 5, dow(3, 4)),
 ];
 
 let bad = 0;
@@ -97,7 +99,19 @@ let bad = 0;
       + '   出た曜日:' + (dows || 'なし'));
   });
   if (r.notes.length) {
-    console.log('  申し送り:');
+    // 「できるだけ休みたい曜日」が効いているか。指定なしの人と比べる
+  {
+    const cnt = (id, dows) => {
+      const row = r.ROWS.find(x => x.staff.id === id);
+      return im.filter(c => dows.indexOf(r.days[c].dow) >= 0 && r.isWork(r.get(row, c))).length;
+    };
+    const base = cnt('a', [3, 4]);
+    const want = cnt('h', [3, 4]);
+    console.log('  水木の出勤 … 指定なし ' + base + ' 日 / 休みたい ' + want + ' 日'
+      + (want < base ? '  効いている' : '  ★効いていない'));
+    if (want >= base) bad++;
+  }
+  console.log('  申し送り:');
     [...new Set(r.notes)].forEach(t => console.log('    ・' + t));
   }
 });

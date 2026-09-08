@@ -1119,6 +1119,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       patterns: (pats || []).slice(),
       availDow: (avail || ALL).slice(),
       fixedDow: (fixed || NONE).slice(),
+      wantOffDow: NONE.slice(),
       canClose: close, from: '', to: '', rule: rule, memo: '',
       hq: false, stores: ['st1']
     });
@@ -1467,6 +1468,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       if (RULE_OPTS.indexOf(x.rule) < 0) x.rule = RULE_NORMAL;
       x.availDow = normDow_(x.availDow, 1);
       x.fixedDow = normDow_(x.fixedDow, 0);
+      x.wantOffDow = normDow_(x.wantOffDow, 0);   // あとから足した。既定は「無し」
       x.patterns = Array.isArray(x.patterns) ? x.patterns.slice() : [];
     });
 
@@ -3221,6 +3223,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         note_(s.name + '：' + DOW[i] + '曜が「必ず出る曜日」なのに'
           + '「出られる曜日」から外れています');
       }
+      if (v && s.wantOffDow && s.wantOffDow[i]) {
+        note_(s.name + '：' + DOW[i] + '曜が「必ず出る曜日」と'
+          + '「できるだけ休みたい曜日」の両方に入っています（出勤を優先しました）');
+      }
     });
 
     // 5. 週ごとの出勤日数。上限は週勤務日数
@@ -3301,8 +3307,23 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     wk.forEach(w => {
       // 必ず出る日を先に取り、残りを人手の足りない日から埋める
       const must = w.cols.filter(c => mustWork.has(c));
+      /**
+       * 「できるだけ休みたい曜日」は後回しにする。**ただし譲る。**
+       *
+       *   その日が足りている（不足0以下）… 必ず後回し。休ませる
+       *   その日が足りていない          … 1つぶん後ろにするだけ。人手を採る
+       *
+       * 「できるだけ」はこの意味。減らすだけの弱い重みにしていたが、
+       * 不足の差に埋もれて効かない月があった（実測で11月は変化なし）。
+       */
+      const want = c => !!(s.wantOffDow && s.wantOffDow[days[c].dow]);
+      const score = c => {
+        const sh = shortage_(c, row.role);
+        if (!want(c)) return sh;
+        return sh - (sh > 0 ? 1 : 99);
+      };
       const rest = w.cols.filter(c => !mustWork.has(c))
-        .sort((a, b) => (shortage_(b, row.role) - shortage_(a, row.role)) || (a - b));
+        .sort((a, b) => (score(b) - score(a)) || (a - b));
       const pick = w.picked ? w.picked
         : must.concat(rest.slice(0, Math.max(0, w.n - must.length)));
       pick.forEach(c => { setV(row, c, workSym); workDays.add(c); });
@@ -3474,6 +3495,9 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   const COLS = {
     staff: [
       { key: 'name',       head: '氏名',        type: 'text',  w: 130, group: '本人' },
+      { key: 'short',      head: '略称',        type: 'text',  w: 90,
+        ph: rec => shortNameOf_(rec.name, takenShorts_(DB.staff, rec)),
+        group: '本人' },
       { key: 'kind',       head: '区分',        type: 'select', opts: ['薬剤師', '事務員'], group: '本人' },
       { key: 'employment', head: '雇用',        type: 'select', opts: ['社員', '派遣', 'パート'], group: '本人' },
       { key: 'hq',         head: '本部所属',    type: 'check', group: '所属' },
@@ -3497,6 +3521,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         group: '配置ルール（この人だけに効く）' },
       { key: 'availDow',   head: '出られる曜日', type: 'dow', group: '配置ルール（この人だけに効く）' },
       { key: 'fixedDow',   head: '必ず出る曜日', type: 'dow', group: '配置ルール（この人だけに効く）' },
+      { key: 'wantOffDow', head: 'できるだけ休みたい曜日', type: 'dow',
+        group: '配置ルール（この人だけに効く）' },
       { key: 'canClose',   head: '締め作業',    type: 'check', group: '資格' },
       { key: 'from',       head: '在籍 開始',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM, group: '在籍' },
       { key: 'to',         head: '在籍 終了',   type: 'text', w: 82, ph: 'yyyy-mm', check: okYearMonth, hint: HINT_YM, group: '在籍' },
@@ -3823,7 +3849,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     }
     if (col.min !== undefined) inp.min = col.min;
     if (col.max !== undefined) inp.max = col.max;
-    if (col.ph) inp.placeholder = (typeof col.ph === 'function') ? col.ph() : col.ph;
+    if (col.ph) inp.placeholder = (typeof col.ph === 'function') ? col.ph(rec) : col.ph;
     if (col.w) inp.style.width = col.w + 'px';
     inp.value = rec[col.key] === undefined ? '' : rec[col.key];
     inp.addEventListener('change', () => {
@@ -6118,7 +6144,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
                     r.days + ' 日 / のべ ' + r.put + ' 人'];
       if (r.added.length) {
         bits.push('医師マスタに ' + r.added.length + ' 名を新しく登録しました: '
-          + r.added.join('、') + '（略称は姓。医師マスタで直せます）');
+          + r.added.join('、')
+          + '。略称は姓、同じ姓がいるときは 姓(名の1文字目)。医師マスタで直せます');
       }
       if (book.extraBlocks) {
         bits.push('この下にもう ' + book.extraBlocks + ' つ暦がありましたが、'
@@ -6152,6 +6179,52 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   }
 
   /**
+   * そのマスタで既に使われている略称。自分の行は外す。
+   * **マスタごとに見る。**社員と医師で同じ姓がいても構わない（欄が別）。
+   */
+  function takenShorts_(list, self) {
+    const set = new Set();
+    (list || []).forEach(x => {
+      if (x === self) return;
+      const t = String(x.short || '').trim() || surnameOf_(x.name);
+      if (t) set.add(t);
+    });
+    return set;
+  }
+
+  /**
+   * 略称を作る。**同じ姓が既にいたら、名の1文字目を添えて見分ける。**
+   *
+   *   秋山 貴由                  → 秋山
+   *   西本 紀之（西本が既にいる） → 西本(紀)
+   *
+   * 括弧は半角。全角にすると2文字ぶんの幅を取り、列に収まらない。
+   * 「姓2文字＋(名1文字)」で全角4文字ぶん。26px の列に 6.7px で入る。
+   *
+   * それでもぶつかるとき（同姓同名の頭文字）だけ数字を足す。
+   *
+   * @param {string} full 氏名
+   * @param {Set<string>} taken すでに使われている略称
+   */
+  function shortNameOf_(full, taken) {
+    const t = String(full || '').trim();
+    const sur = surnameOf_(t) || '医師';
+    if (!taken.has(sur)) return sur;
+    const m = /^[^\s　]+[\s　]+(.)/.exec(t);
+    if (m) {
+      const withGiven = sur + '(' + m[1] + ')';
+      if (!taken.has(withGiven)) return withGiven;
+      for (let i = 2; i < 99; i++) {
+        if (!taken.has(withGiven + i)) return withGiven + i;
+      }
+    }
+    for (let i = 2; i < 99; i++) {
+      if (!taken.has(sur + i)) return sur + i;
+    }
+    return sur;
+  }
+
+  /**
    * 取り込んだ名前のうち、医師マスタに無いものを登録する。
    *
    * **黙って足さない。**足した名前は取り込みの結果に並べて出す
@@ -6165,12 +6238,10 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     let order = DB.doctors.reduce((n, d) => Math.max(n, Number(d.order) || 0), 0);
     const added = [];
     names.forEach(name => {
-      const base = surnameOf_(name) || '医師';
-      let short = base;
-      for (let i = 2; used.has(short); i++) short = base + i;
+      const short = shortNameOf_(name, used);
       used.add(short);
       DB.doctors.push({ id: newId('d'), name: name, short: short, order: ++order, memo: '' });
-      added.push(name);
+      added.push(name + '（' + short + '）');
     });
     if (added.length) { save(); renderMaster('doctor'); renderDatalists(); }
     return added;
