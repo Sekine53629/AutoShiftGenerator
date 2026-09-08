@@ -709,6 +709,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       <button id="histNow" title="いまの状態を控えます">控えを取る</button>
       <button id="undoBtn" title="ひとつ前の控えに戻ります（Ctrl+Z）">← 戻す</button>
       <button id="redoBtn" title="戻しすぎたぶんを進めます（Ctrl+Y）">進める →</button>
+      <button id="docIn"
+        title="送られてきた「◯年◯月医師シフト.xlsx」を読んで、医師名欄を埋めます"
+        >医師シフトを取り込む</button>
+      <input type="file" id="docInFile" accept=".xlsx" hidden>
+      <button id="docAdd" hidden
+        title="取り込んだ名前のうち、医師マスタに無いものを足します">医師マスタに追加</button>
       <button id="clearDoc" title="開いている月の医師名欄だけを消します。スタッフのシフトは残ります"
         >医師シフトを消す</button>
       <button id="clearStaff" title="開いている月のスタッフ・派遣・事務・備考・色の印を消します。医師名欄は残ります"
@@ -723,6 +729,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
         title="開いているスプレッドシートに、新しいシートとして書き出します（Google に繋がっていないときは .xlsx で保存します）"
         >スプレッドシート</button>
       <span class="note" id="outStat"></span>
+      <span class="note" id="docInStat"></span>
     </div>
   </div>
 
@@ -5729,6 +5736,366 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       syncPushMonth_(true);
     }
   }
+
+  /* ═══ 医師シフトの取り込み ═══════════════════════════════
+     毎月送られてくる「◯年◯月医師シフト.xlsx」を読んで、医師名欄を埋める。
+     いちばん手のかかる入力がここなので、機械に読ませる。
+
+     【送られてくるものの形】
+       Sheet1 は暦。曜日の見出し行（日〜土）の下に、週ごとの塊が並ぶ。
+       塊の先頭が日付の行で、その下に医師名が縦に並ぶ。
+       名前は `=IF(A5="","","秋山 貴由")` のように**式に埋まっている**ことが多い。
+       「この列に日付があればこの医師が出る」という書き方。
+       手で直した日は、式ではなく文字列で入っている。
+
+     【A1 は見ない】
+       実物の A1 には前の月の日付が残っていた。**どの式からも参照されていない。**
+       基準は A2 だが、それも見ない。**日付の行から読み取った日付そのもの**を使う。
+       A1 も A2 も間違っていて構わない作りにする。 */
+
+  /** 日付とみなす通し番号の範囲。1970年〜2099年あたり */
+  const XL_DAY_MIN = 25569, XL_DAY_MAX = 73050;
+
+  /** Excel の通し番号を y/m/d にする。基準は 1899-12-30 */
+  function xlDate_(n) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(n) * 86400000);
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+  }
+
+  /** 'AB12' → { col: 28, row: 12 } */
+  function refOf_(ref) {
+    const m = /^([A-Z]+)(\d+)$/.exec(ref);
+    if (!m) return null;
+    let c = 0;
+    for (let i = 0; i < m[1].length; i++) c = c * 26 + (m[1].charCodeAt(i) - 64);
+    return { col: c, row: Number(m[2]) };
+  }
+
+  /**
+   * zip をほどく。**ライブラリは使わない。**
+   * 1ファイルで配る作りなので、外から読み込むものを増やさない。
+   * 展開はブラウザの DecompressionStream に任せる。
+   */
+  async function unzip_(buf) {
+    const b = new Uint8Array(buf);
+    const dv = new DataView(buf);
+    // 末尾から EOCD（PK\x05\x06）を探す。コメントが付いていても辿れる
+    let eocd = -1;
+    for (let i = b.length - 22; i >= 0 && i > b.length - 66000; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('zip として読めません（xlsx ファイルですか）');
+    const count = dv.getUint16(eocd + 10, true);
+    let at = dv.getUint32(eocd + 16, true);
+
+    const out = {};
+    for (let i = 0; i < count; i++) {
+      if (dv.getUint32(at, true) !== 0x02014b50) break;
+      const method = dv.getUint16(at + 10, true);
+      const size = dv.getUint32(at + 20, true);
+      const nlen = dv.getUint16(at + 28, true);
+      const elen = dv.getUint16(at + 30, true);
+      const clen = dv.getUint16(at + 32, true);
+      const off = dv.getUint32(at + 42, true);
+      const name = new TextDecoder('utf-8').decode(b.subarray(at + 46, at + 46 + nlen));
+      at += 46 + nlen + elen + clen;
+      if (!/^xl\/|^\[Content/.test(name)) continue;      // 要るものだけ展開する
+
+      // ローカルヘッダは名前と拡張領域の長さが中央目録と違うことがある
+      const lnlen = dv.getUint16(off + 26, true);
+      const lelen = dv.getUint16(off + 28, true);
+      const start = off + 30 + lnlen + lelen;
+      const raw = b.subarray(start, start + size);
+      if (method === 0) {
+        out[name] = new TextDecoder('utf-8').decode(raw);
+        continue;
+      }
+      if (method !== 8) throw new Error('この圧縮方式は読めません: ' + method);
+      if (typeof DecompressionStream !== 'function') {
+        throw new Error('このブラウザでは .xlsx を開けません。Chrome か Edge をお使いください');
+      }
+      const ds = new DecompressionStream('deflate-raw');
+      const stream = new Blob([raw]).stream().pipeThrough(ds);
+      out[name] = await new Response(stream).text();
+    }
+    return out;
+  }
+
+  /** XML を解析する。DOMParser はブラウザにある */
+  const xml_ = text => new DOMParser().parseFromString(text, 'application/xml');
+
+  /** 共有文字列。ルビ（rPh）は読まない。読むと「休」が「休ヤス」になる */
+  function sharedStrings_(doc) {
+    if (!doc) return [];
+    return Array.from(doc.getElementsByTagName('si')).map(si => {
+      let s = '';
+      Array.from(si.children).forEach(ch => {
+        if (ch.tagName === 't') s += ch.textContent;
+        else if (ch.tagName === 'r') {
+          Array.from(ch.getElementsByTagName('t')).forEach(t => { s += t.textContent; });
+        }
+        // rPh（ふりがな）は足さない
+      });
+      return s;
+    });
+  }
+
+  /** 式に埋め込まれた名前を取り出す。`IF(A5="","","秋山 貴由")` → 秋山 貴由 */
+  const nameInFormula_ = f => {
+    const m = /^\s*IF\([^,]*,\s*""\s*,\s*"(.*)"\s*\)\s*$/.exec(String(f || ''));
+    return m ? m[1] : '';
+  };
+
+  /** シートを ref → { v, f } の表にする */
+  function sheetCells_(doc, shared) {
+    const cells = {};
+    Array.from(doc.getElementsByTagName('c')).forEach(c => {
+      const ref = c.getAttribute('r');
+      if (!ref) return;
+      const t = c.getAttribute('t');
+      const fEl = c.getElementsByTagName('f')[0];
+      const vEl = c.getElementsByTagName('v')[0];
+      let v = vEl ? vEl.textContent : '';
+      if (t === 's' && v !== '') v = shared[Number(v)] || '';
+      if (t === 'inlineStr') {
+        v = Array.from(c.getElementsByTagName('t')).map(x => x.textContent).join('');
+      }
+      cells[ref] = { v: v, f: fEl ? fEl.textContent : '' };
+    });
+    return cells;
+  }
+
+  /** 名前を突き合わせるための正規化。全角空白・記号・大小をならす */
+  const normName_ = s => String(s || '')
+    .replace(/[　\s]+/g, '')
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .toLowerCase();
+
+  const DOW_SET = ['日', '月', '火', '水', '木', '金', '土'];
+
+  /**
+   * 医師シフトのブックから「日 → 医師名の並び」を読む。
+   *
+   * 行や列の位置は決め打ちしない。**曜日の見出し行を目印にする。**
+   * その上にある A1・A2 は、間違っていても関係なくなる。
+   *
+   * @return {{ym:string, byDay:Object, roster:Array<string>, sheet:string}}
+   */
+  function readDoctorBook_(files) {
+    const wb = xml_(files['xl/workbook.xml']);
+    if (!wb || wb.getElementsByTagName('sheet').length === 0) {
+      throw new Error('ブックの構造が読めません');
+    }
+    const shared = sharedStrings_(files['xl/sharedStrings.xml']
+      ? xml_(files['xl/sharedStrings.xml']) : null);
+
+    // 1枚目を暦として読む。名前の一覧が2枚目にあることがある
+    const cells = sheetCells_(xml_(files['xl/worksheets/sheet1.xml']), shared);
+
+    const byRow = {};
+    Object.keys(cells).forEach(ref => {
+      const p2 = refOf_(ref);
+      if (!p2) return;
+      (byRow[p2.row] = byRow[p2.row] || []).push({ col: p2.col, ref: ref });
+    });
+    const allRows = Object.keys(byRow).map(Number).sort((x, y) => x - y);
+
+    /**
+     * 曜日の見出し行（日〜土が5つ以上そろう行）。
+     *
+     * **いちばん上の1つだけを使う。** 実物には下のほうに別の月の暦が
+     * 残っていることがある（送り主の作りかけ）。全部読むと、日にちだけで
+     * 突き合わせるので、下の月が上の月を上書きしてしまう。
+     */
+    const heads = allRows.filter(r =>
+      byRow[r].filter(x => DOW_SET.indexOf((cells[x.ref].v || '').trim()) >= 0).length >= 5);
+    if (!heads.length) throw new Error('曜日の見出し（日〜土）が見つかりません');
+    const headRow = heads[0];
+    const blockEnd = heads.length > 1 ? heads[1] : Infinity;   // 次の暦の手前まで
+
+    // 見出しより下・次の暦より上で、日付の通し番号が入っているセルを集める。
+    // A1・A2 は見出しより上なので、ここで自然に外れる
+    const dateCells = [];
+    Object.keys(cells).forEach(ref => {
+      const p2 = refOf_(ref);
+      if (!p2 || p2.row <= headRow || p2.row >= blockEnd) return;
+      const raw = cells[ref].v;
+      if (!/^\d+(\.\d+)?$/.test(raw)) return;
+      const n = Number(raw);
+      if (n < XL_DAY_MIN || n > XL_DAY_MAX) return;
+      dateCells.push({ col: p2.col, row: p2.row, day: xlDate_(n) });
+    });
+    if (!dateCells.length) throw new Error('日付の行が見つかりません');
+
+    // 年月は日付そのものから決める。A1 も A2 も見ない
+    const tally = {};
+    dateCells.forEach(x => {
+      const k = x.day.y + '-' + String(x.day.m).padStart(2, '0');
+      tally[k] = (tally[k] || 0) + 1;
+    });
+    const ym = Object.keys(tally).sort((x, y) => tally[y] - tally[x])[0];
+
+    // 名前を拾う範囲は「次の日付行の手前」まで
+    const dateRows = Array.from(new Set(dateCells.map(x => x.row))).sort((x, y) => x - y);
+
+    const byDay = {};
+    dateCells.forEach(x => {
+      if (x.day.y + '-' + String(x.day.m).padStart(2, '0') !== ym) return;
+      const next = dateRows.find(r => r > x.row);
+      const stop = Math.min(next === undefined ? x.row + 12 : next, blockEnd);
+      const names = [];
+      for (let r = x.row + 1; r < stop; r++) {
+        const cell = cells[colName_(x.col - 1) + r];
+        if (!cell) continue;
+        // 式の中の名前を先に見る。計算されていないブックでも読めるようにする
+        const name = (nameInFormula_(cell.f) || cell.v || '').trim();
+        if (!name || /^\d+(\.\d+)?$/.test(name)) continue;
+        if (DOW_SET.indexOf(name) >= 0) continue;
+        if (names.indexOf(name) < 0) names.push(name);
+      }
+      byDay[x.day.d] = names;
+    });
+
+    // 2枚目に医師の一覧があれば、マスタに足す候補として持ち帰る
+    const roster = [];
+    if (files['xl/worksheets/sheet2.xml']) {
+      const s2 = sheetCells_(xml_(files['xl/worksheets/sheet2.xml']), shared);
+      Object.keys(s2).sort().forEach(ref => {
+        const t = (s2[ref].v || '').trim();
+        if (t && !/^\d/.test(t) && roster.indexOf(t) < 0) roster.push(t);
+      });
+    }
+    return { ym: ym, byDay: byDay, roster: roster, extraBlocks: heads.length - 1 };
+  }
+
+  function intakeStat_(text) {
+    const el2 = $('docInStat');
+    if (el2) el2.textContent = text || '';
+  }
+
+  /**
+   * 読んだ内容を医師名欄に入れる。
+   *
+   * **その月の医師名欄をいったん消してから入れる。** 足すだけだと、
+   * 前に入れていた医師が消えた日に残ってしまう。
+   * スタッフのシフトには触らない。
+   */
+  function applyDoctorBook_(book) {
+    const rows = ROWS.filter(r => r.kind === 'doctor');
+    const known = DB.doctors.map(d => ({ raw: d.name, key: normName_(d.name) }));
+    const unknown = [];
+    const overflow = [];
+    let put = 0, days = 0;
+
+    snapshot_('医師シフト取り込みの直前');
+
+    // いま開いている月に入れる。ファイルの年月に合わせて画面も動かす
+    const p = book.ym.split('-');
+    $('yy').value = Number(p[0]);
+    $('mm').value = Number(p[1]);
+    renderGrid();                       // curYm を書き換える
+
+    // その月の医師名欄を消す
+    Array.from(values.keys()).forEach(k => {
+      const q = k.split('|');
+      if (q.length === 3 && q[1] === curYm && /^doc\d+$/.test(q[0])) values.delete(k);
+    });
+
+    Object.keys(book.byDay).forEach(dayStr => {
+      const day = Number(dayStr);
+      const names = book.byDay[dayStr];
+      if (!names.length) return;
+      days++;
+      names.forEach((raw, i) => {
+        const hit = known.find(k => k.key === normName_(raw));
+        if (!hit && unknown.indexOf(raw) < 0) unknown.push(raw);
+        if (i >= rows.length) {
+          if (overflow.indexOf(day) < 0) overflow.push(day);
+          return;
+        }
+        values.set(rows[i].key + '|' + curYm + '|' + day, hit ? hit.raw : raw);
+        put++;
+      });
+    });
+
+    renderGrid();
+    return { put: put, days: days, unknown: unknown, overflow: overflow };
+  }
+
+  /** 取り込みの入口。ファイルを選んだら走る */
+  async function importDoctorFile(file) {
+    if (!file) return;
+    intakeStat_('読んでいます…');
+    try {
+      const files = await unzip_(await file.arrayBuffer());
+      const book = readDoctorBook_(files);
+      const n = Object.keys(book.byDay).length;
+      if (!n) throw new Error('日付と医師名の組み合わせが1つも読めませんでした');
+
+      const r = applyDoctorBook_(book);
+      const bits = [book.ym.replace('-', '年') + '月を取り込みました',
+                    r.days + ' 日 / のべ ' + r.put + ' 人'];
+      intakeUnknown = r.unknown.slice();
+      $('docAdd').hidden = !r.unknown.length;
+      if (r.unknown.length) {
+        bits.push('医師マスタに無い名前 ' + r.unknown.length + ' 件: '
+          + r.unknown.slice(0, 5).join('、') + (r.unknown.length > 5 ? ' ほか' : ''));
+      }
+      if (book.extraBlocks) {
+        bits.push('この下にもう ' + book.extraBlocks + ' つ暦がありましたが、'
+          + 'いちばん上の暦だけを取り込みました');
+      }
+      if (r.overflow.length) {
+        bits.push('医師名欄の行数（' + docRowCount_() + '）を超えた日: '
+          + r.overflow.join('、') + '。自動生成ルールで行数を増やしてください');
+      }
+      intakeStat_(bits.join(' / '));
+      markEdited_();
+      recalc();
+    } catch (e) {
+      console.error('[importDoctorFile] ' + e.message + ' / ' + e.stack);
+      intakeStat_('取り込めませんでした: ' + e.message);
+    }
+  }
+
+  /** 直前の取り込みで、マスタに無かった名前 */
+  let intakeUnknown = [];
+
+  /**
+   * 取り込んだ名前を医師マスタに足す。**押したときだけ。**
+   * 氏名は個人情報なので、黙って増やさない。
+   *
+   * 略称は姓の1文字目から作る。かぶったら数字を足す
+   * （実物のシフト表は「医A」のような短い表記で、狭い欄に収める必要がある）。
+   */
+  function addUnknownDoctors() {
+    if (!intakeUnknown.length) return;
+    const used = new Set(DB.doctors.map(d => String(d.short || '')));
+    let order = DB.doctors.reduce((n, d) => Math.max(n, Number(d.order) || 0), 0);
+    intakeUnknown.forEach(name => {
+      let base = String(name).trim().charAt(0) || '医';
+      let short = base;
+      for (let i = 2; used.has(short); i++) short = base + i;
+      used.add(short);
+      DB.doctors.push({ id: newId('d'), name: name, short: short, order: ++order, memo: '' });
+    });
+    const n = intakeUnknown.length;
+    intakeUnknown = [];
+    save();
+    renderMaster('doctor');
+    renderDatalists();
+    $('docAdd').hidden = true;
+    intakeStat_('医師マスタに ' + n + ' 名を足しました。略称と表示順はマスタで直せます');
+  }
+
+  $('docAdd').addEventListener('click', addUnknownDoctors);
+
+  $('docInFile').addEventListener('change', ev => {
+    const f = ev.target.files && ev.target.files[0];
+    ev.target.value = '';              // 同じファイルをもう一度選べるようにする
+    importDoctorFile(f);
+  });
+  $('docIn').addEventListener('click', () => $('docInFile').click());
 
   /* ═══ 起動 ═════════════════════════════════════════════ */
   const now = new Date();
