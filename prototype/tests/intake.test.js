@@ -177,6 +177,28 @@ console.log('■ ブックの読み方（作りの約束）');
     assert.ok(/rows\[r\]\.every/.test(f), '行ごとに見ていない');
   });
 
+  ok('照合はモーダルに入れた年月で行う', () => {
+    // 画面で開いている月や、ブックの中の日付ではなく、入力された年月で見る
+    const pv = grab('askPreview_');
+    assert.ok(/docAskY[\s\S]{0,80}docAskM/.test(pv), '入力欄から年月を取っていない');
+    assert.ok(/alignDays_\(pendingBook, ym\)/.test(pv), '入力された年月で照合していない');
+    const run = grab('runIntake_');
+    assert.ok(/docAskY[\s\S]{0,80}docAskM/.test(run), '取り込みも入力欄から取っていない');
+    assert.ok(/alignDays_\(scan, ym\)/.test(run), '取り込み前に照合していない');
+  });
+
+  ok('曜日が合っても月は決まらないので、手がかりを添える', () => {
+    // 暦の並びが同じ月はほかにもある（2026年10月と2026年1月）。
+    // 1日の曜日を出し、ブックやファイル名と食い違えば知らせる
+    const pv = grab('askPreview_');
+    assert.ok(/docAskHint/.test(pv), '1日の曜日を出していない');
+    assert.ok(/pendingBook\.suggest/.test(pv) && /pendingBook\.fileYm/.test(pv),
+      '手がかりと突き合わせていない');
+    // 合わないときも手がかりは出す（早期 return の後ろに置くと古いまま残る）
+    assert.ok(pv.indexOf('docAskHint') < pv.indexOf('a3.fits'),
+      '合わないときに手がかりが更新されない');
+  });
+
   ok('半端にしか合わなければ、その年月ではないと判断する', () => {
     // 1日だけ合った状態で取り込むと、ほとんど空の表ができる
     assert.ok(/last - 1/.test(f), 'そろっているかを見ていない');

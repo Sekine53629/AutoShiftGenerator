@@ -663,6 +663,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
   background: var(--agg); font-size: 13px; line-height: 1.6;
 }
 .modal .modal-msg.bad { background: var(--warn-bg); color: var(--ink); font-weight: 600; }
+.modal .modal-hint { margin: 7px 0 0; font-size: 12px; color: var(--ink-soft); }
+.modal .modal-hint.bad { color: var(--danger); font-weight: 600; }
 .modal .modal-note { margin: 12px 0 0; font-size: 11.5px; color: var(--ink-faint); line-height: 1.6; }
 .modal .modal-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .modal .modal-act button { min-height: 34px; padding: 0 16px; }
@@ -714,9 +716,12 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     <span>月</span>
   </div>
   <p class="modal-msg" id="docAskMsg"></p>
+  <p class="modal-hint" id="docAskHint"></p>
   <p class="modal-note">
-    ブックの曜日と日にちが、この年月と合うかを確かめています。
-    合わないまま入れると、日にちだけ合って曜日がずれた表になります。
+    ブックの曜日と日にちが、この年月と合うかを確かめています。合わないまま入れると、
+    日にちだけ合って曜日がずれた表になります。<b>ただし、暦の並びが同じ月は
+    ほかにもあります</b>（2026年10月と2026年1月はどちらも1日が木曜で31日）。
+    上の曜日を見て確かめてください。
   </p>
   <div class="modal-act">
     <button id="docAskNo">やめる</button>
@@ -6353,6 +6358,8 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
       const ym = scan.suggest
         || (fm ? fm[1] + '-' + pad2_(Number(fm[2])) : '')
         || ($('yy').value + '-' + pad2_(Number($('mm').value)));
+      // 手がかりを覚えておく。入力された年月と食い違ったら知らせる
+      scan.fileYm = fm ? fm[1] + '-' + pad2_(Number(fm[2])) : '';
       const p2 = ym.split('-');
       $('docAskY').value = Number(p2[0]);
       $('docAskM').value = Number(p2[1]);
@@ -6376,6 +6383,31 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     const ym = $('docAskY').value + '-' + pad2_(Number($('docAskM').value));
     const a3 = alignDays_(pendingBook, ym);
     const msg = $('docAskMsg');
+
+    /**
+     * 曜日が合っても、月が決まるわけではない。
+     *
+     * 暦の並び（1日の曜日と日数）が同じ月は、ほかにもある。
+     * たとえば 2026年10月と2026年1月は、どちらも1日が木曜で31日まである。
+     * **どちらを指定しても「合う」。** だから、
+     *
+     *   ・その月の1日が何曜になるかを出して、目で確かめられるようにする
+     *   ・ブックやファイル名の手がかりと食い違ったら、そう言う
+     */
+    const p3 = ym.split('-');
+    const d1 = new Date(Number(p3[0]), Number(p3[1]) - 1, 1);
+    const hints = [];
+    if (pendingBook.suggest && pendingBook.suggest !== ym) {
+      hints.push('ブックの日付は ' + pendingBook.suggest.replace('-', '年') + '月');
+    }
+    if (pendingBook.fileYm && pendingBook.fileYm !== ym) {
+      hints.push('ファイル名は ' + pendingBook.fileYm.replace('-', '年') + '月');
+    }
+    $('docAskHint').textContent =
+      p3[0] + '年' + Number(p3[1]) + '月1日は' + DOW[d1.getDay()] + '曜'
+      + (hints.length ? '　⚠ ' + hints.join('、') + 'です' : '');
+    $('docAskHint').classList.toggle('bad', !!hints.length);
+
     msg.classList.remove('bad');
     if (!a3) { msg.textContent = '年月が読めません'; msg.classList.add('bad'); return; }
     const n = a3.cells.length;
@@ -6388,6 +6420,7 @@ table.mt .del:hover { color: var(--danger); background: transparent; }
     msg.textContent = n + ' 日ぶん読めます'
       + (a3.missing.length ? '／' + a3.missing.length + ' 日は空' : '')
       + (a3.dropped ? '／曜日が合わない ' + a3.dropped + ' セルは読みません' : '');
+
   }
 
   /** 「取り込む」を押したとき */
